@@ -1,0 +1,23 @@
+# ── Dependencies ──
+node_modules/
+
+# ── Build outputs (regenerate with the npm scripts — see README "Build") ──
+# Minified engine bundles built from wallet-src/ and hardware-src/:
+public/wallet-core.js
+public/wallet-hw.js
+# Packaged extension + its assembled output dir:
+extension/dist/
+public/wonder-wallet-extension.zip
+
+# ── Secrets — never commit (config is injected via env at runtime) ──
+.env
+.env.*
+*.pem
+*.key
+
+# ── OS / editor cruft ──
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/

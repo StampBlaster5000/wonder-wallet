@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wonder Terminal — Wonder Wallet</title>
+  <meta name="description" content="Wonder Terminal — the full self-custodial Wonder Wallet dashboard. Hardware-wallet & temporary access to Counterparty / Stamps / SRC-20 tooling. Keys never leave your browser." />
+  <meta name="robots" content="noindex" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="aurora"></div>
+  <div class="gridfield" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="seal" aria-hidden="true">
+        <svg viewBox="0 0 48 48" width="34" height="34">
+          <defs>
+            <radialGradient id="g" cx="50%" cy="35%" r="70%">
+              <stop offset="0%" stop-color="#F4D58D" /><stop offset="55%" stop-color="#E0B453" /><stop offset="100%" stop-color="#9a6f1f" />
+            </radialGradient>
+          </defs>
+          <circle cx="24" cy="24" r="22" fill="url(#g)" />
+          <circle cx="24" cy="24" r="22" fill="none" stroke="#000" stroke-opacity="0.18" stroke-width="1" />
+          <path d="M12 17 L17.5 32 L24 21 L30.5 32 L36 17" fill="none" stroke="#3a2606" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" />
+        </svg>
+      </span>
+      <div class="wordmark">
+        <span class="name">Wonder Terminal</span>
+        <span class="attribution">Secured by Emblem Vault</span>
+      </div>
+    </div>
+    <div class="meta">
+      <a class="nav-login" href="./" title="Back to homepage">← Home</a>
+      <button class="dapps-btn" id="dappsBtn">⊞ dApps</button>
+      <button class="dapps-btn" id="backupBtn" title="Back up / restore your local settings">⤓ Backup</button>
+      <span class="badge" id="phaseBadge">Beta</span>
+      <span class="ver" id="verTag">v0.31.0</span>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <!-- The full wallet renders here: unlock · create · restore · hardware-wallet · dashboard. -->
+    <section class="card wallet-card" id="wallet">
+      <div class="card-h">
+        <h2>Your wallet</h2>
+        <span class="tag">keys never leave your browser</span>
+      </div>
+      <div id="walletBody"><div class="statusline load">Loading key engine…</div></div>
+    </section>
+  </main>
+
+  <div id="modal" class="modal" hidden><div class="modal-card" id="modalCard"></div></div>
+
+  <script src="wallet-core.js"></script>
+
+  <footer class="foot">
+    <span>Wonder Wallet · independent community wallet</span><span class="dot">·</span>
+    <span>Bridge powered by Emblem Vault · Built on Emblem&nbsp;Build</span>
+  </footer>
+
+  <script src="app.js"></script>
+  <script src="coin-control.js"></script>
+  <script src="cp-actions.js"></script>
+  <script src="evm.js"></script>
+  <script src="sol.js"></script>
+  <script src="emblem.js"></script>
+  <script src="hardware-ui.js"></script>
+  <script src="minting.js"></script>
+  <script src="dapps.js"></script>
+  <script src="src101.js"></script>
+  <script src="backup.js"></script>
+  <script src="qrcode.js"></script>
+  <script src="wallet-ui.js"></script>
+  <script src="topbar.js"></script>
+</body>
+</html>

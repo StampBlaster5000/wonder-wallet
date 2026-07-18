@@ -1,0 +1,35 @@
+{
+  "name": "wonder-wallet",
+  "version": "0.8.0",
+  "private": true,
+  "description": "Wonder Wallet — self-custodial BTC/ETH/SOL wallet for the Counterparty/Stamps/SRC-20 community.",
+  "license": "MIT",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "build:core": "esbuild wallet-src/index.js --bundle --format=iife --global-name=WonderCoreBundle --outfile=public/wallet-core.js --target=es2020 --minify",
+    "build:hw": "node build-hw.mjs",
+    "gen:og": "NODE_PATH=$(npm root -g) node gen-og.cjs"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.8.0",
+    "express": "^4.21.0",
+    "express-rate-limit": "^7.5.1",
+    "qrcode-generator": "^2.0.4"
+  },
+  "devDependencies": {
+    "@ledgerhq/hw-app-btc": "^10.22.1",
+    "@ledgerhq/hw-app-eth": "^6.47.1",
+    "@ledgerhq/hw-app-solana": "^7.10.4",
+    "@ledgerhq/hw-transport-webhid": "^6.35.4",
+    "@noble/curves": "^1.9.7",
+    "@scure/base": "^1.2.6",
+    "@scure/bip32": "^1.7.0",
+    "@scure/bip39": "^1.6.0",
+    "@scure/btc-signer": "^1.8.1",
+    "buffer": "^6.0.3",
+    "esbuild": "^0.24.2",
+    "esbuild-plugin-polyfill-node": "^0.3.0",
+    "micro-eth-signer": "^0.12.2"
+  }
+}
