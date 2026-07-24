@@ -1,0 +1,45 @@
+name: CI
+
+# Runs on every push to main and on pull requests. Proves the wallet still builds and the
+# hand-written server + browser scripts are syntactically valid. Purely a safety net — it reads the
+# code and builds it in a throwaway VM; it never touches users, secrets, or the live deployment.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: Build & syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build key engine (wallet-core)
+        run: npm run build:core
+
+      - name: Build hardware engine (wallet-hw)
+        run: npm run build:hw
+
+      - name: Build browser extension
+        run: |
+          npm install -g @resvg/resvg-js   # native SVG→PNG used only to render the extension icons
+          NODE_PATH="$(npm root -g)" node extension/build-ext.mjs
+
+      - name: Syntax check (server + browser scripts)
+        run: |
+          set -e
+          for f in server.js sources/*.js extension/src/*.js public/*.js; do
+            node --check "$f" || { echo "::error file=$f::Syntax error"; exit 1; }
+          done
+          echo "All server + browser scripts parsed cleanly."

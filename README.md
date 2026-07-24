@@ -17,7 +17,7 @@ Counterparty, Bitcoin Stamps, and SRC-20 are some of the oldest and richest asse
 - **Asset-aware UTXO protection** — coin-control classifies every output against the Counterparty + Ordinals + Stamps indexers so asset-bearing coins are never spent as plain sats.
 - **Strict CSP, no remote code** in the MV3 extension; hardware signing via Ledger (WebHID).
 
-See [`SECURITY.md`](SECURITY.md) for the full threat model and how to report vulnerabilities. *(to be added)*
+See [`SECURITY.md`](SECURITY.md) for the full threat model and how to report vulnerabilities.
 
 ## Repository layout
 
