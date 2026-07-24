@@ -4,12 +4,36 @@
 (function () {
   const C = window.WonderCore;
   const $ = (s) => document.querySelector(s);
+  // Wallet-wide safety: no numeric field (quantity, amount, fee, price…) may go below its floor.
+  // One document-level guard covers every Terminal module (send, CP actions, emblem, minting…).
+  document.addEventListener('input', (e) => {
+    const t = e.target;
+    if (!t || t.tagName !== 'INPUT' || t.type !== 'number' || t.value === '' || t.value === '-') return;
+    let floor = (t.getAttribute('min') != null && t.getAttribute('min') !== '') ? parseFloat(t.getAttribute('min')) : 0;
+    if (isNaN(floor)) floor = 0;
+    const v = parseFloat(t.value);
+    if (!isNaN(v) && v < floor) { t.value = floor; t.dispatchEvent(new Event('input', { bubbles: true })); }
+  }, true);
   const el = (t, c, h) => { const n = document.createElement(t); if (c) n.className = c; if (h != null) n.innerHTML = h; return n; };
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const body = () => $('#walletBody');
+  // Appearance skin (dark "Midnight" / light "Parchment") — saved per device. Apply ASAP to avoid a flash.
+  try { if (localStorage.getItem('ww:theme') === 'light') document.documentElement.classList.add('theme-light'); } catch (e) {}
+  function setThemeT(t) { try { localStorage.setItem('ww:theme', t === 'light' ? 'light' : 'dark'); } catch (e) {} document.documentElement.classList.toggle('theme-light', t === 'light'); }
+  function themeMenu() {
+    let cur = 'dark'; try { cur = localStorage.getItem('ww:theme') === 'light' ? 'light' : 'dark'; } catch (e) {}
+    const opt = (val, name, desc) => `<button class="adv-opt${val === cur ? ' on' : ''}" data-theme="${val}"><b>${esc(name)}${val === cur ? ' ✓' : ''}</b><span>${esc(desc)}</span></button>`;
+    modal(`<h3 class="m-title">Appearance</h3><p class="fine">Choose your wallet skin — saved on this device.</p>
+      <div class="adv-menu">${opt('dark', 'Midnight', 'The original deep-black gold theme')}${opt('light', 'Parchment', 'A warm, light-toned skin')}</div>
+      <div class="wbtns"><button class="ghost" id="thClose">Close</button></div>`);
+    $('#thClose').onclick = closeModal;
+    $('#wmodalCard').querySelectorAll('[data-theme]').forEach((b) => (b.onclick = () => { setThemeT(b.dataset.theme); themeMenu(); }));
+  }
   const STAR = '<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" style="vertical-align:-1px"><path d="M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 17.8 5.9 20.4l1.5-6.8L2.2 9l6.9-.7z"/></svg>';
   const fmt2 = (n) => Number(n).toLocaleString('en-US', { maximumFractionDigits: 2 });
   const fmtN = (n, d = 6) => Number(n).toLocaleString('en-US', { maximumFractionDigits: d });
+  // Parse a possibly pre-formatted amount ("1,249,078.1518") back to a Number for summing.
+  const aggNum = (v) => { const n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.eE+-]/g, '')); return isFinite(n) ? n : 0; };
   const shortA = (a) => { a = String(a || ''); return a.length > 16 ? a.slice(0, 7) + '…' + a.slice(-6) : a; };
   // Per-chain dashboard metadata + address resolver.
   const DCH = { btc: { name: 'Bitcoin', sym: 'BTC', price: 'bitcoin' }, eth: { name: 'Ethereum', sym: 'ETH', price: 'ethereum' }, sol: { name: 'Solana', sym: 'SOL', price: 'solana' } };
@@ -179,6 +203,8 @@
   // ── Imported keys (WIF) — signable standalone addresses, shared with the extension popup ──
   let impId = null, IMPORTED = [];
   let HW = null, hwBtcType = 'nativeSegwit'; // connected Ledger accounts (read dashboard for hardware-only users)
+  let hwViewAddr = null, hwViewIndex = null; // when browsing a derived receiving address (≠ index 0), the address being viewed
+  let hwAggregate = false, hwAgg = null; // Phase 2: aggregate ALL used receiving addresses into one portfolio (hwAgg caches the last scan)
   const hwAddr = (t) => (HW && HW.bitcoin && HW.bitcoin[t] ? HW.bitcoin[t].address : (HW && HW.bitcoin ? HW.bitcoin.nativeSegwit.address : null));
   function refreshImported() { try { IMPORTED = C.isUnlocked() ? C.importedAccounts() : []; } catch (_) { IMPORTED = []; } }
   const currentImported = () => (acctKind === 'imported' ? IMPORTED.find((x) => x.id === impId) : null);
@@ -189,7 +215,7 @@
   const canSignBtc = () => acctKind === 'hd' || acctKind === 'imported';
   function impBtcAddr() { const im = currentImported(); return im ? (im.bitcoin[impBtcType(impId)] || im.bitcoin.nativeSegwit).address : null; }
   function activeAddr(acc, ch) {
-    if (acctKind === 'hardware') return ch === 'btc' ? hwAddr(hwBtcType) : (HW && HW[ch] ? HW[ch].address : null);
+    if (acctKind === 'hardware') return ch === 'btc' ? (hwViewAddr || hwAddr(hwBtcType)) : (HW && HW[ch] ? HW[ch].address : null);
     const w = currentWatch(); if (w) return CHAIN_OF[w.chain] === ch ? w.address : null;
     if (acctKind === 'imported') return ch === 'btc' ? impBtcAddr() : null;
     if (!acc) return null; return ch === 'btc' ? acctBtcAddr(acc) : chAddr(acc, ch);
@@ -362,42 +388,158 @@
     window.__activeAccount = null; // Ledger holds the keys — no in-browser signing account
     dashChain = 'btc';
     const bt = a.bitcoin[hwBtcType] ? hwBtcType : 'nativeSegwit';
-    const addr = hwAddr(bt);
+    const mainAddr = hwAddr(bt);
+    const addr = hwViewAddr || mainAddr;
+    const viewing = !!hwViewAddr;
+    const canScan = !!(a.bitcoin[bt] && a.bitcoin[bt].acct);
+    const agg = hwAggregate && canScan; // Phase 2 aggregate portfolio (only when the account key is available)
     body().innerHTML = `
       <div class="dash-head">
-        <div class="acct-sel"><div class="hw-acct">🔐 Ledger · Bitcoin</div>
+        <div class="acct-sel"><div class="hw-acct">🔐 Ledger · Bitcoin${agg ? ' · All addresses' : viewing ? ' · 0/' + hwViewIndex : ''}</div>
           <button class="mini btctype-chip" id="btcTypeBtn" title="Bitcoin address type">${BTC_LABEL[bt]} ▾</button></div>
         <button class="pname-chip" id="pnameChip" hidden title="Your primary Bitcoin Stamps name"></button>
         <div class="dash-head-r"><button class="ghost sm" id="hwDisc">Disconnect</button></div>
       </div>
       <div class="pf-strip" id="pfStrip">
-        <button class="pf-card on solo" data-ch="btc"><span class="pf-ch">Bitcoin · Ledger</span>
+        <button class="pf-card on solo" data-ch="btc"><span class="pf-ch">Bitcoin · Ledger${agg ? ' · aggregate' : ''}</span>
           <span class="pf-usd" id="pfUsd-btc">…</span><span class="pf-nat" id="pfNat-btc">—</span></button>
       </div>
       <div class="dash-tabs">
         <div class="dash-chaintabs"><button class="dctab on" disabled>Bitcoin</button></div>
         <div class="dash-assettabs"><button class="datab${dashTab === 'tokens' ? ' on' : ''}" data-tab="tokens">Tokens</button><button class="datab${dashTab === 'collectibles' ? ' on' : ''}" data-tab="collectibles">Collectibles</button></div>
       </div>
-      <div class="addr-row" style="margin:2px 0 8px"><span class="addr-chip" data-copy="${esc(addr)}" title="Copy address">${esc(shortA(addr))}</span></div>
-      <div id="dashAssets" class="dash-assets"><div class="fine">Loading Bitcoin assets…</div></div>
+      <div class="addr-row" style="margin:2px 0 8px">${agg
+        ? `<span class="addr-chip" id="aggChip" title="Combined across every used receiving address">⊕ ${hwAgg ? hwAgg.usedCount + ' address' + (hwAgg.usedCount === 1 ? '' : 'es') + ' with holdings' : 'aggregating…'}</span><button class="mini" id="hwSingle" title="Back to the single-address view">← single</button>`
+        : `<span class="addr-chip" data-copy="${esc(addr)}" title="Copy address">${esc(shortA(addr))}</span>${viewing ? `<span class="hw-idx" title="Receiving-chain index">0/${hwViewIndex}</span><button class="mini" id="hwMain" title="Back to your main address">← main</button>` : ''}`}</div>
+      <div id="dashAssets" class="dash-assets"><div class="fine">${agg ? 'Scanning your Ledger addresses…' : 'Loading Bitcoin assets…'}</div></div>
       <div class="dash-actions wbtns" id="dashActions"></div>
       <div class="fine" style="margin-top:8px;opacity:.85">🔐 Keys stay on your Ledger — this is a read view. On-device signing for sends &amp; Counterparty is being validated with hardware.</div>`;
     $('#btcTypeBtn').onclick = hwBtcTypeMenu;
     $('#hwDisc').onclick = hwDisconnect;
+    const hwMainBtn = $('#hwMain'); if (hwMainBtn) hwMainBtn.onclick = () => { hwViewAddr = null; hwViewIndex = null; renderHardware(); };
+    const hwSingleBtn = $('#hwSingle'); if (hwSingleBtn) hwSingleBtn.onclick = () => { hwAggregate = false; DASH_ASSETS = null; renderHardware(); };
     body().querySelectorAll('[data-copy]').forEach((el) => (el.onclick = () => copy(el.dataset.copy, el)));
     body().querySelectorAll('.datab').forEach((b) => (b.onclick = () => { dashTab = b.dataset.tab; body().querySelectorAll('.datab').forEach((x) => x.classList.toggle('on', x === b)); renderDashAssets(null); }));
     const bar = $('#dashActions');
-    bar.innerHTML = `<button class="ghost sm" data-a="receive">Receive</button><button class="ghost sm" data-a="activity">⧗ Activity</button><button class="ghost sm" data-a="coincontrol">Coin Control</button>`;
-    bar.querySelectorAll('[data-a]').forEach((b) => (b.onclick = () => { if (b.dataset.a === 'receive') hwReceive(); else if (b.dataset.a === 'activity') openActivity(addr); else if (window.CoinControl) window.CoinControl.open(addr); }));
-    loadPortfolio(null); // activeAddr() returns the Ledger address for the hardware kind
-    loadDashAssets(null);
+    const scanBtn = canScan ? `<button class="ghost sm" data-a="scan" title="Browse the Ledger's receiving addresses one by one">⧉ Addresses</button>` : '';
+    const aggBtn = canScan ? `<button class="ghost sm${agg ? ' on' : ''}" data-a="aggregate" title="Combine all used receiving addresses into one portfolio">⊕ ${agg ? 'Aggregating' : 'Portfolio'}</button>` : '';
+    bar.innerHTML = `<button class="ghost sm" data-a="receive">Receive</button>${aggBtn}${scanBtn}<button class="ghost sm" data-a="activity">⧗ Activity</button><button class="ghost sm" data-a="coincontrol">Coin Control</button>`;
+    bar.querySelectorAll('[data-a]').forEach((b) => (b.onclick = () => {
+      const act = b.dataset.a;
+      if (act === 'receive') hwReceive();
+      else if (act === 'aggregate') { hwAggregate = !hwAggregate; hwViewAddr = null; hwViewIndex = null; DASH_ASSETS = null; renderHardware(); }
+      else if (act === 'scan') hwScanAddrs();
+      else if (act === 'activity') openActivity(addr);
+      else if (window.CoinControl) window.CoinControl.open(addr);
+    }));
+    if (agg) hwLoadAggregate(bt);
+    else { loadPortfolio(null); loadDashAssets(null); } // activeAddr() returns the Ledger address for the hardware kind
+  }
+  // Phase 2 — aggregate EVERY used receiving address into one portfolio: summed BTC + merged
+  // tokens/collectibles (Ledger-Live-style account total). Keys never touch this — addresses are derived
+  // locally from the account key and read through the proxy. Caches into hwAgg so tab-switches don't rescan.
+  async function hwLoadAggregate(bt) {
+    const seq = ++dashSeq;
+    const acct = HW && HW.bitcoin && HW.bitcoin[bt] && HW.bitcoin[bt].acct;
+    if (!acct || !acct.pub || !acct.chainCode) { hwAggregate = false; return renderHardware(); }
+    let derived; try { derived = C.deriveReceiveAddrs(acct.pub, acct.chainCode, bt, 20, 0); }
+    catch (_) { hwAggregate = false; return renderHardware(); }
+    if (!DASH_PRICES || !DASH_PRICES.bitcoin) { try { DASH_PRICES = await fetch('api/prices').then((r) => r.json()); } catch (_) {} }
+    const box = $('#dashAssets');
+    let btcTotal = 0, done = 0;
+    const tokMap = new Map(); const colls = []; const used = []; let primaryName = null;
+    const N = 5;
+    for (let i = 0; i < derived.length; i += N) {
+      if (seq !== dashSeq) return; // user switched away mid-scan
+      await Promise.all(derived.slice(i, i + N).map(async (d) => {
+        try {
+          const [bal, a2] = await Promise.all([
+            fetch('api/btc/' + encodeURIComponent(d.address)).then((r) => r.json()).catch(() => ({})),
+            fetch('api/btc/' + encodeURIComponent(d.address) + '/assets').then((r) => r.json()).catch(() => ({})),
+          ]);
+          const btc = (bal.balanceSats || 0) / 1e8; btcTotal += btc;
+          const stampCpids = {}; (a2.stamps || []).forEach((s) => { if (s.cpid) stampCpids[s.cpid] = 1; });
+          // SRC-20 `amount` arrives PRE-FORMATTED (fmtSrc20 → e.g. "1,249,078.1518"), so Number() on it is
+          // NaN. Parse the numeric out for summing, but keep the original formatted string so a token on a
+          // single address displays with full fidelity (only reformat when it truly spans >1 address).
+          (a2.src20 || []).forEach((x) => { const k = 'src20:' + (x.tick || x.name); const cur = tokMap.get(k) || { kind: 'src20', name: x.tick, tick: x.tick, img: x.img, _num: 0, _n: 0, _disp0: x.amount }; cur._num += aggNum(x.amount); cur._n += 1; tokMap.set(k, cur); });
+          (a2.counterparty || []).forEach((x) => { if (stampCpids[x.asset]) return; const amt = (x.qtyNormalized != null ? x.qtyNormalized : x.quantity); const k = 'cp:' + x.asset; const cur = tokMap.get(k) || { kind: 'cp', name: x.name || x.asset, asset: x.asset, _num: 0, _n: 0, _disp0: amt }; cur._num += aggNum(amt); cur._n += 1; tokMap.set(k, cur); });
+          (a2.stamps || []).forEach((s) => colls.push({ kind: 'stamp', title: '#' + s.stamp, img: 'api/stamp/' + s.stamp + '/content', stamp: s.stamp, cpid: s.cpid, mime: s.mime || null, qty: (s.quantity != null ? Number(s.quantity) : 1), _idx: d.index }));
+          const hasStuff = btc > 0 || (a2.stamps || []).length || (a2.src20 || []).length || (a2.counterparty || []).length;
+          if (hasStuff) {
+            used.push(d.index);
+            // .btc names usually live on a single address — only query where there's activity
+            try { const nm = await fetch('api/src101/names/' + encodeURIComponent(d.address)).then((r) => r.json()); if (nm && nm.primary && !primaryName) primaryName = nm.primary; (nm.names || []).filter((n) => !n.expired).forEach((n) => colls.unshift({ kind: 'name', title: n.name, name: n.name, img: n.img ? ('api/img?url=' + encodeURIComponent(n.img)) : null, primary: !!n.primary, expire: n.expire, deploy: n.deploy, addressRecord: n.addressRecord, _idx: d.index })); } catch (_) {}
+          }
+        } catch (_) {}
+        done++;
+        if (box && box.querySelector('.fine')) box.querySelector('.fine').textContent = `Scanning ${done} / ${derived.length} addresses…`;
+      }));
+    }
+    if (seq !== dashSeq) return;
+    // Finalize token display: single-address → keep the exact original formatted amount; multi-address →
+    // show the summed numeric (formatted). This fixes SRC-20 balances that were showing 0 in aggregate.
+    const tokens = [...tokMap.values()].map((t) => ({ kind: t.kind, name: t.name, tick: t.tick, asset: t.asset, img: t.img, amount: (t._n <= 1 ? t._disp0 : t._num.toLocaleString('en-US', { maximumFractionDigits: 8 })) }));
+    hwAgg = { usedCount: used.length, indices: used.sort((x, y) => x - y), btcTotal, tokenCount: tokens.length, collCount: colls.length };
+    DASH_ASSETS = { tokens, collectibles: colls, primaryName, note: '' };
+    const price = (DASH_PRICES && DASH_PRICES.bitcoin) || 0;
+    const uEl = $('#pfUsd-btc'), nEl = $('#pfNat-btc');
+    if (uEl) uEl.textContent = mask(price ? '$' + fmt2(btcTotal * price) : '—');
+    if (nEl) nEl.textContent = mask(fmtN(btcTotal, 8) + ' BTC');
+    const chip = $('#aggChip'); if (chip) chip.textContent = '⊕ ' + used.length + ' address' + (used.length === 1 ? '' : 'es') + ' with holdings';
+    renderDashAssets(null);
   }
   function hwBtcTypeMenu() {
     if (!HW || !HW.bitcoin) return;
     const types = [['nativeSegwit', 'Native SegWit · bc1q'], ['legacy', 'Legacy · 1… (OG Counterparty / Stamps)'], ['taproot', 'Taproot · bc1p'], ['nestedSegwit', 'Nested SegWit · 3…']].filter(([t]) => HW.bitcoin[t]);
     modal(`<h3 class="m-title">Bitcoin address type · Ledger</h3><div class="acct-list">${types.map(([t, l]) => `<button class="acct" data-t="${t}" style="width:100%;text-align:left;cursor:pointer;${t === hwBtcType ? 'border-color:var(--gold)' : ''}"><div class="acct-l"><span class="acct-lab">${l.split(' · ')[0]}</span><span class="acct-hint">${esc(l.split(' · ')[1] || '')}</span></div></button>`).join('')}</div><div class="wbtns"><button class="ghost" id="htClose">Close</button></div>`);
     $('#htClose').onclick = closeModal;
-    $('#wmodalCard').querySelectorAll('[data-t]').forEach((b) => (b.onclick = () => { hwBtcType = b.dataset.t; DASH_ASSETS = null; closeModal(); renderHardware(); }));
+    $('#wmodalCard').querySelectorAll('[data-t]').forEach((b) => (b.onclick = () => { hwBtcType = b.dataset.t; hwViewAddr = null; hwViewIndex = null; hwAggregate = false; hwAgg = null; DASH_ASSETS = null; closeModal(); renderHardware(); }));
+  }
+  // Ledger address browser — the device hands out a fresh receiving address each time, so funds/assets
+  // can sit beyond index 0. Derive the first 20 from the account key (locally, no device), scan each,
+  // and let the user open the one holding their assets.
+  async function hwScanAddrs() {
+    const bt = HW && HW.bitcoin && HW.bitcoin[hwBtcType] ? hwBtcType : 'nativeSegwit';
+    const acct = HW && HW.bitcoin && HW.bitcoin[bt] && HW.bitcoin[bt].acct;
+    if (!acct || !acct.pub || !acct.chainCode) {
+      modal(`<h3 class="m-title">Receiving addresses</h3><p class="fine">Your Ledger didn't return the account key needed to scan the address chain. You're on the main address (index 0). Try reconnecting, or update the Ledger Bitcoin app.</p><div class="wbtns"><button class="ghost" id="hsClose">Close</button></div>`);
+      $('#hsClose').onclick = closeModal; return;
+    }
+    let derived;
+    try { derived = C.deriveReceiveAddrs(acct.pub, acct.chainCode, bt, 20, 0); }
+    catch (e) { modal(`<h3 class="m-title">Receiving addresses</h3><div class="statusline err">Could not derive addresses: ${esc(e.message || 'error')}</div><div class="wbtns"><button class="ghost" id="hsClose">Close</button></div>`); $('#hsClose').onclick = closeModal; return; }
+    modal(`<h3 class="m-title">Receiving addresses · ${esc(BTC_LABEL[bt].split(' · ')[0])}</h3>
+      <p class="fine">Ledger issues a fresh address each receive — scanning the first 20 for balances &amp; assets. Tap one to view its holdings.</p>
+      <div id="hsBody"><div class="statusline load">Scanning 0 / ${derived.length}…</div></div>
+      <div class="wbtns"><button class="ghost" id="hsClose">Close</button></div>`);
+    $('#hsClose').onclick = closeModal;
+    const results = []; let done = 0; const N = 5;
+    for (let i = 0; i < derived.length; i += N) {
+      await Promise.all(derived.slice(i, i + N).map(async (d) => {
+        const sum = { btc: 0, tokens: 0, coll: 0, has: false };
+        try {
+          const [bal, assets] = await Promise.all([
+            fetch('api/btc/' + encodeURIComponent(d.address)).then((r) => r.json()).catch(() => ({})),
+            fetch('api/btc/' + encodeURIComponent(d.address) + '/assets').then((r) => r.json()).catch(() => ({})),
+          ]);
+          sum.btc = (bal.balanceSats || 0) / 1e8;
+          const st = (assets.stamps || []).length, s2 = (assets.src20 || []).length, cp = (assets.counterparty || []).length;
+          sum.tokens = s2 + cp; sum.coll = st; sum.has = sum.btc > 0 || st > 0 || s2 > 0 || cp > 0;
+        } catch (_) {}
+        results.push({ ...d, sum }); done++;
+        const st = $('#hsBody'); if (st && st.querySelector('.load')) st.querySelector('.load').textContent = `Scanning ${done} / ${derived.length}…`;
+      }));
+    }
+    results.sort((a, b) => a.index - b.index);
+    const anyHas = results.some((r) => r.sum.has);
+    const rows = results.map((r) => `<button class="acct hw-scan-row${r.sum.has ? ' has' : ''}" data-view="${esc(r.address)}" data-i="${r.index}" style="width:100%;text-align:left;cursor:pointer">
+      <div class="acct-l"><span class="acct-lab">0/${r.index} · ${esc(shortA(r.address))}</span>
+      <span class="acct-hint">${r.sum.btc > 0 ? fmtN(r.sum.btc, 8) + ' BTC' : '—'}${r.sum.tokens ? ' · ' + r.sum.tokens + ' token' + (r.sum.tokens === 1 ? '' : 's') : ''}${r.sum.coll ? ' · ' + r.sum.coll + ' collectible' + (r.sum.coll === 1 ? '' : 's') : ''}</span></div>
+      <div class="acct-r">${r.sum.has ? '<span class="hw-has">●</span>' : ''}→</div></button>`).join('');
+    const bodyEl = $('#hsBody');
+    if (bodyEl) bodyEl.innerHTML = anyHas ? rows : `<div class="fine">No balances or assets found across the first 20 addresses (index 0–19). If your holdings are on higher indices, let me know and I'll raise the scan depth.</div>` + rows;
+    if (bodyEl) bodyEl.querySelectorAll('[data-view]').forEach((b) => (b.onclick = () => { hwViewAddr = b.dataset.view; hwViewIndex = +b.dataset.i; DASH_ASSETS = null; closeModal(); renderHardware(); }));
   }
   function hwReceive() {
     if (!HW || !HW.bitcoin) return;
@@ -414,7 +556,7 @@
   }
   async function hwDisconnect() {
     try { if (window.HardwareWallet && window.HardwareWallet.disconnect) await window.HardwareWallet.disconnect(); } catch (_) {}
-    HW = null; acctKind = 'hd'; render();
+    HW = null; hwViewAddr = null; hwViewIndex = null; hwAggregate = false; hwAgg = null; acctKind = 'hd'; render();
   }
 
   // Account selector: HD accounts + watch-only entries (shared localStorage with the extension popup).
@@ -574,7 +716,7 @@
         const stampCpids = {}; (a.stamps || []).forEach((s) => { if (s.cpid) stampCpids[s.cpid] = 1; });
         (a.src20 || []).forEach((x) => res.tokens.push({ kind: 'src20', name: x.tick, amount: x.amount, img: x.img, tick: x.tick }));
         (a.counterparty || []).forEach((x) => { if (stampCpids[x.asset]) return; res.tokens.push({ kind: 'cp', name: x.name || x.asset, amount: (x.qtyNormalized != null ? x.qtyNormalized : x.quantity), asset: x.asset }); });
-        res.collectibles = (a.stamps || []).map((s) => ({ kind: 'stamp', title: '#' + s.stamp, img: 'api/stamp/' + s.stamp + '/content', stamp: s.stamp, cpid: s.cpid, qty: (s.quantity != null ? Number(s.quantity) : 1) }));
+        res.collectibles = (a.stamps || []).map((s) => ({ kind: 'stamp', title: '#' + s.stamp, img: 'api/stamp/' + s.stamp + '/content', stamp: s.stamp, cpid: s.cpid, mime: s.mime || null, qty: (s.quantity != null ? Number(s.quantity) : 1) }));
         // SRC-101 (.btc names) — surface the account's names as collectibles + capture the primary name.
         try {
           const nm = await fetch('api/src101/names/' + encodeURIComponent(addr)).then((r) => r.json());
@@ -645,19 +787,32 @@
         const ph = n.kind === 'name' ? `<span class="dnft-ph name-ph">${esc((n.name || '').replace('.btc', ''))}<small>.btc</small></span>` : '<span class="dnft-ph"></span>';
         const star = n.kind === 'name' && n.primary ? `<span class="dnft-star" title="Primary name">${STAR}</span>` : '';
         const qb = (n.qty != null && n.qty > 1) ? `<span class="dnft-qty" title="You hold ${esc(String(n.qty))}">×${esc(String(n.qty))}</span>` : '';
-        const imgTag = n.img ? `<img loading="lazy"${n.stamp != null ? ` data-stampfr="${esc(String(n.stamp))}"` : ''} src="${esc(n.img)}"/>` : ph;
-        return `<div class="dnft${nameCls}" data-i="${i}" title="${esc(n.title)}${n.qty != null ? ' · you hold ' + esc(String(n.qty)) : ''}">${star}${qb}${imgTag}<span class="dnft-t">${n.compressed ? 'c·' : ''}${esc(n.title)}</span></div>`;
+        // Render by MIME, not by load failure: only genuine HTML / recursive stamps get the iframe + HTML
+        // badge. Image stamps use <img>; a slow/errored image falls back to a neutral "couldn't load" state.
+        const isHtmlStamp = n.stamp != null && n.mime && /html|javascript|text\//i.test(n.mime);
+        let media = ph, badge = '';
+        if (isHtmlStamp) {
+          media = `<iframe class="dnft-frame" sandbox="allow-scripts" scrolling="no" loading="lazy" src="api/stamp/${encodeURIComponent(n.stamp)}/content"></iframe>`;
+          badge = '<span class="htmlbadge">HTML</span>';
+        } else if (n.img) {
+          media = `<img loading="lazy"${n.stamp != null ? ` data-stamperr="${esc(String(n.stamp))}"` : ''} src="${esc(n.img)}"/>`;
+        }
+        return `<div class="dnft${nameCls}" data-i="${i}" title="${esc(n.title)}${n.qty != null ? ' · you hold ' + esc(String(n.qty)) : ''}">${star}${qb}${media}${badge}<span class="dnft-t">${n.compressed ? 'c·' : ''}${esc(n.title)}</span></div>`;
       }).join('')}</div>`;
       box.querySelectorAll('.dnft').forEach((cell) => (cell.onclick = () => { const n = DASH_ASSETS.collectibles[+cell.dataset.i]; if (!n) return; if (n.kind === 'name') nameDetailModal(n, acc); else if (n.stamp != null) stampDetailModal(n, acc); else nftDetailModal(n, acc); }));
-      // HTML/recursive stamps can't render as <img> — swap to a sandboxed iframe preview (same-origin api/), tag as HTML.
-      box.querySelectorAll('img[data-stampfr]').forEach((img) => img.addEventListener('error', () => {
-        const sid = img.getAttribute('data-stampfr'); if (!sid) return;
-        const cell = img.closest('.dnft');
-        const ifr = document.createElement('iframe'); ifr.className = 'dnft-frame'; ifr.setAttribute('sandbox', 'allow-scripts'); ifr.setAttribute('scrolling', 'no'); ifr.loading = 'lazy';
-        ifr.src = 'api/stamp/' + encodeURIComponent(sid) + '/content';
-        if (img.parentNode) img.parentNode.replaceChild(ifr, img);
-        if (cell && !cell.querySelector('.htmlbadge')) { const bd = document.createElement('span'); bd.className = 'htmlbadge'; bd.textContent = 'HTML'; cell.appendChild(bd); }
-      }, { once: true }));
+      // Image stamp failed: auto-retry once (slow/transient upstream), then a neutral "couldn't load"
+      // placeholder — never mislabel a broken image as an HTML stamp.
+      box.querySelectorAll('img[data-stamperr]').forEach((img) => {
+        let tries = 0;
+        img.addEventListener('error', () => {
+          const sid = img.getAttribute('data-stamperr'); if (!sid) return;
+          tries++;
+          if (tries === 1) { setTimeout(() => { img.src = 'api/stamp/' + encodeURIComponent(sid) + '/content?retry=1'; }, 1400); return; }
+          const el2 = document.createElement('span'); el2.className = 'dnft-err'; el2.title = 'Preview didn’t load — click to open';
+          el2.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 4.3 1.8 19a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg><small>Couldn’t load</small>';
+          if (img.parentNode) img.parentNode.replaceChild(el2, img);
+        });
+      });
     }
   }
 
@@ -723,8 +878,9 @@
             <button class="m-act" data-act="dispenser">Dispenser</button>
             <button class="m-act" data-act="dividend">Dividend</button>
             <button class="m-act danger" data-act="burn">Burn</button>
+            <button class="m-act" data-act="attach">Attach</button>
             ${acctKind === 'imported' ? '' : '<button class="m-act gold" data-act="vault">Vault</button>'}
-          </div>` : '<div class="fine" style="margin-top:6px">Watch-only — switch to your own account for Send / Dispenser / Dividend / Burn / Vault.</div>'}
+          </div>` : '<div class="fine" style="margin-top:6px">Watch-only — switch to your own account for Send / Dispenser / Dividend / Burn / Attach / Vault.</div>'}
         </div>
         <div class="wbtns"><button class="ghost" id="sdmClose">Close</button></div>`);
       const card = $('#wmodalCard');
@@ -736,6 +892,7 @@
         else if (act === 'dispenser') window.CpActions && window.CpActions.quick(acc.account, btc, 'dispenser', { asset: cpid });
         else if (act === 'dividend') window.CpActions && window.CpActions.quick(acc.account, btc, 'dividend', { asset: cpid });
         else if (act === 'burn') window.CpActions && window.CpActions.quick(acc.account, btc, 'destroy', { asset: cpid });
+        else if (act === 'attach') window.CpActions && window.CpActions.attachDetach(acc.account, btc, { asset: cpid, qty: 1 });
         else if (act === 'vault') window.EmblemBridge && (window.EmblemBridge.vaultAsset
           ? window.EmblemBridge.vaultAsset(acc.account, acc.ethereum.address, btc, cpid, { label: '#' + stampNo })
           : window.EmblemBridge.open(acc.account, acc.ethereum.address, btc));
@@ -776,8 +933,9 @@
             <button class="m-act" data-act="dispenser">Dispenser</button>
             <button class="m-act" data-act="dividend">Dividend</button>
             <button class="m-act danger" data-act="destroy">Destroy</button>
+            <button class="m-act" data-act="attach">Attach</button>
             ${acctKind === 'imported' ? '' : '<button class="m-act gold" data-act="vault">Vault</button>'}
-          </div>` : '<div class="fine" style="margin-top:6px">Watch-only — switch to your own account for Send / Dispenser / Dividend / Destroy / Vault.</div>'}
+          </div>` : '<div class="fine" style="margin-top:6px">Watch-only — switch to your own account for Send / Dispenser / Dividend / Destroy / Attach / Vault.</div>'}
         </div>
         <div class="wbtns"><button class="ghost" id="ctmClose">Close</button></div>`);
       const card = $('#wmodalCard');
@@ -792,7 +950,8 @@
           if (window.EmblemBridge) (window.EmblemBridge.vaultAsset
             ? window.EmblemBridge.vaultAsset(acc.account, acc.ethereum.address, btc, cpid, { label: t.name || cpid })
             : window.EmblemBridge.open(acc.account, acc.ethereum.address, btc));
-        } else if (window.CpActions) window.CpActions.quick(acc.account, btc, act, { asset: cpid });
+        } else if (act === 'attach') { if (window.CpActions) window.CpActions.attachDetach(acc.account, btc, { asset: cpid, qty: 1 }); }
+        else if (window.CpActions) window.CpActions.quick(acc.account, btc, act, { asset: cpid });
       }));
     }
   }
@@ -975,6 +1134,7 @@
         <button class="adv-opt" data-adv="sign"><b>Sign message</b><span>Prove ownership of an address</span></button>
         <button class="adv-opt" data-adv="hw"><b>Hardware wallet</b><span>Connect a Ledger / signing device</span></button>
         <button class="adv-opt" data-adv="custom"><b>Custom derivation path</b><span>Derive an address at a specific path</span></button>
+        <button class="adv-opt" data-adv="theme"><b>Appearance</b><span>Dark or light wallet skin</span></button>
         <button class="adv-opt danger" data-adv="reveal"><b>Reveal seed phrase</b><span>Show your 12/24-word recovery phrase</span></button>
         <button class="adv-opt danger" data-adv="secrets"><b>Export private keys</b><span>Export raw keys for this account</span></button>
       </div>
@@ -985,6 +1145,7 @@
       if (a === 'addresses') receiveView(acc);
       else if (a === 'sign') flowSignMessage();
       else if (a === 'hw') window.HardwareWallet && window.HardwareWallet.connectFlow();
+      else if (a === 'theme') themeMenu();
       else if (a === 'custom') customPath();
       else if (a === 'reveal') gatedRevealSeed();
       else if (a === 'secrets') gatedSecrets(curAccount);

@@ -25,13 +25,58 @@ let transport = null;
 const isSupported = () => typeof navigator !== 'undefined' && !!navigator.hid;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+const LEDGER_VID = 0x2c97; // Ledger USB vendor id (Nano S / X / S+)
 async function connect() {
   if (!isSupported()) throw new Error('WebHID not available — use a Chromium browser over HTTPS.');
-  transport = await TransportWebHID.create(); // prompts device permission + selection
+  // Drive WebHID directly (Ledger's own request() crashes with "reading 'open'" if the picker returns
+  // nothing). 1) reuse an already-granted, connected Ledger; 2) else PROMPT the browser device picker.
+  let device = null;
+  try {
+    const granted = (await navigator.hid.getDevices().catch(() => [])) || [];
+    device = granted.find((d) => d.vendorId === LEDGER_VID) || null;
+  } catch (_) {}
+  if (!device) {
+    let picked = [];
+    try { picked = await navigator.hid.requestDevice({ filters: [{ vendorId: LEDGER_VID }] }); }
+    catch (e) {
+      const m = String((e && e.message) || e || '');
+      if (/gesture|activation/i.test(m)) throw new Error('The device prompt needs a fresh click — click Connect Ledger again.');
+      throw e;
+    }
+    device = (picked && picked.length) ? (picked.find((d) => d.vendorId === LEDGER_VID) || picked[0]) : null;
+  }
+  if (!device) throw new Error('No Ledger selected. Plug in & unlock your Ledger, open the Bitcoin app, then click Connect and choose your device in the browser prompt.');
+  try {
+    transport = await TransportWebHID.open(device); // opens + wires the transport (same call Ledger uses)
+  } catch (e) {
+    const m = String((e && e.message) || e || '');
+    if (/in use|already open|failed to open|access denied|notallowed|securityerror|unable to claim/i.test(m)) {
+      throw new Error('Your Ledger is busy — it looks open in another app or tab. Quit Ledger Live, close other Wonder Wallet tabs, then unplug & replug the Ledger and reconnect.');
+    }
+    throw new Error('Could not open the Ledger (' + m + '). Make sure it’s unlocked with the Bitcoin app open, then try again.');
+  }
   return { connected: true };
 }
 async function disconnect() { try { await transport?.close(); } catch (_) {} transport = null; }
 function requireDevice() { if (!transport) throw new Error('No device connected.'); return transport; }
+
+// Force a FRESH device grant via the browser picker, ignoring any already-granted (possibly stale)
+// device. This is the recovery that reliably works when a silently-reused grant lands the device in a
+// bad state (seen in the extension context): drop the old transport, re-prompt, open the chosen device.
+// Must be called from a user gesture (a button click) so requestDevice() is allowed to show the picker.
+async function forceReconnect() {
+  if (!isSupported()) throw new Error('WebHID not available — use a Chromium browser over HTTPS.');
+  try { await transport?.close(); } catch (_) {}
+  transport = null;
+  let picked = [];
+  try { picked = await navigator.hid.requestDevice({ filters: [{ vendorId: LEDGER_VID }] }); }
+  catch (e) { const m = String((e && e.message) || e || ''); if (/gesture|activation/i.test(m)) throw new Error('The device prompt needs a fresh click — click Reconnect again.'); throw e; }
+  const device = (picked && picked.length) ? (picked.find((d) => d.vendorId === LEDGER_VID) || picked[0]) : null;
+  if (!device) throw new Error('No Ledger selected. Unlock it, open the Bitcoin app, then choose your device in the browser prompt.');
+  try { transport = await TransportWebHID.open(device); }
+  catch (e) { const m = String((e && e.message) || e || ''); throw new Error('Could not open the Ledger (' + m + '). Make sure it’s unlocked with the Bitcoin app open.'); }
+  return { connected: true };
+}
 
 // ── Ledger app management (BOLOS) ──────────────────────────────────────────
 // A Ledger runs ONE app at a time. Bitcoin address/sign needs the Bitcoin app open,
@@ -86,12 +131,32 @@ async function getAddresses(account = 0) {
   requireDevice();
   const out = { account, bitcoin: {}, ethereum: null, solana: null, missing: [] };
 
-  // Bitcoin (primary) — must succeed. Needs the Bitcoin app.
-  await ensureApp('Bitcoin');
-  const btcApp = new Btc({ transport });
-  out.bitcoin.nativeSegwit = { address: (await btcApp.getWalletPublicKey(PATHS.nativeSegwit(account), { format: 'bech32' })).bitcoinAddress, path: 'm/' + PATHS.nativeSegwit(account) };
+  // Bitcoin (primary) — must succeed. Needs the Bitcoin app. The app-switch + USB re-enumeration can
+  // need a second beat before the first read lands (esp. in the extension context, where it surfaced as
+  // a false "open the Bitcoin app" / INS_NOT_SUPPORTED). Retry the ensureApp + first read once.
+  let btcApp;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await ensureApp('Bitcoin');
+      btcApp = new Btc({ transport });
+      out.bitcoin.nativeSegwit = { address: (await btcApp.getWalletPublicKey(PATHS.nativeSegwit(account), { format: 'bech32' })).bitcoinAddress, path: 'm/' + PATHS.nativeSegwit(account) };
+      break;
+    } catch (e) { if (attempt >= 1) throw e; await sleep(600); }
+  }
   out.bitcoin.legacy = { address: (await btcApp.getWalletPublicKey(PATHS.legacy(account), { format: 'legacy' })).bitcoinAddress, path: 'm/' + PATHS.legacy(account) };
   try { out.bitcoin.taproot = { address: (await btcApp.getWalletPublicKey(PATHS.taproot(account), { format: 'bech32m' })).bitcoinAddress, path: 'm/' + PATHS.taproot(account) }; } catch (_) {}
+
+  // Account-level pubkey + chaincode per type → lets the UI derive the WHOLE receiving-address chain
+  // locally (a Ledger issues a fresh address each receive), so balances/assets beyond index 0 are
+  // visible. Non-fatal: if unavailable, the wallet just falls back to the single index-0 view.
+  const acctKey = async (p) => { try { const r = await btcApp.getWalletPublicKey(p, {}); return (r && r.publicKey && r.chainCode) ? { pub: r.publicKey, chainCode: r.chainCode } : null; } catch (_) { return null; } };
+  try {
+    out.bitcoin.nativeSegwit.acct = await acctKey(`84'/0'/${account}'`);
+    out.bitcoin.legacy.acct = await acctKey(`44'/0'/${account}'`);
+    if (out.bitcoin.taproot) out.bitcoin.taproot.acct = await acctKey(`86'/0'/${account}'`);
+  } catch (_) {}
+  // Master key fingerprint — needed to annotate PSBTs so the device recognises its own inputs/change at sign time.
+  try { out.mfp = await new AppClient(transport).getMasterFingerprint(); } catch (_) { out.mfp = null; }
 
   // Ethereum (optional) — switches to the Ethereum app.
   try { await ensureApp('Ethereum'); const ethApp = new Eth(transport); out.ethereum = { address: (await ethApp.getAddress(PATHS.ethereum(account))).address, path: 'm/' + PATHS.ethereum(account) }; }
@@ -148,6 +213,6 @@ async function signSolMessage(messageBytes, account = 0) {
   return signature; // Uint8Array(64)
 }
 
-const WonderHW = { isSupported, connect, disconnect, getAddresses, getChainAddress, signPsbt, signEthTx, signSolMessage, vendor: 'ledger' };
+const WonderHW = { isSupported, connect, forceReconnect, disconnect, getAddresses, getChainAddress, signPsbt, signEthTx, signSolMessage, vendor: 'ledger' };
 if (typeof window !== 'undefined') window.WonderHW = WonderHW;
 export default WonderHW;

@@ -82,4 +82,27 @@ async function getRawTx(txid) {
   return raw;
 }
 
-module.exports = { getAddress, getFees, getTipHeight, getRawTx, BASE };
+// Decoded tx: inputs (with prevout values + addresses) + outputs + fee/vsize/status. Used by the
+// RBF fee-bump flow, which needs the original inputs' values and the recipient output to safely
+// reconstruct a higher-fee replacement.
+async function getTxInfo(txid) {
+  const key = `btc:txinfo:${txid}`;
+  const hit = cacheGet(key);
+  if (hit) return hit;
+  const r = await fetch(`${BASE}/tx/${txid}`, { headers: { Accept: 'application/json' } });
+  if (!r.ok) { const e = new Error('tx_not_found'); e.status = 404; throw e; }
+  const t = await r.json();
+  const out = {
+    txid: t.txid,
+    vin: (t.vin || []).map((v) => ({ txid: v.txid, vout: v.vout, value: (v.prevout && v.prevout.value) || 0, address: (v.prevout && v.prevout.scriptpubkey_address) || null })),
+    vout: (t.vout || []).map((o) => ({ address: o.scriptpubkey_address || null, value: o.value || 0 })),
+    fee: t.fee || 0,
+    vsize: Math.ceil((t.weight || 0) / 4),
+    confirmed: !!(t.status && t.status.confirmed),
+    rbf: (t.vin || []).some((v) => (v.sequence != null ? v.sequence : 0xffffffff) < 0xfffffffe), // BIP-125 opt-in
+  };
+  cacheSet(key, out, 20_000); // short — an unconfirmed tx can confirm or get replaced
+  return out;
+}
+
+module.exports = { getAddress, getFees, getTipHeight, getRawTx, getTxInfo, BASE };

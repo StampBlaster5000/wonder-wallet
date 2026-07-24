@@ -29,6 +29,7 @@
   async function copy(t, b) { try { await navigator.clipboard.writeText(t); if (b) { const o = b.textContent; b.textContent = 'copied ✓'; setTimeout(() => (b.textContent = o), 1200); } } catch (_) {} }
 
   async function connectFlow() {
+    const bundleP = loadBundle().catch(() => null); // pre-warm so the Connect click → device picker keeps its user-gesture
     modal(`<h3 class="m-title">Connect a hardware wallet</h3>
       <p class="fine">Keep your keys on a <b>Ledger</b> — Wonder Wallet builds the transactions (including <b>asset-safe, Counterparty-aware PSBTs</b>) and you approve them on the device. Keys never leave the Ledger.</p>
       <p class="fine">Unlock your Ledger and <b>open the Bitcoin app</b> before connecting. To also add Ethereum / Solana, install those apps too — the wallet will switch between them and you approve each on the device.</p>
@@ -39,25 +40,35 @@
       <div id="hwStatus" class="statusline" hidden></div>
       <div class="wbtns"><button class="ghost" id="hwx">Cancel</button><button class="primary" id="hwConnect">Connect Ledger</button></div>`);
     $('#hwx').onclick = close;
-    $('#hwConnect').onclick = async () => {
-      const s = $('#hwStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Loading hardware module…';
+    // Shared connect runner. `fresh` forces the browser device picker (ignores any stale reused grant) —
+    // this is the recovery that reliably works when a silently-reused device is in a bad state.
+    async function runConnect(fresh) {
+      const s = $('#hwStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = fresh ? 'Choose your Ledger in the browser prompt…' : 'Loading hardware module…';
       try {
-        HW = await loadBundle();
+        HW = (await bundleP) || (await loadBundle()); // pre-warmed above; retry if it hadn't finished
         if (!HW.isSupported()) { s.className = 'statusline err'; s.textContent = 'WebHID not available — use a Chromium browser (Chrome/Brave/Edge) over HTTPS, with the Ledger unlocked.'; return; }
-        s.textContent = 'Approve the connection on your Ledger…';
-        await HW.connect();
+        s.textContent = fresh ? 'Choose your Ledger in the browser prompt…' : 'Choose your Ledger in the browser prompt, then approve on the device…';
+        if (fresh && HW.forceReconnect) await HW.forceReconnect(); else await HW.connect();
         s.textContent = 'Reading Bitcoin addresses — open/allow apps on the device if it prompts…';
         ACCTS = await HW.getAddresses(0);
         showAccounts();
       } catch (e) {
         s.className = 'statusline err';
         const m = String(e && e.message || '');
-        s.textContent = /No device selected|cancelled|user gesture/i.test(m) ? 'Connection cancelled or no device selected.'
-          : /open the .* app|INS_NOT_SUPPORTED|0x6d00|6d00|6511|6e00/i.test(m) ? 'Open the Bitcoin app on your Ledger (unlock the device first), then Connect again.'
-          : /locked|0x5515|5515/i.test(m) ? 'Your Ledger is locked — unlock it and open the Bitcoin app, then Connect again.'
+        const msg = /No device selected|cancelled|user gesture/i.test(m) ? 'Connection cancelled or no device selected.'
+          : /open the .* app|INS_NOT_SUPPORTED|0x6d00|6d00|6511|6e00/i.test(m) ? 'Couldn’t read the Bitcoin app — make sure the Ledger is unlocked with the Bitcoin app open, then use Reconnect below.'
+          : /locked|0x5515|5515/i.test(m) ? 'Your Ledger is locked — unlock it and open the Bitcoin app, then use Reconnect below.'
           : ('Couldn’t connect: ' + m);
+        // Offer a fresh-picker reconnect: the reliable recovery when a reused grant is stale.
+        // Surface the RAW device error (+ console) so a failing attempt is diagnosable from a screenshot.
+        try { console.error('[WonderHW] connect failed:', e); } catch (_) {}
+        s.innerHTML = `<div>${esc(msg)}</div>`
+          + `<div class="fine" style="margin-top:6px;opacity:.7;word-break:break-word">details: ${esc(m || 'unknown').slice(0, 200)}</div>`
+          + `<button class="primary" id="hwReconnect" style="margin-top:8px">Reconnect — choose device</button>`;
+        const rb = $('#hwReconnect'); if (rb) rb.onclick = () => runConnect(true);
       }
-    };
+    }
+    $('#hwConnect').onclick = () => runConnect(false);
   }
 
   function showAccounts() {

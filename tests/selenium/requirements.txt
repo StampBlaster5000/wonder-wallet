@@ -1,0 +1,4 @@
+selenium>=4.20
+pytest>=8.0
+pytest-xdist>=3.5      # optional: parallel runs (-n auto)
+webdriver-manager>=4.0 # optional: auto-fetches a matching chromedriver

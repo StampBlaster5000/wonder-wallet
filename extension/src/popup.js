@@ -5,6 +5,16 @@
 (function () {
   var C = window.WonderCore;
   var app = document.getElementById('app');
+  // Wallet-wide safety: no numeric field (quantity, amount, fee, price…) may go below its floor.
+  // The native spinner's down-arrow and pasted/typed negatives are both clamped (floor = min attr, else 0).
+  document.addEventListener('input', function (e) {
+    var el = e.target;
+    if (!el || el.tagName !== 'INPUT' || el.type !== 'number' || el.value === '' || el.value === '-') return;
+    var floor = (el.getAttribute('min') != null && el.getAttribute('min') !== '') ? parseFloat(el.getAttribute('min')) : 0;
+    if (isNaN(floor)) floor = 0;
+    var v = parseFloat(el.value);
+    if (!isNaN(v) && v < floor) { el.value = floor; el.dispatchEvent(new Event('input', { bubbles: true })); }
+  }, true);
   var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); };
   var short = function (a) { a = String(a || ''); return a.length > 16 ? a.slice(0, 7) + '…' + a.slice(-6) : a; };
   var fmt = function (x, d) { var n = Number(x); return isFinite(n) ? n.toLocaleString('en-US', { maximumFractionDigits: d }) : '0'; };
@@ -16,6 +26,9 @@
   var loadMap = function (k) { try { return JSON.parse(localStorage.getItem(k) || '{}'); } catch (e) { return {}; } };
   var lsGet = function (k, d) { try { var v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } };
   var lsSet = function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+  // Apply the saved appearance skin ASAP (before first paint) so there's no dark→light flash.
+  try { if (localStorage.getItem('ww:theme') === 'light') document.documentElement.classList.add('theme-light'); } catch (e) {}
+  function setTheme(t) { try { localStorage.setItem('ww:theme', t === 'light' ? 'light' : 'dark'); } catch (e) {} document.documentElement.classList.toggle('theme-light', t === 'light'); }
   // SECURITY: abort before signing if a SERVER-composed tx pays BTC to any address not in `allowed`.
   function assertOutputs(psbt, allowed) {
     var outs; try { outs = C.decodeTxOutputs(psbt); } catch (e) { return; }
@@ -53,6 +66,7 @@
   var FIRE_IC = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 3c1 3-2 4-2 7 0-1-1.5-1.5-1.5-3C7 9 6 11 6 13.5 6 17 8.7 20 12 20s6-3 6-6.5c0-3.5-3-6-6-10.5z"/></svg>';
   var VAULT_IC = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 2l8 3.5v5.5c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V5.5L12 2z"/><path d="M9.2 12l2 2 3.6-4"/></svg>';
   var DIV_IC = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="3.2"/><circle cx="17" cy="17" r="3.2"/><path d="M9.5 9.5l5 5M14 8h3V11M10 16H7v-3"/></svg>';
+  var ATTACH_IC = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007 0l2-2a5 5 0 00-7-7l-1 1"/><path d="M14 11a5 5 0 00-7 0l-2 2a5 5 0 007 7l1-1"/></svg>';
   var RECV_IC = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H6M11 17l-5-5 5-5"/></svg>';
   var PLUS_IC = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
   var MINT_IC = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3l7 7-4 4M11 6l7 7M3 21l6-2 9-9-4-4-9 9-2 6z"/></svg>';
@@ -69,6 +83,9 @@
 
   // ── state ──
   var chain = 'btc', curAccount = 0, acctKind = 'hd', watchId = null, tab = 'tokens';
+  // Native Ledger (WebHID) — connected addresses live in-memory; a read-only view needs the device only
+  // once (getAddresses), everything after is proxy reads. All rendered in the popup's own UI (NOT the Terminal).
+  var HW = null, hwBt = 'nativeSegwit', hwViewAddr = null, hwViewIndex = null, hwAgg = false;
   var _resName = null; // SRC-101 .btc resolution state for the send field
   var RE_DOTBTC = /^[a-z0-9][a-z0-9._-]{0,62}\.btc$/i;
   // Resolve a .btc name → address at submit time (throws if unregistered); pass-through for addresses.
@@ -99,6 +116,7 @@
   }
   var ASSETS = null, loadSeq = 0, PRICES = {}, _cd = null;
   var IN_PANEL = /sidepanel/i.test(location.pathname), _winId = null;
+  var IS_HW_WIN = /[?&]hw=1/.test(location.search); // dedicated top-level window for the Ledger connect (reliable WebHID)
   try { if (window.chrome && chrome.windows) chrome.windows.getCurrent(function (w) { _winId = w && w.id; }); } catch (e) {}
   if (IN_PANEL) document.documentElement.classList.add('in-panel');
   var VER = ''; try { VER = (window.chrome && chrome.runtime && chrome.runtime.getManifest && chrome.runtime.getManifest().version) || ''; } catch (e) {}
@@ -162,7 +180,22 @@
 
   // ── launchers ──
   function openTerminal(hash) { var rel = 'expanded.html' + (hash || ''); var url; try { url = chrome.runtime.getURL(rel); } catch (e) { url = rel; } try { chrome.windows.create({ url: url, type: 'popup', width: 1400, height: 900 }); setTimeout(function () { window.close(); }, 60); } catch (e) { window.open(url, '_blank'); } }
-  function openSidePanel() { try { if (!chrome.sidePanel) return; if (_winId != null) { chrome.sidePanel.open({ windowId: _winId }); setTimeout(function () { window.close(); }, 60); } else chrome.windows.getCurrent(function (w) { try { chrome.sidePanel.open({ windowId: w.id }); } catch (e) {} }); } catch (e) {} }
+  function openSidePanel() { try { if (!chrome.sidePanel) return; try { chrome.sidePanel.setOptions({ path: 'sidepanel.html', enabled: true }); } catch (e) {} if (_winId != null) { chrome.sidePanel.open({ windowId: _winId }); setTimeout(function () { window.close(); }, 60); } else chrome.windows.getCurrent(function (w) { try { chrome.sidePanel.open({ windowId: w.id }); } catch (e) {} }); } catch (e) {} }
+  // Hardware (Ledger/WebHID) connect needs a real browser TAB — the WebHID device chooser only enumerates
+  // the device in a normal tab (the action popup, side panel, AND type:'popup' windows all open the picker
+  // but list NO device). So we open the extension's OWN page in a proper tab (sidepanel.html?hw=1 — popup
+  // UI, never the Terminal). A tab also STAYS OPEN, so the Ledger view isn't lost on every click.
+  function openHardwareTab() {
+    var url = chrome.runtime.getURL('sidepanel.html') + '?hw=1';
+    try {
+      // Reuse an already-open hardware tab if there is one; else open a fresh tab and focus it.
+      chrome.tabs.query({}, function (tabs) {
+        var existing = (tabs || []).filter(function (t) { return t.url && t.url.indexOf('sidepanel.html') >= 0 && t.url.indexOf('hw=1') >= 0; })[0];
+        if (existing) { try { chrome.tabs.update(existing.id, { active: true }); if (existing.windowId != null && chrome.windows) chrome.windows.update(existing.windowId, { focused: true }); } catch (e) {} }
+        else chrome.tabs.create({ url: url, active: true });
+      });
+    } catch (e) { try { chrome.tabs.create({ url: url, active: true }); } catch (x) { try { window.open(url, '_blank'); } catch (y) {} } }
+  }
   document.addEventListener('click', function (e) { if (!e.target.closest) return; if (e.target.closest('#bPanel')) openSidePanel(); else if (e.target.closest('#bTerm')) openTerminal(); });
   function copy(t, el) { navigator.clipboard.writeText(t).then(function () { if (el) { el.classList.add('copyok'); setTimeout(function () { el.classList.remove('copyok'); }, 1000); } }).catch(function () {}); }
 
@@ -175,7 +208,7 @@
   function startCountdown() {
     stopCd(); var line = document.getElementById('lockLine'), W = window.WWSession;
     if (!line || !W || !W.idleMs) return;
-    var tick = function () { if (!C.isUnlocked()) { line.textContent = ''; return; } var la = W.lastActive(); if (!la) { line.textContent = ''; return; } var rem = W.idleMs - (Date.now() - la); if (rem <= 0) { line.textContent = 'locking…'; return; } var m = Math.floor(rem / 60000), s = Math.floor((rem % 60000) / 1000); line.textContent = 'auto-locks in ' + m + ':' + (s < 10 ? '0' : '') + s; };
+    var tick = function () { if (!C.isUnlocked()) { line.textContent = ''; return; } if (W.idleMs > 1e14) { line.textContent = '🔓 auto-lock off'; return; } var la = W.lastActive(); if (!la) { line.textContent = ''; return; } var rem = W.idleMs - (Date.now() - la); if (rem <= 0) { line.textContent = 'locking…'; return; } var m = Math.floor(rem / 60000), s = Math.floor((rem % 60000) / 1000); line.textContent = 'auto-locks in ' + m + ':' + (s < 10 ? '0' : '') + s; };
     tick(); _cd = setInterval(tick, 1000);
   }
 
@@ -228,17 +261,20 @@
     try { return C.accounts(curAccount, 0).bitcoin[acctBtcType(curAccount)].address; } catch (e) { return null; }
   }
   // Remember the last-used account so it's waiting on reopen.
-  function saveLast() { lsSet('ww:lastacct', acctKind === 'watch' ? 'watch:' + watchId : acctKind === 'imported' ? 'imp:' + impId : 'hd:' + curAccount); lsSet('ww:lastchain', chain); }
+  function saveLast() { lsSet('ww:lastacct', acctKind === 'hardware' ? 'hw' : acctKind === 'watch' ? 'watch:' + watchId : acctKind === 'imported' ? 'imp:' + impId : 'hd:' + curAccount); lsSet('ww:lastchain', chain); }
   function restoreLast() {
+    try { HW = lsGet('ww:ledger', null); } catch (e) { HW = null; } // a previously-paired Ledger (public addresses only)
     var v = lsGet('ww:lastacct', null);
     if (v) {
-      if (v.indexOf('watch:') === 0) { var id = v.slice(6); if (watchList().some(function (w) { return w.id === id; })) { acctKind = 'watch'; watchId = id; } }
+      if (v === 'hw') { if (HW) { acctKind = 'hardware'; chain = 'btc'; } }
+      else if (v.indexOf('watch:') === 0) { var id = v.slice(6); if (watchList().some(function (w) { return w.id === id; })) { acctKind = 'watch'; watchId = id; } }
       else if (v.indexOf('imp:') === 0) { var iid = v.slice(4); if (IMPORTED.some(function (x) { return x.id === iid; })) { acctKind = 'imported'; impId = iid; chain = 'btc'; } }
       else if (v.indexOf('hd:') === 0) { var i = parseInt(v.slice(3), 10); if (acctList().indexOf(i) >= 0) { acctKind = 'hd'; curAccount = i; } }
     }
     if (acctKind !== 'watch') { var lc = lsGet('ww:lastchain', null); if (lc && CH[lc]) chain = lc; }
   }
   function currentAddress() {
+    if (acctKind === 'hardware') return hwAddr();
     if (acctKind === 'watch') { var w = watchList().filter(function (x) { return x.id === watchId; })[0]; return w ? w.address : null; }
     if (acctKind === 'imported') { var im = currentImported(); if (!im) return null; var t = impBtcType(impId); return (im.bitcoin[t] || im.bitcoin.nativeSegwit).address; }
     var acc; try { acc = C.accounts(curAccount, 0); } catch (e) { return null; }
@@ -254,9 +290,11 @@
 
   async function render() {
     stopCd();
+    if (IS_HW_WIN) return; // the dedicated hardware-connect tab drives its own pages (hwLandingPage/hwSuccessPage)
+    if (acctKind === 'hardware' && HW) return hwRenderMain(); // a paired Ledger renders even with no seed vault
     try {
       var has = await C.hasVault();
-      if (!has) return renderNoVault();
+      if (!has) { if (HW) { acctKind = 'hardware'; return hwRenderMain(); } return renderNoVault(); } // hardware-only user → their Ledger
       if (!C.isUnlocked()) return renderLocked();
       refreshImported(); // imported accounts live in the (unlocked) core; refresh before rendering
       if (acctKind === 'imported' && !currentImported()) { acctKind = 'hd'; } // guard stale selection
@@ -275,8 +313,316 @@
       + '<div class="foot-note">Self-custodial · your keys never leave this device.</div></div>';
     document.getElementById('bCreate').onclick = createChooseLen;
     document.getElementById('bRestore').onclick = restoreForm;
-    // Hardware (Ledger via WebHID) needs a persistent window + the hardware bundle — opens the full view.
-    document.getElementById('bHardware').onclick = function () { openTerminal('#hardware'); };
+    // Hardware (Ledger via WebHID): connect natively in the popup UI. WebHID needs a top-level context,
+    // so unless we're already in the dedicated hardware window we open one (same popup UI, not the Terminal).
+    document.getElementById('bHardware').onclick = function () { if (IS_HW_WIN) hwConnect(); else openHardwareTab(); };
+  }
+
+  // ══ Native Ledger (WebHID) — connect + read-only dashboard, rendered entirely in the popup UI ══
+  var HW_REFRESH = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 10-2.3 5.7M20 4v5h-5"/></svg>';
+  function hwAddr() {
+    if (!HW || !HW.bitcoin) return null;
+    if (chain === 'btc') return hwViewAddr || (HW.bitcoin[hwBt] || HW.bitcoin.nativeSegwit || {}).address || null;
+    return chain === 'eth' ? (HW.ethereum && HW.ethereum.address) : (HW.solana && HW.solana.address);
+  }
+  function hwLoadBundle() {
+    if (window.WonderHW) return Promise.resolve(window.WonderHW);
+    return new Promise(function (resolve, reject) {
+      var s = document.createElement('script'); s.src = 'wallet-hw.js';
+      s.onload = function () { window.WonderHW ? resolve(window.WonderHW) : reject(new Error('hardware bundle failed to init')); };
+      s.onerror = function () { reject(new Error('failed to load hardware bundle')); };
+      document.head.appendChild(s);
+    });
+  }
+  // Dedicated hardware-connect TAB page (?hw=1): a clean, centered pairing screen — the hub for hardware
+  // wallets (Ledger now; Trezor slot for later). Not the stretched wallet UI + floating modal.
+  function hwLandingPage() {
+    var bundleP = hwLoadBundle().catch(function () { return null; }); // pre-warm the WebHID bundle
+    app.innerHTML = '<div class="hw-page"><div class="hw-card">'
+      + '<div class="hw-brand"><span class="p-seal">' + SEAL + '</span><div><div class="p-name">Connect a hardware wallet</div><div class="p-sub">Wonder Wallet · self-custodial</div></div></div>'
+      + '<div class="p-hint">Keep your keys on a hardware device. Wonder Wallet reads your addresses and builds the transactions — you approve them on the device. <b>Keys never leave it.</b></div>'
+      + '<div class="hw-devs">'
+      + '<button class="hw-dev on" id="hwDevLedger"><span class="hw-dev-ic">🔐</span><span class="hw-dev-t"><b>Ledger</b><small>Nano S · X · S+ — WebHID · BTC · ETH · Solana</small></span><span class="hw-dev-go">→</span></button>'
+      + '<div class="hw-dev disabled"><span class="hw-dev-ic">🔒</span><span class="hw-dev-t"><b>Trezor</b><small>via Trezor Connect — coming soon</small></span></div>'
+      + '</div>'
+      + '<div class="p-hint">Before connecting: <b>unlock your Ledger</b> and <b>open the Bitcoin app</b>. To add Ethereum / Solana, install those apps too — you approve each on the device.</div>'
+      + '<div class="p-err" id="hwErr" style="display:none"></div>'
+      + '<button class="btn" id="hwGo">Connect Ledger</button>'
+      + '<div class="hw-foot">🔐 Your keys never leave your device</div>'
+      + '</div></div>';
+    var go = function () { hwRun(bundleP, false); };
+    document.getElementById('hwGo').onclick = go;
+    document.getElementById('hwDevLedger').onclick = go;
+  }
+  function hwSuccessPage() {
+    app.innerHTML = '<div class="hw-page"><div class="hw-card" style="text-align:center">'
+      + '<div class="hw-check">✓</div>'
+      + '<div class="p-name" style="font-size:19px;margin-top:6px">Ledger paired</div>'
+      + '<div class="p-hint" style="margin-top:8px">Your Ledger is connected to Wonder Wallet as a <b>view-only</b> account. Open the Wonder Wallet extension to see your balances, assets and portfolio — no need to reconnect.</div>'
+      + '<div class="p-hint" id="hwCloseHint" style="margin-top:8px;color:var(--gold2)"></div>'
+      + '<div class="actions" style="margin-top:12px"><button class="btn ghost" id="hwStay">Keep this tab</button><button class="btn" id="hwCloseNow">Close tab</button></div>'
+      + '</div></div>';
+    var secs = 5, hint = document.getElementById('hwCloseHint');
+    var tick = function () { if (hint) hint.textContent = 'This tab closes automatically in ' + secs + 's…'; };
+    tick();
+    var timer = setInterval(function () { secs--; if (secs <= 0) { clearInterval(timer); hwCloseTab(); } else tick(); }, 1000);
+    document.getElementById('hwStay').onclick = function () { clearInterval(timer); if (hint) hint.textContent = 'You can close this tab anytime — your Ledger is saved.'; };
+    document.getElementById('hwCloseNow').onclick = function () { clearInterval(timer); hwCloseTab(); };
+  }
+  function hwCloseTab() { try { chrome.tabs.getCurrent(function (t) { if (t && t.id != null) chrome.tabs.remove(t.id); else { try { window.close(); } catch (e) {} } }); } catch (e) { try { window.close(); } catch (x) {} } }
+  function hwConnect() {
+    var bundleP = hwLoadBundle().catch(function () { return null; }); // pre-warm so the click's gesture survives to the picker
+    overlay('<div class="menu" style="padding:16px;display:flex;flex-direction:column;gap:11px">'
+      + '<div class="p-title" style="font-size:16px">Connect a hardware wallet</div>'
+      + '<div class="p-hint">Keep your keys on a <b>Ledger</b>. Wonder Wallet reads your addresses and builds transactions — you approve them on the device. Keys never leave the Ledger.</div>'
+      + '<div class="p-hint">Unlock your Ledger and <b>open the Bitcoin app</b> before connecting.</div>'
+      + '<div class="p-card" style="padding:10px"><b>Ledger</b> <span class="fine">WebHID · BTC · ETH · Solana</span></div>'
+      + '<div class="p-err" id="hwErr" style="display:none"></div>'
+      + '<div class="actions"><button class="btn ghost" id="hwCancel">Cancel</button><button class="btn" id="hwGo">Connect Ledger</button></div></div>');
+    document.getElementById('hwCancel').onclick = closeOv;
+    document.getElementById('hwGo').onclick = function () { hwRun(bundleP, false); };
+  }
+  async function hwRun(bundleP, fresh) {
+    var err = document.getElementById('hwErr'); if (err) { err.style.display = 'block'; err.className = 'p-hint'; err.textContent = fresh ? 'Choose your Ledger in the browser prompt…' : 'Loading hardware module…'; }
+    try {
+      var HWm = (await bundleP) || (await hwLoadBundle());
+      if (!HWm.isSupported()) { if (err) { err.className = 'p-err'; err.textContent = 'WebHID needs a Chromium browser (Chrome/Brave/Edge), Ledger unlocked.'; } return; }
+      if (err) err.textContent = 'Choose your Ledger in the browser prompt, then approve on the device…';
+      if (fresh && HWm.forceReconnect) await HWm.forceReconnect(); else await HWm.connect();
+      if (err) err.textContent = 'Reading addresses — open/allow apps on the device if it prompts…';
+      var accts = await HWm.getAddresses(0);
+      HW = accts; acctKind = 'hardware'; chain = 'btc';
+      hwBt = HW.bitcoin && HW.bitcoin.nativeSegwit ? 'nativeSegwit' : (HW.bitcoin ? Object.keys(HW.bitcoin)[0] : 'nativeSegwit');
+      hwViewAddr = null; hwViewIndex = null; hwAgg = false;
+      try { lsSet('ww:ledger', HW); saveLast(); } catch (e) {} // PAIR: persist the Ledger's public addresses so every surface (popup/panel) reflects it
+      try { await HWm.disconnect(); } catch (e) {} // read-only: free the device — all reads go through the proxy
+      if (IS_HW_WIN) hwSuccessPage(); else { closeOv(); hwRenderMain(); } // the connect tab confirms + offers to close; elsewhere show the dashboard
+    } catch (e) {
+      var m = String(e && e.message || '');
+      var msg = /No device selected|cancelled|user gesture/i.test(m) ? 'Connection cancelled or no device selected.'
+        : /open the .* app|INS_NOT_SUPPORTED|0x6d00|6d00|6511|6e00/i.test(m) ? 'Couldn’t read the Bitcoin app — unlock the Ledger with the Bitcoin app open, then Reconnect.'
+        : /locked|0x5515|5515/i.test(m) ? 'Your Ledger is locked — unlock it, open the Bitcoin app, then Reconnect.'
+        : ('Couldn’t connect: ' + m);
+      try { console.error('[WonderHW] connect failed:', e); } catch (x) {}
+      if (err) { err.className = 'p-err'; err.innerHTML = esc(msg) + '<div class="fine" style="margin-top:6px;opacity:.7;word-break:break-word">details: ' + esc((m || 'unknown').slice(0, 200)) + '</div>'; }
+      var go = document.getElementById('hwGo'); if (go) { go.textContent = 'Reconnect — choose device'; go.onclick = function () { hwRun(bundleP, true); }; }
+    }
+  }
+  function hwRenderMain() {
+    if (!HW) return render();
+    var c = CH[chain], addr = hwAddr();
+    var canScan = !!(chain === 'btc' && HW.bitcoin[hwBt] && HW.bitcoin[hwBt].acct);
+    var sub = c.name + (hwAgg && chain === 'btc' ? ' · all addresses' : hwViewAddr ? ' · 0/' + hwViewIndex : '');
+    app.innerHTML =
+      '<div class="p-head"><button class="chain-btn" id="chainBtn" title="Switch blockchain"><span class="cs-ic ' + chain + '">' + c.ic + '</span><span class="chev">▾</span></button>'
+      + '<div class="p-brand-mid"><div class="p-name">🔐 Ledger</div><div class="p-sub">' + esc(sub) + '</div></div>'
+      + '<div class="p-icons"><button class="p-ibtn" id="bRefresh" title="Refresh">' + HW_REFRESH + '</button>'
+      + (IN_PANEL ? '' : '<button class="p-ibtn" id="bPanel" title="Dock as side panel">' + PANEL_ICON + '</button>') + '</div></div>'
+      + '<div class="acct-bar">' + accountSelectHtml() + '<button class="p-ibtn acct-x" id="hwUnpair" title="Unpair this Ledger">×</button></div>'
+      + '<div class="total"><div class="amt-wrap"><div class="amt" id="nativeVal">…</div><button class="priv-eye' + (PRIVACY ? ' on' : '') + '" id="bPrivacy" title="Privacy view">' + (PRIVACY ? EYE_OFF_SVG : EYE_SVG) + '</button></div><div class="lbl" id="nativeLbl">Ledger · read-only</div></div>'
+      + '<div class="addr-row"><div class="addr-chip" data-copy="' + esc(addr || '') + '" title="Copy address">' + (hwAgg && chain === 'btc' ? '⊕ all addresses' : esc(short(addr || '—'))) + '</div>'
+      + (chain === 'btc' ? '<button class="btctype-chip" id="btcTypeBtn" title="Bitcoin address type">' + esc(BTC_LABEL[hwBt]) + ' ▾</button>' : '')
+      + (hwViewAddr ? '<button class="btctype-chip" id="hwMain" title="Back to main address">← main</button>' : '') + '</div>'
+      + '<div class="util-row">'
+      + (chain === 'btc' ? '<button class="cc-launch" id="bActivity" title="Transaction history">⧗ Activity</button>' : '')
+      + (canScan ? '<button class="cc-launch" id="bScan" title="Browse receiving addresses">⧉ Addresses</button>' : '')
+      + (canScan ? '<button class="cc-launch' + (hwAgg ? ' on' : '') + '" id="bAgg" title="Combine all addresses into one portfolio">⊕ Portfolio</button>' : '')
+      + '</div>'
+      + '<div class="asset-tabs"><button class="atab ' + (tab === 'tokens' ? 'on' : '') + '" data-tab="tokens">Tokens</button><button class="atab ' + (tab === 'collectibles' ? 'on' : '') + '" data-tab="collectibles">Collectibles</button></div>'
+      + '<div id="assetBody"><div class="empty">Loading ' + esc(c.name) + ' assets…</div></div>'
+      + '<div class="ext-footer"><div class="actions">'
+      + ((chain === 'btc' && hwBt === 'nativeSegwit' && !hwAgg && HW.mfp) ? '<button class="btn" id="bHwSend">Send</button>' : '')
+      + '<button class="btn ghost" id="bReceive">Receive</button></div>'
+      + '<div class="foot-strip"><span class="foot-lock">🔐 keys stay on your Ledger</span><span class="pill"><span class="pdot"></span>' + ((chain === 'btc' && hwBt === 'nativeSegwit' && HW.mfp) ? 'sign on device' : 'read-only view') + '</span>' + (VER ? '<span class="foot-ver">v' + esc(VER) + '</span>' : '') + '</div></div>';
+    document.getElementById('chainBtn').onclick = hwChainMenu;
+    document.getElementById('bRefresh').onclick = function () { var b = document.getElementById('assetBody'); if (b) b.innerHTML = '<div class="empty">Refreshing…</div>'; hwLoad(); };
+    wireAccountSelect(); // the account dropdown lets a seed-wallet user switch between HD accounts and the Ledger
+    var up = document.getElementById('hwUnpair'); if (up) up.onclick = hwUnpair;
+    saveLast();
+    var pv = document.getElementById('bPrivacy'); if (pv) pv.onclick = togglePrivacy;
+    var bt = document.getElementById('btcTypeBtn'); if (bt) bt.onclick = hwBtcTypeMenu;
+    var mn = document.getElementById('hwMain'); if (mn) mn.onclick = function () { hwViewAddr = null; hwViewIndex = null; hwRenderMain(); };
+    var sc = document.getElementById('bScan'); if (sc) sc.onclick = hwScan;
+    var ag = document.getElementById('bAgg'); if (ag) ag.onclick = function () { hwAgg = !hwAgg; hwViewAddr = null; hwViewIndex = null; hwRenderMain(); };
+    var ac = document.getElementById('bActivity'); if (ac) ac.onclick = function () { renderActivity(hwAddr()); };
+    var pn = document.getElementById('bPanel'); if (pn) pn.onclick = openSidePanel;
+    var hs = document.getElementById('bHwSend'); if (hs) hs.onclick = renderHwSend;
+    document.getElementById('bReceive').onclick = hwReceive;
+    app.querySelectorAll('.atab').forEach(function (b) { b.onclick = function () { tab = b.dataset.tab; app.querySelectorAll('.atab').forEach(function (x) { x.classList.toggle('on', x === b); }); renderAssetBody(); }; });
+    app.querySelectorAll('[data-copy]').forEach(function (el) { el.onclick = function () { copy(el.getAttribute('data-copy'), el); }; });
+    hwLoad();
+  }
+  function hwChainMenu() {
+    var chains = [['btc', 'Bitcoin']]; if (HW.ethereum) chains.push(['eth', 'Ethereum']); if (HW.solana) chains.push(['sol', 'Solana']);
+    overlay('<div class="menu">' + chains.map(function (ch) { return '<button class="menu-opt' + (ch[0] === chain ? ' on' : '') + '" data-ch="' + ch[0] + '">' + esc(ch[1]) + '</button>'; }).join('') + '</div>');
+    app.querySelectorAll('[data-ch]').forEach(function (b) { b.onclick = function () { chain = b.dataset.ch; hwViewAddr = null; hwViewIndex = null; hwAgg = false; closeOv(); hwRenderMain(); }; });
+  }
+  function hwBtcTypeMenu() {
+    var types = [['nativeSegwit', 'Native SegWit · bc1q'], ['legacy', 'Legacy · 1… (Counterparty/Stamps)'], ['taproot', 'Taproot · bc1p'], ['nestedSegwit', 'Nested SegWit · 3…']].filter(function (t) { return HW.bitcoin[t[0]]; });
+    overlay('<div class="menu">' + types.map(function (t) { return '<button class="menu-opt' + (t[0] === hwBt ? ' on' : '') + '" data-t="' + t[0] + '"><b>' + esc(t[1].split(' · ')[0]) + '</b> <span class="fine">' + esc(t[1].split(' · ')[1] || '') + '</span></button>'; }).join('') + '</div>');
+    app.querySelectorAll('[data-t]').forEach(function (b) { b.onclick = function () { hwBt = b.dataset.t; hwViewAddr = null; hwViewIndex = null; hwAgg = false; closeOv(); hwRenderMain(); }; });
+  }
+  async function hwLoad() {
+    var addr = hwAddr();
+    if (chain !== 'btc' || !hwAgg) return loadAssets(addr); // single address (btc/eth/sol) via the normal loader
+    var acct = HW.bitcoin[hwBt] && HW.bitcoin[hwBt].acct;
+    if (!acct || !acct.pub || !acct.chainCode) { hwAgg = false; return loadAssets(addr); }
+    var derived; try { derived = C.deriveReceiveAddrs(acct.pub, acct.chainCode, hwBt, 20, 0); } catch (e) { hwAgg = false; return loadAssets(addr); }
+    if (!PRICES.bitcoin) { try { PRICES = await fetch('api/prices').then(function (r) { return r.json(); }); } catch (e) {} }
+    var body = document.getElementById('assetBody');
+    var aggNum = function (v) { var n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.eE+-]/g, '')); return isFinite(n) ? n : 0; };
+    var btcTotal = 0, done = 0, tokMap = {}, colls = [], names = [], primaryName = null, N = 5;
+    for (var i = 0; i < derived.length; i += N) {
+      await Promise.all(derived.slice(i, i + N).map(async function (d) {
+        try {
+          var r = await Promise.all([
+            fetch('api/btc/' + encodeURIComponent(d.address)).then(function (x) { return x.json(); }).catch(function () { return {}; }),
+            fetch('api/btc/' + encodeURIComponent(d.address) + '/assets').then(function (x) { return x.json(); }).catch(function () { return {}; }),
+          ]);
+          var bal = r[0], a2 = r[1];
+          btcTotal += (bal.balanceSats || 0) / 1e8;
+          var stampCpids = {}; (a2.stamps || []).forEach(function (s) { if (s.cpid) stampCpids[s.cpid] = 1; });
+          (a2.src20 || []).forEach(function (x) { var k = 'src20:' + (x.tick || x.name); var cur = tokMap[k] || { name: x.tick, tick: x.tick, img: x.img, src20: true, _num: 0, _n: 0, _d0: x.amount }; cur._num += aggNum(x.amount); cur._n++; tokMap[k] = cur; });
+          (a2.counterparty || []).forEach(function (x) { if (stampCpids[x.asset]) return; var amt = (x.qtyNormalized != null ? x.qtyNormalized : x.quantity); var k = 'cp:' + x.asset; var cur = tokMap[k] || { name: x.name || x.asset, asset: x.asset, cp: true, divisible: !!x.divisible, _num: 0, _n: 0, _d0: amt }; cur._num += aggNum(amt); cur._n++; tokMap[k] = cur; });
+          (a2.stamps || []).forEach(function (s) { colls.push({ title: '#' + s.stamp, img: 'api/stamp/' + s.stamp + '/content', stamp: s.stamp, cpid: s.cpid, mime: s.mime || null, qty: (s.quantity != null ? Number(s.quantity) : 1) }); });
+          var has = ((bal.balanceSats || 0) > 0) || (a2.stamps || []).length || (a2.src20 || []).length || (a2.counterparty || []).length;
+          if (has) { try { var nm = await fetch('api/src101/names/' + encodeURIComponent(d.address)).then(function (x) { return x.json(); }); if (nm && nm.primary && !primaryName) primaryName = nm.primary; (nm.names || []).filter(function (n) { return !n.expired; }).forEach(function (n) { names.push({ kind: 'name', title: n.name, name: n.name, img: n.img ? ('api/img?url=' + encodeURIComponent(n.img)) : null, primary: !!n.primary, deploy: n.deploy }); }); } catch (e) {} }
+        } catch (e) {}
+        done++; if (body) { var em = body.querySelector('.empty'); if (em) em.textContent = 'Scanning ' + done + ' / ' + derived.length + ' addresses…'; }
+      }));
+    }
+    var tokens = Object.keys(tokMap).map(function (k) { var t = tokMap[k]; var amount = (t._n <= 1 ? t._d0 : t._num.toLocaleString('en-US', { maximumFractionDigits: 8 })); return t.src20 ? { name: t.name, amount: amount, img: t.img, src20: true, tick: t.tick } : { name: t.name, amount: amount, asset: t.asset, cp: true, divisible: t.divisible }; });
+    ASSETS = { native: btcTotal, usd: btcTotal * (PRICES.bitcoin || 0), tokens: tokens, collectibles: names.concat(colls), note: '', primaryName: primaryName };
+    paintNative(); renderAssetBody();
+  }
+  async function hwScan() {
+    var acct = HW.bitcoin[hwBt] && HW.bitcoin[hwBt].acct;
+    if (!acct || !acct.pub || !acct.chainCode) { overlay('<div class="menu" style="padding:16px"><div class="p-hint">Your Ledger didn’t return the account key needed to scan. You’re on the main address (index 0).</div><div class="actions" style="margin-top:10px"><button class="btn" id="hsX">Close</button></div></div>'); document.getElementById('hsX').onclick = closeOv; return; }
+    var derived; try { derived = C.deriveReceiveAddrs(acct.pub, acct.chainCode, hwBt, 20, 0); } catch (e) { return; }
+    overlay('<div class="menu" style="padding:14px"><div class="p-title" style="font-size:15px;margin-bottom:6px">Receiving addresses</div><div class="p-hint" style="margin-bottom:8px">Ledger issues a fresh address each receive — scanning the first 20. Tap one to view its holdings.</div><div id="hsBody"><div class="empty">Scanning 0 / ' + derived.length + '…</div></div><div class="actions" style="margin-top:10px"><button class="btn ghost" id="hsX">Close</button></div></div>');
+    document.getElementById('hsX').onclick = closeOv;
+    var results = [], done = 0, N = 5;
+    for (var i = 0; i < derived.length; i += N) {
+      await Promise.all(derived.slice(i, i + N).map(async function (d) {
+        var sum = { btc: 0, tokens: 0, coll: 0, has: false };
+        try {
+          var r = await Promise.all([ fetch('api/btc/' + encodeURIComponent(d.address)).then(function (x) { return x.json(); }).catch(function () { return {}; }), fetch('api/btc/' + encodeURIComponent(d.address) + '/assets').then(function (x) { return x.json(); }).catch(function () { return {}; }) ]);
+          sum.btc = (r[0].balanceSats || 0) / 1e8; var st = (r[1].stamps || []).length, s2 = (r[1].src20 || []).length, cp = (r[1].counterparty || []).length; sum.tokens = s2 + cp; sum.coll = st; sum.has = sum.btc > 0 || st > 0 || s2 > 0 || cp > 0;
+        } catch (e) {}
+        results.push({ address: d.address, index: d.index, sum: sum }); done++;
+        var b = document.getElementById('hsBody'); if (b && b.querySelector('.empty')) b.querySelector('.empty').textContent = 'Scanning ' + done + ' / ' + derived.length + '…';
+      }));
+    }
+    results.sort(function (a, b) { return a.index - b.index; });
+    var rows = results.map(function (r) { return '<button class="acct-line" data-view="' + esc(r.address) + '" data-i="' + r.index + '" style="width:100%;text-align:left;cursor:pointer;' + (r.sum.has ? 'border-color:var(--gold2)' : '') + '"><span class="acct-lab">0/' + r.index + ' · ' + esc(short(r.address)) + '<br><span class="fine">' + (r.sum.btc > 0 ? fmt(r.sum.btc, 8) + ' BTC' : '—') + (r.sum.tokens ? ' · ' + r.sum.tokens + ' token' + (r.sum.tokens === 1 ? '' : 's') : '') + (r.sum.coll ? ' · ' + r.sum.coll + ' collectible' + (r.sum.coll === 1 ? '' : 's') : '') + '</span></span><span>' + (r.sum.has ? '● ' : '') + '→</span></button>'; }).join('');
+    var bodyEl = document.getElementById('hsBody');
+    if (bodyEl) bodyEl.innerHTML = results.some(function (r) { return r.sum.has; }) ? rows : '<div class="fine" style="padding:4px">No balances or assets on the first 20 addresses (index 0–19).</div>' + rows;
+    if (bodyEl) bodyEl.querySelectorAll('[data-view]').forEach(function (b) { b.onclick = function () { hwViewAddr = b.dataset.view; hwViewIndex = +b.dataset.i; hwAgg = false; closeOv(); hwRenderMain(); }; });
+  }
+  function hwReceive() {
+    var b = HW.bitcoin || {};
+    var row = function (label, addr) { return '<div class="acct-line"><span class="acct-lab">' + esc(label) + '<br><span class="fine" style="font-family:var(--mono);font-size:10px;word-break:break-all">' + esc(addr) + '</span></span><span><button class="mini" data-copy2="' + esc(addr) + '">copy</button></span></div>'; };
+    overlay('<div class="menu" style="padding:14px"><div class="p-title" style="font-size:15px;margin-bottom:6px">Receive · Ledger</div><div class="p-hint" style="margin-bottom:8px">Verify the address on your device before receiving large amounts.</div>'
+      + (b.nativeSegwit ? row('Native SegWit', b.nativeSegwit.address) : '') + (b.legacy ? row('Legacy · Counterparty/Stamps', b.legacy.address) : '') + (b.taproot ? row('Taproot', b.taproot.address) : '')
+      + '<div class="actions" style="margin-top:10px"><button class="btn ghost" id="rvX">Close</button></div></div>');
+    document.getElementById('rvX').onclick = closeOv;
+    app.querySelectorAll('[data-copy2]').forEach(function (el) { el.onclick = function () { copy(el.getAttribute('data-copy2'), el); }; });
+  }
+  // Resolve the current source address's signing derivation (pub + relative path "0/i").
+  function hwSourceEntry() {
+    var bt = hwBt, acct = HW.bitcoin[bt] && HW.bitcoin[bt].acct;
+    if (!acct || !acct.pub || !acct.chainCode) return null;
+    var idx = hwViewIndex != null ? hwViewIndex : 0, from = hwAddr(), list;
+    try { list = C.deriveReceiveAddrs(acct.pub, acct.chainCode, bt, Math.max(20, idx + 1), 0); } catch (e) { return null; }
+    var e = list.find(function (d) { return d.address === from; }) || list[idx] || list[0];
+    return e ? { path: e.path, pub: e.pub, address: e.address } : null;
+  }
+  async function renderHwSend() {
+    stopCd();
+    if (hwBt !== 'nativeSegwit' || !HW.mfp) { overlay('<div class="menu" style="padding:16px"><div class="p-hint">On-device sending is available for <b>Native SegWit</b> (bc1q…) in this version. Switch the address type, or re-pair the Ledger if there’s no device fingerprint yet.</div><div class="actions" style="margin-top:10px"><button class="btn" id="hsX">Close</button></div></div>'); document.getElementById('hsX').onclick = closeOv; return; }
+    var src = hwSourceEntry();
+    if (!src) { overlay('<div class="menu" style="padding:16px"><div class="p-hint">Couldn’t resolve the signing key for this address — re-pair your Ledger and try again.</div><div class="actions" style="margin-top:10px"><button class="btn" id="hsX">Close</button></div></div>'); document.getElementById('hsX').onclick = closeOv; return; }
+    var from = src.address;
+    if (!PRICES.bitcoin) { try { PRICES = await fetch('api/prices').then(function (r) { return r.json(); }); } catch (e) {} }
+    var fees = { fastestFee: 10, halfHourFee: 6, hourFee: 3 };
+    try { fees = await fetch('api/btc/fees').then(function (r) { return r.json(); }); } catch (e) {}
+    var feeRate = fees.halfHourFee || 6;
+    app.innerHTML = '<div class="p-head"><button class="p-ibtn" id="bBack" title="Back">←</button><div class="p-brand-mid"><div class="p-name">Send Bitcoin</div><div class="p-sub">🔐 Ledger · ' + esc(short(from)) + '</div></div><div class="p-icons"></div></div>'
+      + '<div class="send-form">'
+      + '<input id="hTo" class="p-in" placeholder="Address or name.btc" spellcheck="false" autocomplete="off" autocapitalize="off"/>'
+      + '<div id="hNameRes" class="name-resolve" hidden></div>'
+      + '<div class="send-amt"><input id="hAmt" class="p-in" type="number" step="0.00000001" min="0" placeholder="Amount (BTC)"/><label class="send-max"><input type="checkbox" id="hMax"/> Max</label></div>'
+      + feeRowHtml(fees)
+      + '<div class="p-hint">You’ll confirm the exact recipient &amp; amount <b>on your Ledger</b> before it signs.</div>'
+      + '<div id="hStatus" class="p-err"></div>'
+      + '<button class="btn" id="hReview">Review</button></div>';
+    document.getElementById('bBack').onclick = hwRenderMain;
+    wireFeeRow(function (r) { feeRate = r; });
+    wireNameResolve('hTo', 'hNameRes');
+    document.getElementById('hReview').onclick = async function () {
+      var s = document.getElementById('hStatus'); s.className = 'p-hint'; s.textContent = 'Selecting UTXOs & building…';
+      try {
+        var to = document.getElementById('hTo').value.trim();
+        if (RE_DOTBTC.test(to)) { var rr = await fetch('api/src101/resolve/' + encodeURIComponent(to)).then(function (x) { return x.json(); }).catch(function () { return null; }); if (!rr || !rr.exists || !rr.address) throw new Error('“' + to + '” is not a registered Bitcoin Stamps name.'); to = rr.address; }
+        if (!to) throw new Error('Enter a recipient address.');
+        var sendMax = document.getElementById('hMax').checked;
+        var amountSats = sendMax ? 0 : Math.round(parseFloat(document.getElementById('hAmt').value) * 1e8);
+        if (!sendMax && (!amountSats || amountSats < 0)) throw new Error('Enter a valid amount.');
+        var cc = ccApplyMeta(from, await fetch('api/btc/' + from + '/coincontrol').then(function (r) { return r.json(); }));
+        var spendable = (cc.utxos || []).filter(function (u) { return u.category === 'spendable' && !u.frozen && !u.timelocked; }).map(function (u) { return { txid: u.txid, vout: u.vout, value: u.value }; });
+        if (!spendable.length) throw new Error('No spendable UTXOs on this address.');
+        var built = C.buildHwSend({ utxos: spendable, recipient: to, amountSats: amountSats, feeRate: feeRate, sendMax: sendMax, rbf: true, mfp: HW.mfp, accountPath: "84'/0'/" + (HW.account || 0) + "'", sourcePath: src.path, sourcePub: src.pub, type: hwBt });
+        renderHwSendPreview(built, from, to);
+      } catch (err) { s.className = 'p-err'; s.textContent = err.message === 'insufficient_funds' ? 'Insufficient spendable balance for that + fee.' : (err.message || 'Could not build transaction.'); }
+    };
+  }
+  function renderHwSendPreview(built, from, to) {
+    var usd = function (sats) { var p = PRICES.bitcoin || 0; return p ? ' · ≈ $' + fmt((sats / 1e8) * p, 2) : ''; };
+    app.innerHTML = '<div class="p-head"><button class="p-ibtn" id="bBack" title="Back">←</button><div class="p-brand-mid"><div class="p-name">Review · Ledger</div></div><div class="p-icons"></div></div>'
+      + '<div class="p-card" style="display:flex;flex-direction:column;gap:7px">'
+      + '<div class="sd-row"><span class="sd-k">Send</span><span class="sd-v">' + fmt(built.amountSats / 1e8, 8) + ' BTC' + usd(built.amountSats) + '</span></div>'
+      + '<div class="sd-row"><span class="sd-k">To</span><span class="sd-v" style="font-family:var(--mono);font-size:11px">' + esc(short(to)) + '</span></div>'
+      + '<div class="sd-row"><span class="sd-k">Network fee</span><span class="sd-v">' + fmt(built.fee, 0) + ' sats' + usd(built.fee) + '</span></div>'
+      + '<div class="sd-row"><span class="sd-k">From</span><span class="sd-v" style="font-family:var(--mono);font-size:11px">' + esc(short(from)) + '</span></div></div>'
+      + '<div class="p-warn" style="margin-top:8px">Approve on your <b>Ledger</b> — the device shows the recipient &amp; amount. Verify them there before confirming.</div>'
+      + '<div id="hcStatus" class="p-err"></div>'
+      + '<div class="actions"><button class="btn ghost" id="hcBack">Back</button><button class="btn" id="hcGo">Sign on Ledger</button></div>';
+    document.getElementById('bBack').onclick = renderHwSend;
+    document.getElementById('hcBack').onclick = renderHwSend;
+    document.getElementById('hcGo').onclick = function () { hwSignBroadcast(built, to); };
+  }
+  async function hwSignBroadcast(built, to) {
+    var s = document.getElementById('hcStatus'); s.className = 'p-hint'; s.textContent = 'Verifying transaction…';
+    try {
+      // SECURITY: the tx must pay ONLY the recipient you entered (+ change back to the source). Verify before signing.
+      var outs = C.decodeTxOutputs(built.psbt) || [];
+      if (!outs.some(function (o) { return o.address === to; })) throw new Error('Safety check failed — the transaction does not pay the address you entered. Aborted.');
+      var HWm = await hwLoadBundle();
+      s.textContent = 'Unlock your Ledger with the Bitcoin app open…';
+      await HWm.connect(); // reuse the paired grant — no picker
+      s.textContent = 'Confirm on your Ledger — check the recipient & amount on the device…';
+      var res = await HWm.signPsbt(built.psbt, HW.account || 0);
+      var fin = C.finalizeHwSend(built.psbt, res.signatures);
+      s.textContent = 'Broadcasting…';
+      var r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: fin.txhex }) }).then(function (x) { return x.json(); });
+      if (r.error) throw new Error(r.detail || r.error);
+      try { await HWm.disconnect(); } catch (e) {}
+      s.className = 'p-hint'; s.innerHTML = '<span style="color:var(--green)">Sent ✓ — ' + esc(String(r.txid || fin.txid).slice(0, 20)) + '…</span>';
+      setTimeout(hwRenderMain, 2200);
+    } catch (err) {
+      var m = String(err && err.message || '');
+      s.className = 'p-err';
+      s.textContent = /denied|rejected|0x6985|6985|user.*declin/i.test(m) ? 'Rejected on the Ledger.'
+        : /No device selected|not connected|failed to open|open the .* app|INS_NOT_SUPPORTED|6d00|access denied|in use/i.test(m) ? 'Couldn’t reach the Ledger — unlock it with the Bitcoin app open. If nothing prompts, pair again from the Connect flow (a fresh device grant may be needed for signing).'
+        : ('Failed: ' + m);
+    }
+  }
+  function hwUnpair() {
+    overlay('<div class="menu" style="padding:12px;display:flex;flex-direction:column;gap:9px"><div class="p-title" style="font-size:15px">Unpair this Ledger?</div>'
+      + '<div class="p-hint">Removes the Ledger from Wonder Wallet on this device. Nothing on-chain changes and no keys are affected — re-pair anytime by connecting again.</div>'
+      + '<div class="actions"><button class="btn ghost" id="upCancel">Cancel</button><button class="btn danger" id="upGo">Unpair</button></div></div>');
+    document.getElementById('upCancel').onclick = closeOv;
+    document.getElementById('upGo').onclick = function () { try { localStorage.removeItem('ww:ledger'); } catch (e) {} HW = null; hwViewAddr = null; hwViewIndex = null; hwAgg = false; acctKind = 'hd'; closeOv(); render(); };
   }
 
   // ── In-popup setup: Create / Restore (no more opening the full tab) ──
@@ -374,7 +720,7 @@
       + (acctKind !== 'watch' ? '<button class="p-ibtn" id="bAdv" title="Advanced — all addresses, sign message, hardware, custom derivation, reveal seed, export keys">' + GEAR_SVG + '</button>' : '')
       + '<button class="p-ibtn" id="bLock" title="Lock">' + LOCK_SVG + '</button></div></div>'
       + '<div class="acct-bar">' + accountSelectHtml() + ((acctRemovable(curAccount) || acctKind === 'imported' || acctKind === 'watch') ? '<button class="p-ibtn acct-x" id="acctRemove" title="Remove">×</button>' : '') + '<button class="p-ibtn" id="acctAdd" title="Add account / import / watch-only">+</button></div>'
-      + '<div class="total"><button class="p-ibtn priv-float' + (PRIVACY ? ' on' : '') + '" id="bPrivacy" title="' + (PRIVACY ? 'Privacy view ON — show balances' : 'Privacy view (hide balances)') + '">' + (PRIVACY ? EYE_OFF_SVG : EYE_SVG) + '</button><div class="amt" id="nativeVal">…</div><div class="lbl" id="nativeLbl">' + (acctKind === 'imported' ? 'imported address' : 'estimated value') + '</div></div>'
+      + '<div class="total"><div class="amt-wrap"><div class="amt" id="nativeVal">…</div><button class="priv-eye' + (PRIVACY ? ' on' : '') + '" id="bPrivacy" title="' + (PRIVACY ? 'Privacy view ON — show balances' : 'Privacy view (hide balances)') + '">' + (PRIVACY ? EYE_OFF_SVG : EYE_SVG) + '</button></div><div class="lbl" id="nativeLbl">' + (acctKind === 'imported' ? 'imported address' : 'estimated value') + '</div></div>'
       + '<div class="addr-row"><div class="addr-chip" data-copy="' + esc(addr || '') + '" title="Copy address">' + esc(short(addr || '—')) + '</div>'
       + (chain === 'btc' && (acctKind === 'hd' || acctKind === 'imported') ? '<button class="btctype-chip" id="btcTypeBtn" title="Bitcoin address type">' + esc(BTC_LABEL[acctKind === 'imported' ? impBtcType(impId) : acctBtcType(curAccount)]) + ' ▾</button>' : '') + '</div>'
       + '<div class="util-row">'
@@ -442,11 +788,12 @@
     if (IMPORTED.length) { opts += '<optgroup label="Imported">'; IMPORTED.forEach(function (im) { opts += '<option value="imp:' + esc(im.id) + '"' + (acctKind === 'imported' && impId === im.id ? ' selected' : '') + '>' + esc(im.label || short((im.bitcoin.nativeSegwit || {}).address || im.id)) + ' · imported</option>'; }); opts += '</optgroup>'; }
     var wl = watchList();
     if (wl.length) { opts += '<optgroup label="Watching">'; wl.forEach(function (w) { opts += '<option value="watch:' + esc(w.id) + '"' + (acctKind === 'watch' && watchId === w.id ? ' selected' : '') + '>' + esc(w.label || short(w.address)) + ' · ' + esc((CH[CHAIN_OF[w.chain]] || {}).sym || '?') + '</option>'; }); opts += '</optgroup>'; }
+    if (HW) { opts += '<optgroup label="Hardware"><option value="hw"' + (acctKind === 'hardware' ? ' selected' : '') + '>🔐 Ledger</option></optgroup>'; }
     return '<select class="acct-sel" id="acctSel">' + opts + '</select>';
   }
   function wireAccountSelect() {
     var sel = document.getElementById('acctSel'); if (!sel) return;
-    sel.onchange = function () { var v = sel.value; if (v.indexOf('hd:') === 0) { acctKind = 'hd'; curAccount = parseInt(v.slice(3), 10); } else if (v.indexOf('watch:') === 0) { acctKind = 'watch'; watchId = v.slice(6); } else if (v.indexOf('imp:') === 0) { acctKind = 'imported'; impId = v.slice(4); chain = 'btc'; } renderMain(); };
+    sel.onchange = function () { var v = sel.value; if (v === 'hw') { acctKind = 'hardware'; chain = 'btc'; } else if (v.indexOf('hd:') === 0) { acctKind = 'hd'; curAccount = parseInt(v.slice(3), 10); } else if (v.indexOf('watch:') === 0) { acctKind = 'watch'; watchId = v.slice(6); } else if (v.indexOf('imp:') === 0) { acctKind = 'imported'; impId = v.slice(4); chain = 'btc'; } render(); };
   }
 
   function chainMenu() {
@@ -553,7 +900,7 @@
         // that back stamps are excluded — those live in Collectibles (click a stamp for its cpid).
         (a.src20 || []).forEach(function (x) { res.tokens.push({ name: x.tick, amount: x.amount, img: x.img, src20: true, tick: x.tick }); });
         (a.counterparty || []).forEach(function (x) { if (stampCpids[x.asset]) return; res.tokens.push({ name: x.name || x.asset, amount: (x.qtyNormalized != null ? x.qtyNormalized : x.quantity), asset: x.asset, cp: true, divisible: !!x.divisible }); });
-        res.collectibles = (a.stamps || []).map(function (s) { return { title: '#' + s.stamp, img: 'api/stamp/' + s.stamp + '/content', stamp: s.stamp, cpid: s.cpid, qty: (s.quantity != null ? Number(s.quantity) : 1) }; });
+        res.collectibles = (a.stamps || []).map(function (s) { return { title: '#' + s.stamp, img: 'api/stamp/' + s.stamp + '/content', stamp: s.stamp, cpid: s.cpid, mime: s.mime || null, qty: (s.quantity != null ? Number(s.quantity) : 1) }; });
         // SRC-101 (.btc names) — surface as collectibles + capture the primary name.
         try {
           var nm = await fetch('api/src101/names/' + encodeURIComponent(addr)).then(function (r) { return r.json(); });
@@ -608,25 +955,34 @@
           return '<div class="nft-cell nft-name" data-i="' + i + '" title="' + esc(n.title) + '">' + star + (nmSrc ? '<img loading="lazy" src="' + esc(nmSrc) + '"/>' : ph) + '<span class="nft-t">' + esc(n.title) + '</span></div>';
         }
         var qb = (n.qty != null && n.qty > 1) ? '<span class="nft-qty" title="You hold ' + esc(String(n.qty)) + '">×' + esc(String(n.qty)) + '</span>' : '';
-        // Absolute (proxied) src so the image loads directly. A relative api/ src races the shim's
-        // rewrite: the first (failed) relative load fires onerror, which wrongly swaps a *real* image
-        // stamp to the HTML-iframe fallback before the rewrite can recover it.
+        // Absolute (proxied) src so the image loads directly (a relative api/ src races the shim rewrite).
         var nftSrc = n.img ? (/^api\//.test(n.img) ? proxied(n.img) : n.img) : null;
-        var imgTag = nftSrc ? '<img loading="lazy"' + (n.stamp != null ? ' data-stampfr="' + esc(String(n.stamp)) + '"' : '') + ' src="' + esc(nftSrc) + '"/>' : '<span class="nft-ph"></span>';
-        return '<div class="nft-cell" data-i="' + i + '" title="' + esc(n.title) + (n.qty != null ? ' · you hold ' + esc(String(n.qty)) : '') + '">' + qb + imgTag + '<span class="nft-t">' + esc(n.title) + '</span></div>';
+        // Decide the render path by MIME, not by load failure: only genuine HTML / recursive stamps use
+        // the sandboxed iframe (+ HTML badge). Everything else is an <img>; if it fails we show a neutral
+        // "couldn't load" state — a slow/errored image is NOT an HTML stamp.
+        var isHtmlStamp = n.stamp != null && n.mime && /html|javascript|text\//i.test(n.mime);
+        var media, badge = '';
+        if (isHtmlStamp) {
+          media = '<iframe class="nft-frame" sandbox="allow-scripts" scrolling="no" loading="lazy" src="' + esc(proxied('api/stamp/' + encodeURIComponent(n.stamp) + '/content')) + '"></iframe>';
+          badge = '<span class="htmlbadge">HTML</span>';
+        } else if (nftSrc) {
+          media = '<img loading="lazy"' + (n.stamp != null ? ' data-stamperr="' + esc(String(n.stamp)) + '"' : '') + ' src="' + esc(nftSrc) + '"/>';
+        } else { media = '<span class="nft-ph"></span>'; }
+        return '<div class="nft-cell" data-i="' + i + '" title="' + esc(n.title) + (n.qty != null ? ' · you hold ' + esc(String(n.qty)) : '') + '">' + qb + media + badge + '<span class="nft-t">' + esc(n.title) + '</span></div>';
       }).join('') + '</div>';
       body.querySelectorAll('.nft-cell').forEach(function (cell) { cell.onclick = function () { var n = ASSETS.collectibles[+cell.dataset.i]; if (!n) return; if (n.kind === 'name') nameDetail(n); else if (n.stamp != null) stampDetail(n); else nftDetail(n); }; });
-      // HTML / recursive stamps can't render as <img> — on failure, swap to a sandboxed iframe preview
-      // (renders in a real browser) and tag the tile as HTML.
-      body.querySelectorAll('img[data-stampfr]').forEach(function (img) {
+      // Image stamp failed to load: auto-retry once (covers slow/transient upstream), then fall back to a
+      // neutral "couldn't load" placeholder — never mislabel a broken image as an HTML stamp.
+      body.querySelectorAll('img[data-stamperr]').forEach(function (img) {
+        var tries = 0;
         img.addEventListener('error', function () {
-          var sid = img.getAttribute('data-stampfr'); if (!sid) return;
-          var cell = img.closest ? img.closest('.nft-cell') : null;
-          var ifr = document.createElement('iframe'); ifr.className = 'nft-frame'; ifr.setAttribute('sandbox', 'allow-scripts'); ifr.setAttribute('scrolling', 'no'); ifr.loading = 'lazy';
-          ifr.src = proxied('api/stamp/' + encodeURIComponent(sid) + '/content');
-          if (img.parentNode) img.parentNode.replaceChild(ifr, img);
-          if (cell && !cell.querySelector('.htmlbadge')) { var bd = document.createElement('span'); bd.className = 'htmlbadge'; bd.textContent = 'HTML'; cell.appendChild(bd); }
-        }, { once: true });
+          var sid = img.getAttribute('data-stamperr'); if (!sid) return;
+          tries++;
+          if (tries === 1) { setTimeout(function () { img.src = proxied('api/stamp/' + encodeURIComponent(sid) + '/content') + '?retry=1'; }, 1400); return; }
+          var ph = document.createElement('span'); ph.className = 'nft-err'; ph.title = 'Preview didn’t load — tap to open';
+          ph.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 4.3 1.8 19a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg><small>Couldn’t load</small>';
+          if (img.parentNode) img.parentNode.replaceChild(ph, img);
+        });
       });
     }
   }
@@ -667,6 +1023,7 @@
         + '<button class="sd-tool" data-op="dispenser">' + DISP_IC + '<span>Dispenser</span></button>'
         + '<button class="sd-tool" data-op="destroy">' + FIRE_IC + '<span>Destroy</span></button>'
         + '<button class="sd-tool" data-op="dividend">' + DIV_IC + '<span>Dividend</span></button>'
+        + '<button class="sd-tool" data-op="attach">' + ATTACH_IC + '<span>Attach</span></button>'
         + (acctKind === 'hd' ? '<button class="sd-tool" data-op="vault">' + VAULT_IC + '<span>Vault</span></button>' : '')
         + '</div></div>'
       : '';
@@ -688,6 +1045,7 @@
         else openTerminal('#vault=' + encodeURIComponent(s.cpid || '') + '&s=' + encodeURIComponent(s.stamp));
         return;
       }
+      if (b.dataset.op === 'attach') { cpAttachDetach('attach', { asset: (s.name || s.cpid), qty: 1 }); return; }
       stampTool(b.dataset.op, s);
     }; });
   }
@@ -731,6 +1089,7 @@
         + '<button class="sd-tool" data-op="dispenser">' + DISP_IC + '<span>Dispenser</span></button>'
         + '<button class="sd-tool" data-op="destroy">' + FIRE_IC + '<span>Destroy</span></button>'
         + '<button class="sd-tool" data-op="dividend">' + DIV_IC + '<span>Dividend</span></button>'
+        + '<button class="sd-tool" data-op="attach">' + ATTACH_IC + '<span>Attach</span></button>'
         + (acctKind === 'hd' ? '<button class="sd-tool" data-op="vault">' + VAULT_IC + '<span>Vault</span></button>' : '')
         + '</div></div>'
       : '';
@@ -754,6 +1113,7 @@
         else openTerminal('#vault=' + encodeURIComponent(s.cpid || ''));
         return;
       }
+      if (b.dataset.op === 'attach') { cpAttachDetach('attach', { asset: (s.name || s.cpid), qty: 1 }); return; }
       stampTool(b.dataset.op, s);
     }; });
   }
@@ -1054,8 +1414,11 @@
     fairmint: { label: 'Fairmint (mint)', ic: MINT_IC, xcp: false, fields: [
       { k: 'asset', l: 'Fairminter asset' },
       { k: 'quantity', l: 'Quantity to mint (raw)', t: 'number' } ] },
+    // Bind an asset to a UTXO (attach) / release it back to the address (detach). Custom two-tab flow,
+    // not a generic form — detach is UTXO-sourced and needs an attached-UTXO scan.
+    attach: { label: 'Attach / Detach', ic: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007 0l2-2a5 5 0 00-7-7l-1 1"/><path d="M14 11a5 5 0 00-7 0l-2 2a5 5 0 007 7l1-1"/></svg>', custom: true },
   };
-  var CP_ORDER = ['send', 'sweep', 'mpma', 'dispenser', 'dispense', 'dividend', 'destroy', 'issuance', 'fairminter', 'fairmint'];
+  var CP_ORDER = ['send', 'sweep', 'mpma', 'dispenser', 'dispense', 'dividend', 'destroy', 'issuance', 'fairminter', 'fairmint', 'attach'];
   var CPH = { src: null, type: 'nativeSegwit', fee: null, last: {} };
   var CP_HUB_FEES = null;
 
@@ -1088,14 +1451,14 @@
         + '<div class="cp-grid">' + grid + '</div>';
     }
     overlay('<div class="cphub"><div class="st-head"><div class="st-htitle">Advanced Tools</div><button class="m-close-x" id="cphX" title="Close" aria-label="Close">✕</button></div>'
-      + emblemBtn + cpSection + '</div>');
+      + cpSection + emblemBtn + '</div>');
     document.getElementById('cphX').onclick = closeOv;
     var eb = document.getElementById('thEmblem'); if (eb) eb.onclick = function () { closeOv(); openEmblem(); };
     if (canCP && srcs.length) {
       var sel = document.getElementById('cphSrc');
       sel.onchange = function () { CPH.src = sel.value; CPH.type = sel.options[sel.selectedIndex].getAttribute('data-t'); var ad = document.querySelector('.cph-addr'); if (ad) { ad.textContent = CPH.src; ad.setAttribute('data-copy', CPH.src); } cphMempool(); };
       var ad0 = document.querySelector('.cph-addr'); if (ad0) ad0.onclick = function () { copy(CPH.src, ad0); };
-      document.querySelectorAll('.cp-act').forEach(function (b) { b.onclick = function () { cpForm(b.dataset.k); }; });
+      document.querySelectorAll('.cp-act').forEach(function (b) { b.onclick = function () { var a = CP_ACTIONS[b.dataset.k]; if (a && a.custom) cpAttachDetach('attach'); else cpForm(b.dataset.k); }; });
       cphMempool();
     }
   }
@@ -1275,6 +1638,115 @@
     };
   }
 
+  // ── Attach / Detach — bind a Counterparty asset to a specific UTXO, or release it back to the
+  //    address balance (used by PSBT markets / atomic swaps). Two tabs; compose→sign→broadcast. ──
+  function cpAttachDetach(tab, preload) {
+    tab = tab || 'attach';
+    var srcs = cpSources(); if (!srcs.length) return;
+    if (!CPH.src || !srcs.find(function (s) { return s.address === CPH.src; })) { var def = srcs.find(function (s) { return s.type === curBtcType(); }) || srcs[0]; CPH.src = def.address; CPH.type = def.type; }
+    overlay('<div class="cphub"><div class="st-head"><button class="p-ibtn" id="adBack" title="Back">←</button><div class="st-htitle">Attach / Detach</div><button class="m-close-x" id="adX" title="Close" aria-label="Close">✕</button></div>'
+      + '<div class="p-hint">Bind a Counterparty asset to a specific UTXO (so it travels with that output — PSBT markets / swaps), or release it back to your address balance.</div>'
+      + '<div class="cph-from">from ' + esc(short(CPH.src)) + '</div>'
+      + '<div class="ac-filters"><button class="acf ' + (tab === 'attach' ? 'on' : '') + '" data-ad="attach">Attach to UTXO</button><button class="acf ' + (tab === 'detach' ? 'on' : '') + '" data-ad="detach">Detach to address</button></div>'
+      + '<div id="adBody"><div class="empty">Loading…</div></div></div>');
+    document.getElementById('adBack').onclick = cpHub;
+    document.getElementById('adX').onclick = closeOv;
+    document.querySelectorAll('[data-ad]').forEach(function (b) { b.onclick = function () { cpAttachDetach(b.dataset.ad); }; });
+    if (tab === 'detach') adDetachList(); else adAttachForm(preload);
+  }
+  async function adAttachForm(preload) {
+    var body = document.getElementById('adBody'); if (!body) return;
+    if (!CP_HUB_FEES) { try { CP_HUB_FEES = await fetch('api/btc/fees').then(function (r) { return r.json(); }); } catch (e) { CP_HUB_FEES = { fastestFee: 10, halfHourFee: 6, hourFee: 3 }; } }
+    if (CPH.fee == null) CPH.fee = CP_HUB_FEES.halfHourFee || 6;
+    var holdings = []; try { holdings = (await fetch('api/cp/holdings/' + encodeURIComponent(CPH.src)).then(function (r) { return r.json(); })).holdings || []; } catch (e) {}
+    CPH.holdings = holdings;
+    var opts = holdings.map(function (h) { return '<option value="' + esc(h.name || h.asset) + '"></option>'; }).join('');
+    body.innerHTML = '<div class="fine" style="margin:2px 0 8px">Move an asset from this address’s balance onto a dedicated UTXO.</div>'
+      + '<label class="stf"><span>Asset <span class="fine availhint" id="adAvail"></span></span><input id="adA" class="p-in" list="addl" type="text" spellcheck="false" autocomplete="off" placeholder="type or pick an asset you hold"/><datalist id="addl">' + opts + '</datalist></label>'
+      + '<label class="stf"><span>Quantity</span><input id="adQ" class="p-in" type="number" step="any" min="0"/></label>'
+      + '<label class="stf"><span>Miner fee rate</span></label>' + feeRowHtml(CP_HUB_FEES)
+      + '<div id="adStatus" class="p-err"></div>'
+      + '<button class="btn" id="adReview">Review attach</button>';
+    var pop = document.querySelector('#pop-ov .pop-pop');
+    wireFeeRow(function (r) { CPH.fee = r; }, pop);
+    var inp = document.getElementById('adA'), bal = document.getElementById('adAvail');
+    var upd = function () { var v = inp.value.trim().toUpperCase(); var h = holdings.find(function (x) { return (x.name || '').toUpperCase() === v || (x.asset || '').toUpperCase() === v; }); bal.textContent = h ? ('available ' + h.qty) : (v ? '(you don’t hold this asset)' : ''); };
+    inp.oninput = upd; inp.onchange = upd;
+    // Preloaded from the asset-detail window: fill the asset (+ held quantity) so attach is one edit away.
+    if (preload && preload.asset) { inp.value = preload.asset; if (preload.qty != null && preload.qty !== '') { var q = document.getElementById('adQ'); if (q) q.value = preload.qty; } upd(); }
+    document.getElementById('adReview').onclick = adAttachReview;
+  }
+  async function adAttachReview() {
+    var st = document.getElementById('adStatus'); st.className = 'p-hint'; st.textContent = 'Composing attach…';
+    try {
+      var asset = document.getElementById('adA').value.trim(), qty = document.getElementById('adQ').value.trim();
+      if (!asset || !qty) throw new Error('Enter an asset and quantity.');
+      if (!(parseFloat(qty) > 0)) throw new Error('Enter a quantity greater than 0.');
+      var h = (CPH.holdings || []).find(function (x) { return (x.name || '').toUpperCase() === asset.toUpperCase() || (x.asset || '').toUpperCase() === asset.toUpperCase(); });
+      if (h) { asset = h.asset; if (parseFloat(qty) > parseFloat(h.qty)) throw new Error('You only hold ' + h.qty + ' on this address.'); }
+      var div = h ? !!h.divisible : true;
+      if (!h) { try { div = !!(await fetch('api/cp/asset/' + encodeURIComponent(asset)).then(function (r) { return r.json(); })).divisible; } catch (e) {} }
+      var params = { asset: asset, quantity: div ? Math.round(parseFloat(qty) * 1e8) : Math.round(parseFloat(qty)) };
+      if (CPH.fee) params.sat_per_vbyte = CPH.fee;
+      var c = await fetch('api/cp/compose/attach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: CPH.src, params: params }) }).then(function (r) { return r.json(); });
+      if (c.error) throw new Error(c.detail || c.error);
+      adConfirm(c, 'Attach', '<div class="sd-row"><span class="sd-k">Attach</span><span class="sd-v">' + esc(qty) + ' ' + esc(asset) + ' → UTXO</span></div>', function () { cpAttachDetach('attach'); });
+    } catch (err) { st.className = 'p-err'; st.textContent = /insufficient/i.test(err.message || '') ? 'Insufficient balance (asset, or BTC for the fee).' : (err.message || 'Compose failed.'); }
+  }
+  async function adDetachList() {
+    var body = document.getElementById('adBody'); if (!body) return;
+    body.innerHTML = '<div class="empty">Scanning your UTXOs for attached assets…</div>';
+    try {
+      var att = ((await fetch('api/cp/attached/' + encodeURIComponent(CPH.src)).then(function (r) { return r.json(); })).attached) || [];
+      if (!att.length) { body.innerHTML = '<div class="fine" style="padding:6px 2px">No assets are attached to your UTXOs right now. Attach one from the other tab and it’ll show here, ready to release.</div>'; return; }
+      if (!CP_HUB_FEES) { try { CP_HUB_FEES = await fetch('api/btc/fees').then(function (r) { return r.json(); }); } catch (e) { CP_HUB_FEES = { fastestFee: 10, halfHourFee: 6, hourFee: 3 }; } }
+      if (CPH.fee == null) CPH.fee = CP_HUB_FEES.halfHourFee || 6;
+      body.innerHTML = '<div class="fine" style="margin:2px 0 8px">These assets sit on a UTXO. Detaching releases them back to your address balance.</div>'
+        + '<label class="stf"><span>Miner fee rate</span></label>' + feeRowHtml(CP_HUB_FEES)
+        + '<div id="adDetStatus" class="p-err" style="margin:8px 0"></div>'
+        + att.map(function (a) { return '<div class="acct-line"><div class="acct-lab">' + esc(a.asset_longname || a.asset) + ' <b>' + esc(String(a.quantity_normalized)) + '</b><br><span class="fine" style="font-family:var(--mono)">' + esc(String(a.utxo).slice(0, 20)) + '…</span></div><button class="mini" data-detach="' + esc(a.utxo) + '">Detach</button></div>'; }).join('');
+      wireFeeRow(function (r) { CPH.fee = r; }, document.querySelector('#pop-ov .pop-pop'));
+      body.querySelectorAll('[data-detach]').forEach(function (b) { b.onclick = function () { adDetachReview(b.dataset.detach); }; });
+    } catch (e) { body.innerHTML = '<div class="p-err" style="padding:6px 2px">Could not scan for attached assets — try again.</div>'; }
+  }
+  async function adDetachReview(utxo) {
+    var st = document.getElementById('adDetStatus'); if (st) { st.className = 'p-hint'; st.textContent = 'Composing detach…'; }
+    try {
+      var c = await fetch('api/cp/detach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ utxo: utxo, destination: CPH.src, sat_per_vbyte: CPH.fee }) }).then(function (r) { return r.json(); });
+      if (c.error) throw new Error(c.detail || c.error);
+      adConfirm(c, 'Detach', '<div class="sd-row"><span class="sd-k">From UTXO</span><span class="sd-v" style="font-family:var(--mono);font-size:11px">' + esc(String(utxo).slice(0, 18)) + '…</span></div><div class="sd-row"><span class="sd-k">To</span><span class="sd-v">your address balance</span></div>', function () { cpAttachDetach('detach'); });
+    } catch (err) { if (st) { st.className = 'p-err'; st.textContent = err.message || 'Compose failed.'; } }
+  }
+  // Shared confirm + local-sign + broadcast for attach/detach. Both only ever pay BTC back to the
+  // source address (attach binds to a source UTXO; detach releases to the source), so outputs are
+  // asserted against [CPH.src] before signing.
+  function adConfirm(c, label, rowsHtml, backFn) {
+    var pop = document.querySelector('#pop-ov .pop-pop'); if (!pop) return;
+    var sat = function (n) { return n == null ? '—' : Number(n).toLocaleString('en-US') + ' sats'; };
+    var vsz = (c.signed_tx_estimated_size && c.signed_tx_estimated_size.vsize) || null;
+    pop.innerHTML = '<div class="stamp-detail"><div class="st-head"><button class="p-ibtn" id="adcBack" title="Back">←</button><div class="st-htitle">Confirm · ' + esc(label) + '</div></div>'
+      + '<div class="p-card" style="display:flex;flex-direction:column;gap:7px">' + rowsHtml
+      + '<div class="sd-row"><span class="sd-k">Miner fee</span><span class="sd-v">' + sat(c.btc_fee) + usdSuffix(c.btc_fee) + (vsz ? ' (' + vsz + ' vB)' : '') + '</span></div></div>'
+      + (c.data ? '<div class="disp-panel" style="display:block"><div class="disp-hit" style="font-family:var(--mono);word-break:break-all">CP: ' + esc(String(c.data).slice(0, 64)) + (String(c.data).length > 64 ? '…' : '') + '</div></div>' : '')
+      + '<div class="disp-panel" style="display:block"><div class="disp-hit">Signed locally on your device, then broadcast. Counterparty confirms separately.</div></div>'
+      + '<div id="adcStatus" class="p-err"></div>'
+      + '<div class="actions"><button class="btn ghost" id="adcBack2">Back</button><button class="btn" id="adcGo">Sign &amp; broadcast</button></div></div>';
+    document.getElementById('adcBack').onclick = backFn; document.getElementById('adcBack2').onclick = backFn;
+    document.getElementById('adcGo').onclick = async function () {
+      var st = document.getElementById('adcStatus'); st.className = 'p-hint'; st.textContent = 'Signing locally & broadcasting…';
+      try {
+        assertOutputs(c.psbt, [CPH.src]); // attach/detach only pay BTC back to the source address
+        var prevTxs = {};
+        if (CPH.type === 'legacy') { st.textContent = 'Fetching previous transactions…'; var uniq = [...new Set(C.psbtInputs(c.psbt).map(function (x) { return x.txid; }))]; var got = await Promise.all(uniq.map(function (t) { return fetch('api/btc/tx/' + t + '/hex').then(function (r) { return r.ok ? r.text() : null; }).then(function (h) { return [t, h && h.trim()]; }).catch(function () { return [t, null]; }); })); got.forEach(function (p) { if (p[1]) prevTxs[p[0]] = p[1]; }); st.textContent = 'Signing locally & broadcasting…'; }
+        var signed = C.signCp(c.psbt, c.inputs_values, c.lock_scripts, curAccount, CPH.type, prevTxs, curImportedId());
+        var r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then(function (x) { return x.json(); });
+        if (r.error) throw new Error(r.detail || r.error);
+        st.className = 'p-hint'; st.innerHTML = '<span style="color:var(--green)">Broadcast ✓ — ' + esc(String(r.txid).slice(0, 20)) + '…</span>';
+        var go = document.getElementById('adcGo'), bk = document.getElementById('adcBack2'); if (bk) bk.remove(); if (go) { go.textContent = 'Done'; go.onclick = function () { closeOv(); renderMain(); }; }
+      } catch (err) { st.className = 'p-err'; st.textContent = 'Failed: ' + (err.message || 'sign/broadcast error'); }
+    };
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   //  Advanced account menu — all addresses · sign message · hardware · custom
   //  derivation · reveal seed · export keys. Password-gated where secrets appear.
@@ -1300,17 +1772,41 @@
       + (isImp ? '' : '<button class="adv-opt" data-adv="custom"><b>Custom derivation path</b><span>Derive an address at a specific path</span></button>'
         + '<button class="adv-opt danger" data-adv="reveal"><b>Reveal seed phrase</b><span>Show your 12/24-word recovery phrase</span></button>'
         + '<button class="adv-opt danger" data-adv="secrets"><b>Export private keys</b><span>Export raw keys for this account</span></button>')
+      + '<button class="adv-opt" data-adv="autolock"><b>Auto-lock timer</b><span>Change or turn off the idle lock</span></button>'
+      + '<button class="adv-opt" data-adv="theme"><b>Appearance</b><span>Dark or light wallet skin</span></button>'
       + '</div><button class="btn ghost" id="advClose">Close</button></div>');
     document.getElementById('advX').onclick = closeOv; document.getElementById('advClose').onclick = closeOv;
     document.querySelectorAll('[data-adv]').forEach(function (b) { b.onclick = function () {
       var a = b.dataset.adv;
       if (a === 'addresses') advAllAddresses();
       else if (a === 'sign') advSignMessage();
-      else if (a === 'hw') openTerminal('#hardware');
+      else if (a === 'hw') { if (IS_HW_WIN) hwConnect(); else openHardwareTab(); }
       else if (a === 'custom') advCustomPath();
       else if (a === 'reveal') advRevealSeed();
       else if (a === 'secrets') advExportKeys();
+      else if (a === 'autolock') advAutoLock();
+      else if (a === 'theme') advTheme();
     }; });
+  }
+  function advAutoLock() {
+    var cur = '5'; try { cur = localStorage.getItem('ww:idlemins') || '5'; } catch (e) {}
+    var opts = [['1', '1 minute'], ['5', '5 minutes'], ['15', '15 minutes'], ['30', '30 minutes'], ['60', '1 hour'], ['off', 'Never — stay unlocked']];
+    overlay('<div class="stamp-detail"><div class="st-head"><button class="p-ibtn" id="alBack" title="Back">←</button><div class="st-htitle">Auto-lock timer</div></div>'
+      + '<div class="p-hint">Wonder Wallet locks after this much inactivity. <b>Never</b> keeps it unlocked until you lock it manually or close the browser — use only on a device you trust.</div>'
+      + '<div class="adv-menu">' + opts.map(function (o) { var sub = o[0] === cur ? '✓ current' : (o[0] === 'off' ? 'No idle lock — trusted devices only' : ''); return '<button class="adv-opt' + (o[0] === cur ? ' on' : '') + (o[0] === 'off' ? ' danger' : '') + '" data-al="' + o[0] + '"><b>' + esc(o[1]) + '</b><span>' + esc(sub) + '</span></button>'; }).join('') + '</div>'
+      + '<button class="btn ghost" id="alClose" style="margin-top:8px">Close</button></div>');
+    document.getElementById('alBack').onclick = advancedMenu; document.getElementById('alClose').onclick = closeOv;
+    document.querySelectorAll('[data-al]').forEach(function (b) { b.onclick = function () { try { if (window.WWSession && window.WWSession.setIdle) window.WWSession.setIdle(b.dataset.al); } catch (e) {} advAutoLock(); }; });
+  }
+  function advTheme() {
+    var cur = 'dark'; try { cur = localStorage.getItem('ww:theme') === 'light' ? 'light' : 'dark'; } catch (e) {}
+    var opt = function (val, name, desc) { return '<button class="adv-opt' + (val === cur ? ' on' : '') + '" data-theme="' + val + '"><b>' + esc(name) + (val === cur ? ' ✓' : '') + '</b><span>' + esc(desc) + '</span></button>'; };
+    overlay('<div class="stamp-detail"><div class="st-head"><button class="p-ibtn" id="thBack" title="Back">←</button><div class="st-htitle">Appearance</div></div>'
+      + '<div class="p-hint">Choose your wallet skin — saved on this device.</div>'
+      + '<div class="adv-menu">' + opt('dark', 'Midnight', 'The original deep-black gold theme') + opt('light', 'Parchment', 'A warm, light-toned skin') + '</div>'
+      + '<button class="btn ghost" id="thClose" style="margin-top:8px">Close</button></div>');
+    document.getElementById('thBack').onclick = advancedMenu; document.getElementById('thClose').onclick = closeOv;
+    document.querySelectorAll('[data-theme]').forEach(function (b) { b.onclick = function () { setTheme(b.dataset.theme); advTheme(); }; });
   }
   function advAllAddresses() {
     var rows = [];
@@ -1451,12 +1947,15 @@
     var status = it.confirmed ? '<span class="ac-badge conf">✓ Confirmed</span>' : '<span class="ac-badge unc">⏳ Unconfirmed</span>';
     var when = it.time ? actAgo(it.time) : (it.blockHeight ? 'block ' + fmt(it.blockHeight, 0) : '');
     var fee = it.fee != null ? fmt(it.fee, 0) + ' sats' + (it.feeRate != null ? ' · ' + it.feeRate + ' s/vB' : '') : '';
-    var boost = (!it.confirmed && it.ownVout && canSignBtc()) ? '<button class="ac-boost" data-boost="' + esc(it.txid) + '">⚡ Boost</button>' : '';
+    // An unconfirmed tx can be accelerated if it's a signable BTC send (→ RBF) and/or has a spendable
+    // output we own (→ CPFP). When so, the row's icon becomes a tap target that opens the Speed-up chooser.
+    var canAccel = !it.confirmed && canSignBtc() && ((it.source === 'btc' && it.direction === 'out') || !!it.ownVout);
+    var ic = '<span class="ac-ic ' + info.cls + (canAccel ? ' ac-ic-boost' : '') + '"' + (canAccel ? ' data-accel="' + esc(it.txid) + '" title="Speed up this transaction"' : '') + '>' + info.ic + (canAccel ? '<span class="ac-boltbadge">⚡</span>' : '') + '</span>';
     return '<div class="ac-row">'
-      + '<span class="ac-ic ' + info.cls + '">' + info.ic + '</span>'
+      + ic
       + '<div class="ac-main"><div class="ac-l1">' + esc(info.label) + info.detailHtml + '</div>'
       + '<div class="ac-l2"><span class="ac-tx" data-copy="' + esc(it.txid) + '" title="Copy txid">' + esc(it.txid.slice(0, 12)) + '…</span>' + (when ? '<span>' + esc(when) + '</span>' : '') + (fee ? '<span class="ac-fee">' + esc(fee) + '</span>' : '') + '</div></div>'
-      + '<div class="ac-r">' + status + boost + '</div></div>';
+      + '<div class="ac-r">' + status + '</div></div>';
   }
   function renderActivity(addr) {
     if (!addr) return renderMain();
@@ -1485,31 +1984,120 @@
     body.innerHTML = filterBar + '<div class="ac-list">' + list + '</div>';
     body.querySelectorAll('.acf').forEach(function (b) { b.onclick = function () { ACT.filter = b.dataset.f; renderActivityList(); }; });
     body.querySelectorAll('[data-copy]').forEach(function (el) { el.onclick = function () { copy(el.getAttribute('data-copy'), el); }; });
-    body.querySelectorAll('[data-boost]').forEach(function (b) { b.onclick = function () { var it = ACT.items.filter(function (x) { return x.txid === b.dataset.boost; })[0]; if (it) boostActivity(it); }; });
+    body.querySelectorAll('[data-accel]').forEach(function (b) { b.onclick = function () { var it = ACT.items.filter(function (x) { return x.txid === b.dataset.accel; })[0]; if (it) accelerateTx(it); }; });
+  }
+  // Speed-up chooser — one entry point (tap the row icon) that offers whichever accelerators apply:
+  // RBF replacement (your own BTC sends) and/or CPFP boost (any tx with a spendable output you own).
+  function accelerateTx(it) {
+    var canRbf = it.source === 'btc' && it.direction === 'out' && canSignBtc();
+    var canCpfp = !!it.ownVout && canSignBtc();
+    var opts = '';
+    if (canRbf) opts += '<button class="adv-opt" data-accel-do="rbf"><b>⏫ Replace fee (RBF)</b><span>Replace this send with a higher-fee version — same recipient &amp; amount, extra fee comes from your change. Best for your own stuck sends.</span></button>';
+    if (canCpfp) opts += '<button class="adv-opt" data-accel-do="cpfp"><b>⚡ Boost (CPFP)</b><span>Spend this transaction’s output in a high-fee child so miners pull both in together. Works for received &amp; Counterparty txs too.</span></button>';
+    if (!opts) opts = '<div class="p-hint">This transaction can’t be accelerated from here — there’s no replaceable send and no spendable output to build a child from. It’ll confirm once the mempool clears.</div>';
+    overlay('<div class="stamp-detail"><div class="st-head"><div class="st-htitle">Speed up transaction</div><button class="m-close-x" id="axX" title="Close" aria-label="Close">✕</button></div>'
+      + '<div class="p-hint">Unconfirmed at <b>' + esc(String(it.feeRate != null ? it.feeRate : '?')) + ' s/vB</b>' + (it.fee != null ? ' · ' + fmt(it.fee, 0) + ' sats fee' : '') + '. Choose how to speed it up:</div>'
+      + '<div class="adv-menu">' + opts + '</div>'
+      + '<button class="btn ghost" id="axClose">Close</button></div>');
+    document.getElementById('axX').onclick = closeOv;
+    document.getElementById('axClose').onclick = closeOv;
+    var rb = document.querySelector('[data-accel-do="rbf"]'); if (rb) rb.onclick = function () { bumpRbf(it); };
+    var cb = document.querySelector('[data-accel-do="cpfp"]'); if (cb) cb.onclick = function () { boostActivity(it); };
+  }
+  // Shared fee picker for the accelerate windows: Fast / Med / Econ quick-chips (labelled with their
+  // live mempool rates) that fill a custom input pre-set to the RECOMMENDED rate — so casual users tap a
+  // preset and advanced users just type their own. onChange(rate) fires on every pick or edit.
+  function accelFeeRow(fees, recommended, inputId) {
+    var chips = [['Fast', fees.fastestFee || recommended], ['Med', fees.halfHourFee || recommended], ['Econ', fees.hourFee || 1]];
+    return '<div class="fee-row">' + chips.map(function (c) { return '<button type="button" class="feeopt' + (Number(c[1]) === Number(recommended) ? ' on' : '') + '" data-fr="' + c[1] + '">' + c[0] + ' · ' + c[1] + '</button>'; }).join('')
+      + '<input id="' + inputId + '" class="fee-custom" type="number" min="0.1" step="0.1" value="' + recommended + '" title="Enter a custom rate"/></div>';
+  }
+  function wireAccelFee(inputId, onChange, root) {
+    root = root || document;
+    var inp = root.querySelector('#' + inputId);
+    root.querySelectorAll('.feeopt[data-fr]').forEach(function (b) { b.onclick = function () { root.querySelectorAll('.feeopt[data-fr]').forEach(function (x) { x.classList.remove('on'); }); b.classList.add('on'); if (inp) inp.value = b.dataset.fr; onChange(parseFloat(b.dataset.fr)); }; });
+    if (inp) inp.oninput = function () { root.querySelectorAll('.feeopt[data-fr]').forEach(function (x) { x.classList.remove('on'); }); var r = parseFloat(inp.value); if (r > 0) onChange(r); };
+  }
+
+  // RBF fee-bump: rebuild the SAME send (same recipient + same amount) spending ONLY the original tx's
+  // inputs, at a higher fee — so it can only ever replace the stuck tx, never become a second payment.
+  async function bumpRbf(it) {
+    var self = ACT.addr; if (!self) return;
+    overlay('<div class="menu" style="padding:14px"><div class="p-title" style="font-size:15px">⏫ Speed up (RBF)</div><div class="p-hint">Loading transaction…</div></div>');
+    var info;
+    try { info = await fetch('api/btc/tx/' + encodeURIComponent(it.txid) + '/info').then(function (r) { return r.json(); }); if (info.error) throw new Error(info.error); }
+    catch (e) { overlay('<div class="menu" style="padding:14px"><div class="p-title" style="font-size:15px">⏫ Speed up (RBF)</div><div class="p-err">Could not load the transaction — try again.</div><div class="actions"><button class="btn ghost" id="rbfX">Close</button></div></div>'); var x = document.getElementById('rbfX'); if (x) x.onclick = closeOv; return; }
+    var recipients = (info.vout || []).filter(function (o) { return o.address && o.address !== self; });
+    var inputs = (info.vin || []).map(function (v) { return { txid: v.txid, vout: v.vout, value: v.value }; });
+    var totalIn = inputs.reduce(function (a, v) { return a + (v.value || 0); }, 0);
+    var hasData = (info.vout || []).some(function (o) { return !o.address && o.value != null; }); // OP_RETURN / data output
+    var badReason = '';
+    if (info.confirmed) badReason = 'This transaction has already confirmed.';
+    else if (hasData) badReason = 'This transaction carries embedded data (Counterparty / Stamps / SRC-20), so it can’t be safely rebuilt. Use CPFP boost instead.';
+    else if (recipients.length !== 1) badReason = 'Fee-bump here supports a single-recipient send (this tx has ' + recipients.length + '). CPFP boost still works if it has spendable change.';
+    else if (!inputs.length || !totalIn) badReason = 'Could not read the original inputs.';
+    if (badReason) { overlay('<div class="menu" style="padding:14px"><div class="p-title" style="font-size:15px">⏫ Speed up (RBF)</div><div class="p-hint">' + esc(badReason) + '</div><div class="actions"><button class="btn ghost" id="rbfX">Close</button></div></div>'); var x2 = document.getElementById('rbfX'); if (x2) x2.onclick = closeOv; return; }
+    var recipient = recipients[0].address, amount = recipients[0].value;
+    var oldFee = info.fee || it.fee || 0, pv = it.vsize || info.vsize || 150, oldRate = it.feeRate || (pv ? +(oldFee / pv).toFixed(2) : 1);
+    var fees = { fastestFee: 20 }; try { fees = await fetch('api/btc/fees').then(function (r) { return r.json(); }); } catch (e) {}
+    var minRate = Math.max(1, Math.ceil(oldRate) + 1); // must exceed the old rate to relay
+    var rate = Math.max(fees.fastestFee || minRate, minRate);
+    var warn = info.rbf ? '' : '<div class="disp-panel" style="display:block"><div class="disp-hit">⚠ This send didn’t opt into RBF. Replacement relies on <b>full-RBF</b> nodes (widely supported now) so it usually works, but propagation isn’t guaranteed everywhere.</div></div>';
+    overlay('<div class="menu" style="padding:14px;display:flex;flex-direction:column;gap:9px">'
+      + '<div class="p-title" style="font-size:15px">⏫ Speed up (RBF)</div>'
+      + '<div class="p-hint">Replace this unconfirmed send (currently <b>' + esc(String(oldRate)) + ' s/vB</b>) with a higher-fee version. Same recipient, same amount — the extra fee comes out of your change.</div>'
+      + warn
+      + '<div class="p-card" style="display:flex;flex-direction:column;gap:6px"><div class="sd-row"><span class="sd-k">To</span><span class="sd-v" style="font-family:var(--mono);font-size:11px">' + esc(short(recipient)) + '</span></div><div class="sd-row"><span class="sd-k">Amount</span><span class="sd-v">' + fmt(amount / 1e8, 8) + ' BTC</span></div></div>'
+      + '<label class="stf"><span>New fee rate <span class="fine">s/vB · recommended ' + esc(String(rate)) + ' · min ' + esc(String(minRate)) + '</span></span></label>' + accelFeeRow(fees, rate, 'rbfRate')
+      + '<div id="rbfCalc" class="fine" style="margin-top:8px"></div><div id="rbfStatus" class="p-err"></div>'
+      + '<div class="actions"><button class="btn ghost" id="rbfCancel">Cancel</button><button class="btn" id="rbfGo">Bump fee</button></div></div>');
+    function estFee(r) { return Math.ceil((it.vsize || pv) * r); }
+    function paint() { var r = parseFloat(document.getElementById('rbfRate').value) || rate; var nf = estFee(r); var below = r < minRate; document.getElementById('rbfCalc').innerHTML = 'New fee ≈ <b>' + fmt(nf, 0) + ' sats</b>' + usdSuffix(nf) + ' (was ' + fmt(oldFee, 0) + ' sats @ ' + oldRate + ' s/vB)' + (below ? ' <span style="color:var(--red)">· below the ' + minRate + ' s/vB minimum</span>' : ''); }
+    paint();
+    wireAccelFee('rbfRate', paint, document.querySelector('#pop-ov .pop-pop'));
+    document.getElementById('rbfCancel').onclick = closeOv;
+    document.getElementById('rbfGo').onclick = async function () {
+      var st = document.getElementById('rbfStatus'); st.className = 'p-hint'; st.textContent = 'Rebuilding & signing…';
+      try {
+        var newRate = parseFloat(document.getElementById('rbfRate').value);
+        if (!(newRate > oldRate)) throw new Error('New rate must be higher than the current ' + oldRate + ' s/vB.');
+        var stype = curBtcType(), prevTxs = {};
+        if (stype === 'legacy') { st.textContent = 'Fetching previous transactions…'; var uniq = [...new Set(inputs.map(function (x) { return x.txid; }))]; var got = await Promise.all(uniq.map(function (t) { return fetch('api/btc/tx/' + t + '/hex').then(function (r) { return r.ok ? r.text() : null; }).then(function (h) { return [t, h && h.trim()]; }).catch(function () { return [t, null]; }); })); got.forEach(function (p) { if (p[1]) prevTxs[p[0]] = p[1]; }); st.textContent = 'Rebuilding & signing…'; }
+        // SAFETY: utxos = ONLY the original inputs → the replacement can spend nothing else, so it must
+        // conflict with (replace) the stuck tx. Same recipient + amount preserved; higher fee eats change.
+        var signed = C.send({ account: curAccount, importedId: curImportedId(), type: stype, utxos: inputs, recipient: recipient, amountSats: amount, feeRate: newRate, rbf: true, sign: true, prevTxs: prevTxs });
+        if (!(signed.fee > oldFee)) throw new Error('That rate doesn’t raise the absolute fee enough to replace it — pick a higher rate.');
+        var r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then(function (x) { return x.json(); });
+        if (r.error) throw new Error(r.detail || r.error);
+        st.className = 'p-hint'; st.innerHTML = '<span style="color:var(--green)">Replaced ✓ — ' + esc(String(r.txid).slice(0, 20)) + '…</span>';
+        setTimeout(function () { closeOv(); ACT.items = null; loadActivity(); }, 1800);
+      } catch (e) { st.className = 'p-err'; st.textContent = 'Failed: ' + (e.message === 'insufficient_funds' ? 'The original inputs can’t cover a higher fee (little/no change). Try a lower rate, or use CPFP.' : (e.message || 'replace error')); }
+    };
   }
   // CPFP boost: spend the stuck tx's own output (change/receive) in a high-fee child that drags the parent in.
   async function boostActivity(it) {
     if (!it.ownVout) return;
     var from = curBtcAddress(); if (!from) return;
     var fees = { fastestFee: 20 }; try { fees = await fetch('api/btc/fees').then(function (r) { return r.json(); }); } catch (e) {}
+    if (!PRICES.bitcoin) { try { PRICES = await fetch('api/prices').then(function (r) { return r.json(); }); } catch (e) {} }
     var pv = it.vsize || 200, pf = it.fee || 0, cv = 111; // parent vsize/fee, child ~1-in/1-out vsize
-    var target = Math.max((fees.fastestFee || 20), Math.ceil(it.feeRate || 1) + 3);
-    function calc(rate) { var childFee = Math.max(1, Math.ceil(rate * (pv + cv) - pf)); return { childFee: childFee, childRate: Math.max(1, Math.round(childFee / cv)), pkgRate: +(((pf + childFee) / (pv + cv)).toFixed(1)) }; }
-    var rate = target, c = calc(rate);
+    var target = Math.max((fees.fastestFee || 20), Math.ceil(it.feeRate || 1) + 3); // recommended: clear the mempool + beat the parent
+    function calc(rate) { var childFee = Math.max(1, Math.ceil(rate * (pv + cv) - pf)); return { childFee: childFee, childRate: Math.max(1, Math.round(childFee / cv)), pkgRate: +(((pf + childFee) / (pv + cv)).toFixed(2)) }; }
+    var rate = target;
     overlay('<div class="menu" style="padding:14px;display:flex;flex-direction:column;gap:9px">'
-      + '<div class="p-title" style="font-size:15px">⚡ Boost stuck transaction</div>'
-      + '<div class="p-hint">This tx is unconfirmed at <b>' + (it.feeRate || '?') + ' s/vB</b>. Boost it with a <b>CPFP</b> child (a small tx spending its output back to you at a high fee) so miners include both.</div>'
-      + '<label class="stf"><span>Target rate <span class="fine">s/vB</span></span><input id="boRate" class="p-in" type="number" min="1" step="1" value="' + rate + '"/></label>'
-      + '<div id="boCalc" class="fine"></div><div id="boStatus" class="p-err"></div>'
+      + '<div class="p-title" style="font-size:15px">⚡ Boost (CPFP)</div>'
+      + '<div class="p-hint">This send is stuck at <b>' + (it.feeRate || '?') + ' s/vB</b>. A CPFP <b>child</b> (a small tx spending its own output back to you at a high fee) forces miners to confirm both together.</div>'
+      + '<label class="stf"><span>Target package rate <span class="fine">s/vB · recommended ' + esc(String(target)) + '</span></span></label>' + accelFeeRow(fees, target, 'boRate')
+      + '<div id="boCalc" class="fine" style="margin-top:8px"></div><div id="boStatus" class="p-err"></div>'
       + '<div class="actions"><button class="btn ghost" id="boCancel">Cancel</button><button class="btn" id="boGo">Boost</button></div></div>');
-    function paint() { var cc = calc(Math.max(1, parseInt(document.getElementById('boRate').value, 10) || rate)); document.getElementById('boCalc').innerHTML = 'Child fee <b>' + fmt(cc.childFee, 0) + ' sats</b> · package ≈ <b>' + cc.pkgRate + ' s/vB</b> (parent ' + (it.feeRate || '?') + ')'; }
+    function paint() { var cc = calc(Math.max(1, parseFloat(document.getElementById('boRate').value) || rate)); document.getElementById('boCalc').innerHTML = 'Child fee <b>' + fmt(cc.childFee, 0) + ' sats</b>' + usdSuffix(cc.childFee) + ' · effective package ≈ <b>' + cc.pkgRate + ' s/vB</b> (parent ' + (it.feeRate || '?') + ')'; }
     paint();
-    document.getElementById('boRate').oninput = paint;
+    wireAccelFee('boRate', function () { paint(); }, document.querySelector('#pop-ov .pop-pop'));
     document.getElementById('boCancel').onclick = closeOv;
     document.getElementById('boGo').onclick = async function () {
       var st = document.getElementById('boStatus'); st.className = 'p-hint'; st.textContent = 'Building CPFP child & signing…';
       try {
-        var r2 = Math.max(1, parseInt(document.getElementById('boRate').value, 10) || rate), cc = calc(r2);
+        var r2 = Math.max(1, parseFloat(document.getElementById('boRate').value) || rate), cc = calc(r2);
         var childRate = Math.max(1, cc.childFee / cv); // sat/vB the core needs to hit ~childFee on the child
         var stype = curBtcType(), prevTxs = {};
         if (stype === 'legacy') { var h = await fetch('api/btc/tx/' + it.txid + '/hex').then(function (x) { return x.ok ? x.text() : null; }).catch(function () { return null; }); if (h) prevTxs[it.txid] = h.trim(); }
@@ -1955,5 +2543,11 @@
   }
 
   document.addEventListener('ww-lockstate', function () { render(); });
-  (window.WWSession ? window.WWSession.ready : Promise.resolve()).then(function () { try { restoreLast(); } catch (e) {} render(); });
+  // Live-sync the Ledger pairing across surfaces: when the connect tab pairs (writes ww:ledger), any
+  // already-open popup/side panel picks it up immediately (storage events fire in OTHER same-origin pages).
+  window.addEventListener('storage', function (e) { if (e.key === 'ww:ledger') { try { HW = lsGet('ww:ledger', null); } catch (x) { HW = null; } if (HW && acctKind !== 'hardware') { /* keep current view; Ledger now available in the dropdown */ } render(); } });
+  (window.WWSession ? window.WWSession.ready : Promise.resolve()).then(function () {
+    try { restoreLast(); } catch (e) {}
+    if (IS_HW_WIN) hwLandingPage(); else render(); // the ?hw=1 tab shows the dedicated hardware-connect page
+  });
 })();

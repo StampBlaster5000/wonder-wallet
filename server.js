@@ -92,12 +92,19 @@ const limitMedia = rateLimit({ windowMs: 60_000, max: 1200, standardHeaders: tru
 // ── SSRF-safe image fetch (audit #1/#2): https only, block private IPs, validate each
 //    redirect hop, require image content-type, cap size. Used by both image proxies. ──
 function isPrivateIp(ip) {
-  if (netmod.isIPv4(ip)) {
-    const [a, b] = ip.split('.').map(Number);
-    return a === 10 || a === 127 || a === 0 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || a >= 224;
+  let x = String(ip).toLowerCase().trim();
+  // Normalize an IPv4-mapped IPv6 address (::ffff:a.b.c.d) down to its embedded IPv4 so the full
+  // IPv4 private-range test below covers it — otherwise mapped forms like ::ffff:172.16.0.1 slip through.
+  const m = x.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (m) x = m[1];
+  if (netmod.isIPv4(x)) {
+    const [a, b] = x.split('.').map(Number);
+    return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) /* CGNAT */
+      || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || a >= 224;
   }
-  const x = String(ip).toLowerCase();
-  return x === '::1' || x === '::' || x.startsWith('fc') || x.startsWith('fd') || x.startsWith('fe80') || x.startsWith('::ffff:127.') || x.startsWith('::ffff:10.') || x.startsWith('::ffff:192.168.') || x.startsWith('::ffff:169.254.');
+  // IPv6: loopback, unspecified, unique-local (fc00::/7 → fc/fd), link-local (fe80::/10 → fe8-feb),
+  // and any residual IPv4-mapped hex form (::ffff:…) that dodged the dotted-quad normalization above.
+  return x === '::1' || x === '::' || x.startsWith('fc') || x.startsWith('fd') || /^fe[89ab]/.test(x) || x.startsWith('::ffff:');
 }
 async function assertPublicHttps(u) {
   const url = new URL(u);
@@ -285,6 +292,12 @@ app.get('/api/btc/tx/:txid/hex', wrap(async (req, res) => {
   const t = String(req.params.txid);
   if (!/^[0-9a-fA-F]{64}$/.test(t)) { const e = new Error('bad_txid'); e.status = 400; throw e; }
   res.type('text/plain').send(await btc.getRawTx(t));
+}));
+// Decoded tx (inputs w/ values + outputs) — powers the RBF fee-bump flow. 4-segment path, no :address collision.
+app.get('/api/btc/tx/:txid/info', wrap(async (req, res) => {
+  const t = String(req.params.txid);
+  if (!/^[0-9a-fA-F]{64}$/.test(t)) { const e = new Error('bad_txid'); e.status = 400; throw e; }
+  res.json(await btc.getTxInfo(t));
 }));
 
 app.get('/api/btc/:address', wrap(async (req, res) => {
@@ -589,7 +602,8 @@ app.post('/api/cp/detach', limitMoney, wrap(async (req, res) => {
   if (!/^[0-9a-fA-F]{64}:\d+$/.test(utxo)) { const e = new Error('bad_utxo'); e.status = 400; throw e; }
   const dest = req.body.destination ? String(req.body.destination) : '';
   if (dest && !RE.bitcoin.test(dest)) { const e = new Error('bad_destination'); e.status = 400; throw e; }
-  const q = qstr({ destination: dest || undefined });
+  const fr = parseFloat(req.body.sat_per_vbyte); // custom miner-fee rate (float; sub-sat allowed)
+  const q = qstr({ destination: dest || undefined, sat_per_vbyte: fr > 0 ? fr : undefined });
   const url = `${cp.BASE}/utxos/${utxo}/compose/detach?${q}&verbose=true&allow_unconfirmed_inputs=true`;
   const j = await (await fetch(url, { headers: { Accept: 'application/json' } })).json();
   if (j.error || !j.result) return res.status(400).json({ error: 'compose_failed', detail: safeErr(j.error || (j.messages && j.messages[0]) || 'detach rejected') });

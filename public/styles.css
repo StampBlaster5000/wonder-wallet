@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark; /* native controls (number-input spinners, scrollbars, pickers) render dark to match */
   --bg: #0a0a0f;
   --bg2: #0d0d14;
   --surface: #13131c;
@@ -406,6 +407,8 @@ button.achip:hover { border-color: var(--gold); filter: none; color: var(--gold2
 .dnft:hover { border-color: var(--gold); }
 .dnft img { width: 100%; aspect-ratio: 1; object-fit: cover; image-rendering: pixelated; background: #000; display: block; }
 .dnft-ph { display: block; width: 100%; aspect-ratio: 1; background: #0c0c12; }
+.dnft-err { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; width: 100%; aspect-ratio: 1; background: #0c0c12; color: var(--muted, #7a7a88); text-align: center; }
+.dnft-err small { font-size: 10px; letter-spacing: 0.2px; }
 .dnft-t { display: block; font-family: var(--mono); font-size: 9.5px; color: var(--muted2); padding: 5px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* SRC-101 .btc name tiles + identity chip */
 .dnft-name { position: relative; border-color: rgba(224,180,83,0.4); }
@@ -476,6 +479,12 @@ button.sm { font-size: 12.5px; padding: 9px 14px; }
 .acct-head { display: flex; align-items: center; justify-content: space-between; }
 .acct-sel { font-size: 13px; color: var(--muted2); }
 .hw-acct { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; font-size: 13px; color: var(--gold2); background: rgba(224,180,83,0.1); border: 1px solid rgba(224,180,83,0.35); border-radius: 8px; padding: 6px 10px; }
+/* Ledger receiving-address browser */
+.hw-idx { font-family: var(--mono); font-size: 11px; color: var(--muted); background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 2px 7px; }
+.hw-scan-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.hw-scan-row.has { border-color: var(--gold); background: rgba(224,180,83,0.06); }
+.hw-scan-row .acct-r { display: flex; align-items: center; gap: 6px; color: var(--muted2); }
+.hw-has { color: var(--green); font-size: 10px; }
 .acct-sel select { background: var(--surface3); color: var(--text); border: 1px solid var(--border2); border-radius: 7px; padding: 4px 8px; font-family: inherit; margin-left: 6px; }
 .acct-list { display: flex; flex-direction: column; gap: 7px; }
 .acct-grp { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--gold2); margin-top: 8px; font-weight: 600; }
@@ -792,3 +801,18 @@ a.dapp-name:hover { text-decoration: underline; }
 .ac-badge.unc { color: #fbbf24; background: rgba(251,191,36,0.12); }
 .ac-boost { background: rgba(224,180,83,0.14); border: 1px solid var(--gold); color: var(--gold2); font-family: inherit; font-size: 10.5px; font-weight: 700; padding: 3px 9px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
 .ac-boost:hover { filter: brightness(1.15); }
+
+/* ══ Light skin — "Parchment": warm light-toned theme for the Wonder Terminal (mirrors the extension). ══ */
+html.theme-light {
+  color-scheme: light;
+  --bg: #EDE7DB; --bg2: #E6DFD0;
+  --surface: #FCFAF5; --surface2: #F4EEE2; --surface3: #E9E1D2;
+  --border: rgba(74,58,28,0.14); --border2: rgba(74,58,28,0.24);
+  --text: #2B2416; --muted: #7c7360; --muted2: #574f3e;
+  --gold: #BE861A; --gold2: #8E6410;
+  --violet: #7C3AED; --violet2: #6D28D9;
+  --green: #15803d; --red: #dc2626; --amber: #b45309;
+}
+html.theme-light body { background: var(--bg); }
+html.theme-light .aurora { opacity: 0.26; mix-blend-mode: multiply; }
+html.theme-light .wordmark .name { background-image: linear-gradient(180deg, var(--gold), var(--gold2)); } /* keep the fade readable on parchment */

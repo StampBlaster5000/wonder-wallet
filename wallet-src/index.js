@@ -155,6 +155,27 @@ function deriveCustom(mnemonic, passphrase, path, chain = 'bitcoin', btcType = '
   return a;
 }
 
+// Derive the first `count` receiving (or change) addresses from an ACCOUNT-level extended pubkey —
+// given as a raw (compressed-or-uncompressed pubkey, chaincode) pair from a hardware device. Used to
+// scan a Ledger account's whole address chain (it hands out a fresh receiving address each time), so
+// we can surface balances/assets that live beyond index 0. Public (CKDpub) derivation — no secrets.
+function deriveReceiveAddrs(pubHex, chainCodeHex, type = 'nativeSegwit', count = 20, chainIndex = 0) {
+  let pub = hex.decode(String(pubHex).replace(/^0x/, ''));
+  if (pub.length !== 33) pub = secp256k1.ProjectivePoint.fromHex(pub).toRawBytes(true); // compress if uncompressed (65B)
+  const cc = hex.decode(String(chainCodeHex).replace(/^0x/, ''));
+  // Serialize a standard mainnet xpub. depth/parent-fingerprint/child-index are cosmetic — BIP32 public
+  // child derivation depends only on the parent pubkey + chaincode, so a synthetic header derives correctly.
+  const raw = concatBytes(new Uint8Array([0x04, 0x88, 0xb2, 0x1e]), new Uint8Array([0]), new Uint8Array([0, 0, 0, 0]), new Uint8Array([0, 0, 0, 0]), cc, pub);
+  const acct = HDKey.fromExtendedKey(base58check(sha256).encode(raw));
+  const chain = acct.deriveChild(chainIndex);
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const node = chain.deriveChild(i);
+    out.push({ index: i, address: btcFromPub(node.publicKey, type), path: `${chainIndex}/${i}`, pub: hex.encode(node.publicKey) });
+  }
+  return out;
+}
+
 // ── Bitcoin send / PSBT / fees (Phase 5) — P2WPKH, proven vs BIP-143 ─────────
 // vbytes estimate for a P2WPKH spend.
 // Per-input vbyte weight by source address type (P2PKH legacy is ~2× a segwit input).
@@ -236,6 +257,58 @@ function buildSend({ mnemonic, passphrase = '', account = 0, index = 0, type = '
   }
   if (seed) seed.fill(0);
   return result;
+}
+
+// ── Hardware (Ledger) BTC send ───────────────────────────────────────────────
+// Build an UNSIGNED, device-annotated PSBT for a P2WPKH send from a Ledger address, then finalize it
+// with the device's partial signatures. The wallet holds NO keys — the Ledger derives + signs; we only
+// assemble the tx (with BIP32 derivations so the device recognises its inputs + change) and, after the
+// user approves on-device, apply the signatures. Native SegWit only for v1.
+function bipPathArr(str) {
+  return String(str).replace(/^m\//, '').split('/').filter(Boolean).map((p) => {
+    const hard = /['h]$/.test(p); const n = parseInt(p.replace(/['h]$/, ''), 10);
+    return (hard ? (n + 0x80000000) : n) >>> 0;
+  });
+}
+function buildHwSend({ utxos, recipient, amountSats, feeRate, sendMax = false, rbf = true, mfp, accountPath, sourcePath, sourcePub, type = 'nativeSegwit' }) {
+  if (type !== 'nativeSegwit') throw new Error('hw_send_type_unsupported'); // P2WPKH only for v1
+  const fpr = parseInt(String(mfp).replace(/^0x/, ''), 16) >>> 0;
+  const sel = selectUtxos(utxos, amountSats, feeRate, sendMax, type);
+  const seq = rbf ? 0xfffffffd : 0xffffffff;
+  const tx = new btc.Transaction({});
+  for (const u of sel.selected) {
+    const pub = hex.decode(String(u.pub || sourcePub).replace(/^0x/, ''));
+    const p = btcPayment(pub, type);
+    tx.addInput({
+      txid: hex.decode(u.txid), index: u.vout, sequence: seq,
+      witnessUtxo: { script: p.script, amount: BigInt(u.value) },
+      bip32Derivation: [[pub, { fingerprint: fpr, path: bipPathArr(accountPath + '/' + (u.path || sourcePath)) }]],
+    });
+  }
+  const outAmount = sendMax ? sel.amount : amountSats;
+  tx.addOutputAddress(recipient, BigInt(outAmount)); // throws on invalid recipient
+  let change = sel.change;
+  if (!sendMax && change >= 294) {
+    const spub = hex.decode(String(sourcePub).replace(/^0x/, ''));
+    const sp = btcPayment(spub, type);
+    tx.addOutput({ script: sp.script, amount: BigInt(change), bip32Derivation: [[spub, { fingerprint: fpr, path: bipPathArr(accountPath + '/' + sourcePath) }]] }); // change back to source → device shows it as its own, not a send
+  } else change = 0;
+  return {
+    psbt: base64.encode(tx.toPSBT(0)),
+    fee: sel.totalIn - outAmount - change, change, amountSats: outAmount,
+    vsize: estimateVsize(sel.selected.length, change ? 2 : 1, type),
+    inputs: sel.selected.map((u) => ({ utxo: `${u.txid}:${u.vout}`, value: u.value })), totalIn: sel.totalIn,
+  };
+}
+// Apply the Ledger's partial signatures (entries: [[inputIndex, {pubkey, signature}]]) → finalized raw hex.
+function finalizeHwSend(psbtB64, entries) {
+  const tx = btc.Transaction.fromPSBT(base64.decode(psbtB64), { allowUnknownOutputs: true, allowUnknownInputs: true });
+  for (const [idx, sig] of entries) {
+    const toBytes = (v) => (v instanceof Uint8Array ? v : hex.decode(String(v).replace(/^0x/, '')));
+    tx.updateInput(idx, { partialSig: [[toBytes(sig.pubkey), toBytes(sig.signature)]] });
+  }
+  tx.finalize();
+  return { txhex: hex.encode(tx.extract()), txid: tx.id, vsize: tx.vsize };
 }
 
 /**
@@ -762,12 +835,12 @@ function selfTest() {
 }
 
 const WonderCore = {
-  generateMnemonic, validateMnemonic, deriveAccounts, deriveSecrets, deriveCustom,
+  generateMnemonic, validateMnemonic, deriveAccounts, deriveSecrets, deriveCustom, deriveReceiveAddrs,
   fromWIF, hasVault, createVault, unlock, lock, isUnlocked, destroyVault,
   importKey, removeImportedKey, importedAccounts, importedAddresses,
   accounts, secrets, revealSeed, armAutoLock, selfTest,
   send, signMessage, signMessageImported, signCp, signStamp, psbtInputs, decodeTxOutputs, addrHash, sendEvm, sendSol, sendSpl, sendCnft, ethPersonalSign, buildSend, signMessageBIP322, bip322SignWithKey, bsmSignWithKey, signCpPsbt, signStampPsbt, signEvm,
-  personalSign, personalSignWithKey, buildSolTransfer, buildSplTransfer, buildCnftTransfer, erc20TransferData, erc20ApproveData, estimateVsize, version: '0.9.0',
+  personalSign, personalSignWithKey, buildSolTransfer, buildSplTransfer, buildCnftTransfer, erc20TransferData, erc20ApproveData, estimateVsize, buildHwSend, finalizeHwSend, version: '0.9.0',
 };
 
 // SECURITY (audit H1/H3): expose only the minimal app API on `window` — NOT the raw-key
@@ -776,7 +849,8 @@ const WonderCore = {
 const PUBLIC_API = {
   generateMnemonic, validateMnemonic, hasVault, createVault, unlock, lock, isUnlocked, destroyVault,
   importKey, removeImportedKey, importedAccounts, importedAddresses,
-  accounts, secrets, revealSeed, deriveCustom, send, signMessage, signMessageImported, signCp, signStamp, psbtInputs, decodeTxOutputs, addrHash, sendEvm, sendSol, sendSpl, sendCnft,
+  accounts, secrets, revealSeed, deriveCustom, deriveReceiveAddrs, send, signMessage, signMessageImported, signCp, signStamp, psbtInputs, decodeTxOutputs, addrHash, sendEvm, sendSol, sendSpl, sendCnft,
+  buildHwSend, finalizeHwSend, // hardware (Ledger) BTC send — keyless: builds an annotated PSBT, finalizes with device sigs
   ethPersonalSign, erc20TransferData, erc20ApproveData, selfTest,
   resumeSession, getSessionSecret, onLockChange, armAutoLock, // cross-surface session (extension)
   version: WonderCore.version,

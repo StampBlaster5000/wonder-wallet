@@ -1,0 +1,13 @@
+{
+  "name": "wonder-wallet-playwright",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Playwright twin of the Wonder Wallet Selenium suite (runs in CI / the sandbox).",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.45.0"
+  }
+}

@@ -25,36 +25,52 @@ function fmtSrc20(a) {
   return f ? `${grouped}.${f}` : grouped;
 }
 
-/** Combined stamp + SRC-20 holdings for an address.
-    Uses the granular /stamps/balance + /src20/balance endpoints fetched IN PARALLEL, rather than the
-    aggregate /balance/:addr. The aggregate periodically hangs (20s+ timeouts) while the granular ones
-    return in <0.1s; splitting also means one endpoint failing can't blank the other. */
+/** Combined stamp + SRC-20 holdings for an address. Stamps and SRC-20 are fetched from the granular
+    /stamps/balance + /src20/balance endpoints (not the flaky aggregate /balance/:addr), and — crucially —
+    cached INDEPENDENTLY with a "serve last-good on failure" fallback.
+
+    Why the fallback matters: the UI classifies which Counterparty assets are stamps purely from this
+    stamps list. If a transient stampchain hiccup returned an EMPTY stamps list, those stamps' CP asset
+    ids would leak into the Tokens tab and the Collectibles gallery would go blank. Serving the last
+    successful snapshot on a live failure keeps that classification stable through stampchain outages. */
 async function getBalance(address) {
-  const key = `st:bal:${address}`;
-  const hit = cacheGet(key);
+  const [stamps, src20] = await Promise.all([_stampsBal(address), _src20Bal(address)]);
+  return { stamps, src20, btcBalance: null };
+}
+async function _stampsBal(address) {
+  const fresh = `st:stamps:${address}`, lastGood = `st:stampsLG:${address}`;
+  const hit = cacheGet(fresh);
   if (hit) return hit;
-  const [stampsRes, src20Res] = await Promise.all([
-    fetchJson(`${BASE}/stamps/balance/${address}?limit=500`).catch(() => null),
-    fetchJson(`${BASE}/src20/balance/${address}?limit=500`).catch(() => null),
-  ]);
+  let res = null; try { res = await fetchJson(`${BASE}/stamps/balance/${address}?limit=500`); } catch (_) {}
+  if (!res) return cacheGet(lastGood) || []; // live fetch failed → last-good snapshot rather than blank
   // /stamps/balance → { data: [{ stamp, cpid, balance, stamp_url, stamp_mimetype, … }] }
-  const stamps = (Array.isArray(stampsRes && stampsRes.data) ? stampsRes.data : []).map((s) => ({
+  const stamps = (Array.isArray(res.data) ? res.data : []).map((s) => ({
     stamp: s.stamp,
     cpid: s.cpid,
     quantity: Number(s.balance ?? s.quantity ?? 1), // held qty lives in `balance` on this endpoint
     art: s.stamp_url || null,
     mime: s.stamp_mimetype || null,
   }));
+  cacheSet(fresh, stamps, 30_000);         // fresh window
+  cacheSet(lastGood, stamps, 1_800_000);   // last-good fallback, 30 min — refreshed on every success
+  return stamps;
+}
+async function _src20Bal(address) {
+  const fresh = `st:src20:${address}`, lastGood = `st:src20LG:${address}`;
+  const hit = cacheGet(fresh);
+  if (hit) return hit;
+  let res = null; try { res = await fetchJson(`${BASE}/src20/balance/${address}?limit=500`); } catch (_) {}
+  if (!res) return cacheGet(lastGood) || [];
   // /src20/balance → { data: [{ tick, amt, deploy_img, … }] } (flat). Keep the group-wrapped fallback for safety.
-  const src20raw = (Array.isArray(src20Res && src20Res.data) ? src20Res.data : []).flatMap((x) => (x && Array.isArray(x.data) ? x.data : [x]));
-  const src20 = src20raw.filter((t) => t && t.tick).map((t) => ({
+  const raw = (Array.isArray(res.data) ? res.data : []).flatMap((x) => (x && Array.isArray(x.data) ? x.data : [x]));
+  const src20 = raw.filter((t) => t && t.tick).map((t) => ({
     tick: decodeTick(t.tick),
     amount: fmtSrc20(t.amt ?? t.amount ?? t.balance),
     img: t.deploy_img || null, // token cover image (named tokens); emoji ticks have none
   }));
-  const out = { stamps, src20, btcBalance: null };
-  if (stampsRes || src20Res) cacheSet(key, out, 30_000); // don't cache a total upstream outage — retry next call
-  return out;
+  cacheSet(fresh, src20, 30_000);
+  cacheSet(lastGood, src20, 1_800_000);
+  return src20;
 }
 
 /** Stamp detail (incl. the served art URL). */

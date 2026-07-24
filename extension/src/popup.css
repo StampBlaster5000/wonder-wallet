@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark; /* native controls (number-input spinners, scrollbars, pickers) render dark to match */
   --bg: #0a0a0f; --surface: #13131c; --surface2: #191922; --surface3: #20202c;
   --border: rgba(255,255,255,0.08); --border2: rgba(255,255,255,0.14);
   --text: #ECE8E1; --muted: #8b8597; --muted2: #b6b1bf;
@@ -19,7 +20,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Inter', system-u
   position: relative; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
 .pop-aurora { position: fixed; inset: 0; z-index: 0; pointer-events: none;
   background: radial-gradient(70% 40% at 15% 0%, rgba(224,180,83,0.10), transparent 70%), radial-gradient(60% 40% at 90% 5%, rgba(139,92,246,0.12), transparent 70%); }
-#app { position: relative; z-index: 1; padding: 14px; display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; overflow-y: auto; box-sizing: border-box; }
+#app { position: relative; z-index: 1; padding: 20px 16px 16px; display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; overflow-y: auto; box-sizing: border-box; }
 html.in-panel #app { height: 100vh; }
 /* Themed scrollbars — transparent track over the wallet bg, a soft text-colored thumb (not the OS grey). */
 * { scrollbar-width: thin; scrollbar-color: rgba(236,232,225,0.22) transparent; }
@@ -39,7 +40,7 @@ html.in-panel #app { height: 100vh; }
 .p-load { color: var(--muted); text-align: center; padding: 40px 0; }
 
 /* header */
-.p-head { display: flex; align-items: center; justify-content: space-between; }
+.p-head { display: flex; align-items: center; justify-content: space-between; gap: 11px; }
 .p-brand { display: flex; align-items: center; gap: 9px; }
 .p-seal { width: 30px; height: 30px; border-radius: 50%; background: radial-gradient(120% 100% at 50% 30%, #F4D58D, #9a6f1f); display: flex; align-items: center; justify-content: center; }
 .p-seal svg { display: block; }
@@ -70,8 +71,11 @@ html.in-panel #app { height: 100vh; }
 .acct-bar { display: flex; align-items: center; gap: 8px; }
 .acct-sel { flex: 1; background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; color: var(--text); font-size: 13px; padding: 8px 10px; font-family: inherit; }
 .total { text-align: center; padding: 6px 0 2px; position: relative; }
-/* Privacy eye floats to the right of the balance (moved out of the header, which now holds the gear). */
-.priv-float { position: absolute; right: 8px; top: 11px; width: 28px; height: 28px; }
+.total .amt-wrap { display: flex; align-items: center; justify-content: center; gap: 9px; }
+/* Privacy eye — inline beside the balance, borderless (a floating eyelid, no button box). */
+.priv-eye { background: none; border: 0; padding: 0; margin: 0; cursor: pointer; display: inline-flex; align-items: center; color: var(--muted); opacity: .65; transition: opacity .15s, color .15s; }
+.priv-eye:hover { opacity: 1; color: var(--gold2); }
+.priv-eye.on { opacity: 1; color: var(--gold2); }
 .total .amt { font-family: 'Fraunces', serif; font-size: 30px; font-weight: 600; color: var(--gold2); }
 .total .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
 
@@ -162,6 +166,8 @@ html.in-panel #app { height: 100vh; }
 .fine.avail { color: var(--gold2); }
 .nft-cell img { width: 100%; aspect-ratio: 1; object-fit: cover; image-rendering: pixelated; background: #000; display: block; }
 .nft-ph { display: block; width: 100%; aspect-ratio: 1; background: #0c0c12; }
+.nft-err { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; width: 100%; aspect-ratio: 1; background: #0c0c12; color: var(--muted, #7a7a88); text-align: center; }
+.nft-err small { font-size: 9px; letter-spacing: 0.2px; }
 /* SRC-101 .btc name tiles */
 .nft-name { position: relative; border-color: rgba(224,180,83,0.42); }
 .nft-star { position: absolute; top: 3px; right: 5px; z-index: 2; color: var(--gold2); font-size: 11px; text-shadow: 0 1px 2px #000; }
@@ -390,6 +396,10 @@ button.send-max:hover { border-color: var(--gold); color: var(--gold2); }
 .ac-ic.burn { color: var(--red); background: rgba(248,113,113,0.12); }
 .ac-ic.cp { color: var(--gold2); background: rgba(224,180,83,0.12); }
 .ac-ic.src20 { color: var(--violet2); background: rgba(139,92,246,0.14); }
+/* Accelerable (unconfirmed) rows: the icon is a tap target that opens the Speed-up chooser. */
+.ac-ic-boost { position: relative; cursor: pointer; }
+.ac-ic-boost:hover { box-shadow: 0 0 0 2px var(--gold); }
+.ac-boltbadge { position: absolute; bottom: -4px; right: -4px; width: 15px; height: 15px; display: flex; align-items: center; justify-content: center; font-size: 9px; line-height: 1; background: var(--gold); color: #2a1c04; border-radius: 999px; border: 1.5px solid var(--surface); }
 .ac-main { flex: 1; min-width: 0; }
 .ac-l1 { font-size: 12.5px; font-weight: 600; color: var(--text); }
 .ac-det { color: var(--gold2); font-weight: 500; font-family: var(--mono); font-size: 11px; }
@@ -421,7 +431,8 @@ button.send-max:hover { border-color: var(--gold); color: var(--gold2); }
 .acct-addr { font-family: var(--mono); font-size: 11px; color: var(--muted2); word-break: break-all; }
 .acct-addr.secret { letter-spacing: 1px; }
 /* Counterparty hub */
-.cphub .st-head { position: relative; }
+.cphub { padding: 14px; } /* breathing room so content isn't flush against the window border */
+.cphub .st-head { position: relative; margin-bottom: 6px; }
 .cph-addr { font-family: var(--mono); font-size: 11px; color: var(--muted2); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; word-break: break-all; cursor: pointer; margin: 2px 0 8px; }
 .cph-addr:hover { border-color: var(--gold); }
 .cph-status { font-size: 11px; color: var(--muted2); margin-bottom: 10px; }
@@ -441,7 +452,10 @@ button.send-max:hover { border-color: var(--gold); color: var(--gold2); }
 .tool-emblem-t small { font-size: 11px; color: var(--muted); }
 .tool-chev { flex: none; color: var(--muted2); font-size: 18px; }
 .tool-sec-h { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 2px 0 6px; }
-.tool-emblem + .tool-sec-h { margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--border); }
+/* Emblem Vault now sits at the BOTTOM: divider above it when it follows the Counterparty grid;
+   a small gap when it's the only tool (ETH/SOL accounts, no CP section). */
+.cp-grid + .tool-emblem { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.st-head + .tool-emblem { margin-top: 6px; }
 .cbrow { flex-direction: row !important; align-items: center; gap: 8px; cursor: pointer; }
 .cbrow input { width: 16px; height: 16px; accent-color: var(--gold); }
 .cp-out, .sm-out { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; background: var(--surface2); border: 1px solid var(--border); border-radius: 9px; padding: 9px 10px; margin-top: 8px; }
@@ -458,3 +472,44 @@ button.send-max:hover { border-color: var(--gold); color: var(--gold2); }
 /* seed grid (word chips already styled via .seedw) */
 .seedgrid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px; margin: 8px 0; }
 .seedgrid.blurred { filter: blur(5px); user-select: none; pointer-events: none; }
+
+/* ── Dedicated hardware-connect tab (?hw=1): a clean, centered pairing page ── */
+.hw-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 26px 16px; }
+.hw-card { width: 100%; max-width: 420px; background: var(--surface); border: 1px solid var(--border2); border-radius: 16px; padding: 22px; display: flex; flex-direction: column; gap: 13px; box-shadow: 0 14px 46px rgba(0,0,0,0.45); }
+.hw-brand { display: flex; align-items: center; gap: 11px; }
+.hw-brand .p-seal { width: 40px; height: 40px; flex: 0 0 auto; }
+.hw-devs { display: flex; flex-direction: column; gap: 9px; margin: 2px 0; }
+.hw-dev { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; padding: 12px 13px; background: var(--surface2); border: 1px solid var(--border2); border-radius: 11px; color: var(--text); cursor: pointer; font: inherit; }
+.hw-dev.on, .hw-dev:not(.disabled):hover { border-color: var(--gold); }
+.hw-dev.disabled { opacity: 0.5; cursor: default; }
+.hw-dev-ic { font-size: 20px; line-height: 1; }
+.hw-dev-t { flex: 1; display: flex; flex-direction: column; gap: 1px; }
+.hw-dev-t b { font-size: 14px; }
+.hw-dev-t small { color: var(--muted, #8a8a99); font-size: 11px; }
+.hw-dev-go { color: var(--gold2); font-size: 18px; }
+.hw-check { width: 54px; height: 54px; margin: 4px auto 0; border-radius: 50%; background: rgba(74,222,128,0.14); color: #4ade80; display: flex; align-items: center; justify-content: center; font-size: 30px; font-weight: 700; }
+.hw-foot { text-align: center; font-size: 11px; color: var(--muted, #8a8a99); margin-top: 2px; }
+
+/* ══ Light skin — "Parchment": a warm, genuinely light-toned wallet theme (not a black/white flip).
+   Keeps the gold identity but deepens it for legibility on light surfaces. ══ */
+html.theme-light {
+  color-scheme: light;
+  --bg: #EDE7DB;            /* warm sand */
+  --surface: #FCFAF5;      /* near-white card */
+  --surface2: #F4EEE2;     /* subtle raised */
+  --surface3: #E9E1D2;     /* deeper raised */
+  --border: rgba(74,58,28,0.14);
+  --border2: rgba(74,58,28,0.24);
+  --text: #2B2416;         /* warm near-black */
+  --muted: #7c7360;        /* warm gray */
+  --muted2: #574f3e;
+  --gold: #BE861A;         /* deeper gold — accents / borders / button fill */
+  --gold2: #8E6410;        /* dark gold — readable as text on light */
+  --violet: #7C3AED; --violet2: #6D28D9;
+  --green: #15803d; --red: #dc2626;
+}
+html.theme-light body { background: var(--bg); }
+html.theme-light .pop-aurora { opacity: 0.28; mix-blend-mode: multiply; } /* soften the glow on a light bg */
+html.theme-light .pdot { box-shadow: 0 0 6px rgba(21,128,61,0.5); }
+/* Title fade: on the light skin the white top vanishes on parchment — fade gold→deep-gold instead. */
+html.theme-light .p-name { background-image: linear-gradient(180deg, var(--gold), var(--gold2)); }

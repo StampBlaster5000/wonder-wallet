@@ -172,7 +172,8 @@
     renderHub();
   }
   function renderHub() {
-    const grid = Object.entries(ACTIONS).map(([k, a]) => `<button class="cp-act" data-k="${k}"><span class="cp-ic">${a.icon}</span>${a.label}</button>`).join('');
+    const grid = Object.entries(ACTIONS).map(([k, a]) => `<button class="cp-act" data-k="${k}"><span class="cp-ic">${a.icon}</span>${a.label}</button>`).join('')
+      + `<button class="cp-act" data-adhub="1"><span class="cp-ic">🔗</span>Attach / Detach</button>`; // bind an asset to a UTXO / release it
     modal(`<h3 class="m-title">Counterparty actions</h3>
       <div class="fine">Pick the source address your assets sit on — OG Counterparty / Stamps assets usually live on a <b>Legacy 1…</b> address.</div>
       ${srcSelectorHtml()}
@@ -182,7 +183,8 @@
     $('#cpx').onclick = close;
     const sel = $('#cpSrcSel');
     if (sel) sel.onchange = () => { const bb = acctBtc(); FROM_TYPE = sel.value; FROM = bb[FROM_TYPE].address; WALLET_ASSETS = null; const a = $('#cpSrcAddr'); if (a) a.textContent = FROM; refreshMempool(); };
-    $('#cpCard').querySelectorAll('.cp-act').forEach((btn) => (btn.onclick = () => openForm(btn.dataset.k)));
+    $('#cpCard').querySelectorAll('.cp-act[data-k]').forEach((btn) => (btn.onclick = () => openForm(btn.dataset.k)));
+    const adb = $('#cpCard').querySelector('[data-adhub]'); if (adb) adb.onclick = () => attachDetach(ACCOUNT, FROM);
     refreshMempool();
   }
   async function refreshMempool() {
@@ -749,7 +751,8 @@
   }
 
   // ── Attach / Detach (CP assets UTXOs) ──────────────────────────────────
-  function attachDetach(account, fromAddress) { ACCOUNT = account; FROM = fromAddress; adShell('attach'); }
+  let AD_PREFILL = null;
+  function attachDetach(account, fromAddress, prefill) { ACCOUNT = account; FROM = fromAddress; AD_PREFILL = prefill || null; adShell('attach'); }
   function adShell(tab) {
     modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Attach / Detach</h3>
       <div class="cp-addr">Bind Counterparty assets to a specific UTXO, or release them back · ${esc(FROM)}</div></div><button class="mini" id="adX">${exitLabel()}</button></div>
@@ -759,14 +762,17 @@
     $('#cpCard').querySelectorAll('[data-ad]').forEach((b) => (b.onclick = () => adShell(b.dataset.ad)));
     tab === 'detach' ? adDetach() : adAttach();
   }
-  function adAttach() {
+  async function adAttach() {
+    await loadCpFees();
     $('#adBody').innerHTML = `
       <div class="fine" style="margin-bottom:8px">Move an asset from this address's balance onto a dedicated UTXO (so it can travel with that specific output — used by PSBT marketplaces & atomic swaps).</div>
       <label class="cpf"><span>Asset</span><input id="adA" class="m-in" list="addl" type="text" spellcheck="false" placeholder="type an asset, or pick from your wallet"/><datalist id="addl"></datalist></label>
-      <label class="cpf"><span>Quantity <span class="fine availhint" id="adAvail"></span></span><input id="adQ" class="m-in" type="number" step="any"/></label>
+      <label class="cpf"><span>Quantity <span class="fine availhint" id="adAvail"></span></span><input id="adQ" class="m-in" type="number" step="any" min="0"/></label>
+      ${cpFeeRowHtml()}
       <div id="adStatus" class="statusline" hidden></div>
       <div class="wbtns"><button class="primary" id="adReview">Review attach</button></div>`;
     $('#adReview').onclick = adAttachReview;
+    wireCpFee();
     // Populate the dropdown from the wallet's CP holdings + mirror the selected balance.
     (async () => {
       try {
@@ -776,6 +782,8 @@
         if (dl) dl.innerHTML = WALLET_ASSETS.map((h) => `<option value="${esc(h.asset)}">${esc(h.name && h.name !== h.asset ? h.name + ' · ' : '')}${esc(h.qty)}</option>`).join('');
         const upd = () => { const v = inp.value.trim(); const h = WALLET_ASSETS.find((x) => x.asset === v || x.name === v); if (bal) bal.textContent = h ? `available: ${h.qty}` : ''; };
         inp.oninput = upd; inp.onchange = upd;
+        // Preloaded from the asset-detail window: fill asset (+ held qty) so attach is one edit away.
+        if (AD_PREFILL && AD_PREFILL.asset && inp) { inp.value = AD_PREFILL.asset; const q = $('#adQ'); if (q && AD_PREFILL.qty != null && AD_PREFILL.qty !== '') q.value = AD_PREFILL.qty; upd(); AD_PREFILL = null; }
       } catch (_) {}
     })();
   }
@@ -787,6 +795,7 @@
       const h = (WALLET_ASSETS || []).find((x) => x.asset === asset || x.name === asset);
       if (h && parseFloat(qty) > parseFloat(h.qty)) throw new Error(`You only hold ${h.qty} ${asset} on this address.`);
       const params = { asset, quantity: scale(qty, h ? h.divisible : await isDivisible(asset)) };
+      if (CP_FEERATE) params.sat_per_vbyte = CP_FEERATE; // custom miner-fee rate
       LAST_PARAMS = params;
       const c = await fetch('api/cp/compose/attach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: FROM, params }) }).then((r) => r.json());
       if (c.error) throw new Error(c.detail || c.error);
@@ -794,14 +803,17 @@
     } catch (err) { s.className = 'statusline err'; s.textContent = err.message === 'insufficient funds' ? 'Insufficient balance (asset or BTC for the fee).' : (err.message || 'Compose failed.'); }
   }
   async function adDetach() {
+    await loadCpFees();
     $('#adBody').innerHTML = '<div class="statusline load">Scanning your UTXOs for attached assets…</div>';
     try {
       const { attached } = await fetch(`api/cp/attached/${FROM}`).then((r) => r.json());
       if (!attached.length) { $('#adBody').innerHTML = '<div class="fine">No assets are currently attached to your UTXOs. Attached assets show up here, ready to release back to your address balance.</div>'; return; }
       $('#adBody').innerHTML = `<div class="fine" style="margin-bottom:8px">These assets sit on a UTXO. Detaching releases them back to your address balance.</div>
+        ${cpFeeRowHtml()}
         <div id="adDetStatus" class="statusline" hidden></div>` + attached.map((a) => `
         <div class="dex-row"><span>${esc(a.asset_longname || a.asset)} <b>${esc(String(a.quantity_normalized))}</b><br><span class="fine">${esc(a.utxo.slice(0, 22))}…</span></span>
         <button class="mini" data-detach="${esc(a.utxo)}">Detach</button></div>`).join('');
+      wireCpFee();
       $('#adBody').querySelectorAll('[data-detach]').forEach((b) => (b.onclick = () => adDetachReview(b.dataset.detach)));
     } catch (_) { $('#adBody').innerHTML = '<div class="statusline err">Could not scan for attached assets.</div>'; }
   }
@@ -809,7 +821,7 @@
     const s = $('#adDetStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Composing detach…';
     try {
       LAST_PARAMS = {};
-      const c = await fetch('api/cp/detach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ utxo, destination: FROM }) }).then((r) => r.json());
+      const c = await fetch('api/cp/detach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ utxo, destination: FROM, sat_per_vbyte: CP_FEERATE }) }).then((r) => r.json());
       if (c.error) throw new Error(c.detail || c.error);
       confirmScreen('Confirm · detach › address', c, `<div><span class="k">From UTXO</span><span class="v" style="font-size:12px">${esc(utxo.slice(0, 18))}…</span></div>`, 'Detach broadcast', () => adShell('detach'));
     } catch (err) { s.className = 'statusline err'; s.textContent = err.message || 'Compose failed.'; }
