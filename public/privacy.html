@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wonder Wallet — Privacy Policy</title>
+  <meta name="description" content="Wonder Wallet privacy policy — a self-custodial wallet that collects no personal data. Your keys and data stay on your device." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root { --bg:#0a0a0f; --surface:#13131c; --border:rgba(255,255,255,0.1); --text:#ECE8E1; --muted:#9a94a6; --gold:#E0B453; --gold2:#F4D58D; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { background:var(--bg); color:var(--text); font-family:'Inter',system-ui,sans-serif; line-height:1.65; padding:40px 20px 80px; }
+    .wrap { max-width:760px; margin:0 auto; }
+    .brand { display:flex; align-items:center; gap:12px; margin-bottom:6px; }
+    .seal { width:40px; height:40px; border-radius:50%; background:radial-gradient(circle at 50% 35%, #F4D58D, #E0B453 55%, #9a6f1f); flex:0 0 auto; }
+    h1 { font-family:'Fraunces',Georgia,serif; font-weight:600; font-size:30px; background:linear-gradient(180deg,#fff,var(--gold2)); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+    .sub { color:var(--muted); font-size:14px; }
+    .eff { color:var(--muted); font-size:13px; margin:14px 0 30px; }
+    .tldr { background:var(--surface); border:1px solid var(--border); border-left:3px solid var(--gold); border-radius:12px; padding:16px 18px; margin-bottom:30px; }
+    .tldr b { color:var(--gold2); }
+    h2 { font-family:'Fraunces',Georgia,serif; font-weight:600; font-size:20px; color:var(--gold2); margin:30px 0 10px; }
+    p, li { color:#d8d3cc; font-size:15px; }
+    ul { margin:8px 0 8px 22px; }
+    li { margin:5px 0; }
+    a { color:var(--gold); }
+    strong { color:#fff; }
+    .foot { margin-top:44px; padding-top:18px; border-top:1px solid var(--border); color:var(--muted); font-size:13px; }
+    code { font-family:ui-monospace,Menlo,monospace; background:#191922; padding:1px 6px; border-radius:6px; font-size:13px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand"><span class="seal" aria-hidden="true"></span><div><h1>Privacy Policy</h1><div class="sub">Wonder Wallet — self-custodial BTC · ETH · SOL wallet</div></div></div>
+    <div class="eff">Last updated: July 25, 2026</div>
+
+    <div class="tldr">
+      <b>The short version:</b> Wonder Wallet does <b>not collect, store, sell, or share your personal data.</b>
+      Your keys are generated and encrypted <b>on your device</b> and never leave it. We have no accounts, no
+      analytics, and no tracking. We cannot access your funds, your keys, or your identity.
+    </div>
+
+    <h2>Who this covers</h2>
+    <p>This policy applies to the Wonder Wallet browser extension and the Wonder Wallet web app
+      ("Wonder Wallet", "the wallet", "we"). Wonder Wallet is <strong>self-custodial</strong>: you, and only
+      you, hold your keys.</p>
+
+    <h2>Data we do NOT collect</h2>
+    <p>We do not collect or have access to any of the following:</p>
+    <ul>
+      <li>Your <strong>private keys, seed phrase, or password</strong> — these are generated and encrypted
+        (Argon2id + AES-GCM) locally in your browser and never transmitted anywhere.</li>
+      <li>Personal information — no name, email, phone number, or account is required or collected.</li>
+      <li>Analytics, behavioral tracking, advertising identifiers, or cookies for tracking.</li>
+      <li>Your balances or transaction history tied to your identity — we store none of it.</li>
+    </ul>
+
+    <h2>How your keys are handled</h2>
+    <ul>
+      <li>Keys are created and used <strong>entirely on your device</strong>. Transactions are signed locally
+        (or, with a hardware wallet, on the device itself).</li>
+      <li>Your encrypted wallet is stored in your browser's local storage on your machine. It never leaves it.</li>
+      <li>When you use a <strong>hardware wallet (Ledger)</strong>, keys stay on the device; Wonder Wallet only
+        reads public addresses and builds transactions for you to approve on-device.</li>
+    </ul>
+
+    <h2>Public blockchain data we read</h2>
+    <p>To show your balances and assets and to broadcast transactions, the wallet reads <strong>public</strong>
+      blockchain data through a stateless proxy and public providers (for example mempool.space,
+      Counterparty Core, stampchain, and public RPC endpoints). In doing so:</p>
+    <ul>
+      <li>Only <strong>public information</strong> is requested — such as the balance of a public address you
+        are viewing. This is the same information anyone can look up on a block explorer.</li>
+      <li>The proxy is a <strong>stateless reader</strong>: it forwards these public reads and caches responses
+        briefly (about 30 seconds) to reduce load. It stores <strong>no keys, no personal data, and no
+        identity-linked records</strong>.</li>
+      <li>These third-party providers may process the request (e.g. an address lookup) under their own privacy
+        policies. We do not send them any personal data or keys.</li>
+    </ul>
+
+    <h2>No sale or sharing of data</h2>
+    <p>Because we do not collect personal data, we have nothing to sell or share. We do not sell data, and we do
+      not share personal data with advertisers or data brokers.</p>
+
+    <h2>Permissions the extension requests</h2>
+    <ul>
+      <li><code>storage</code> — to save your encrypted wallet and preferences locally on your device.</li>
+      <li><code>alarms</code> — to run the idle auto-lock timer.</li>
+      <li><code>sidePanel</code> — to let the wallet open in the browser's side panel.</li>
+      <li>Access to the wallet's own proxy host — to read public blockchain data and broadcast the transactions
+        you sign. The extension does not read or modify the web pages you visit.</li>
+    </ul>
+
+    <h2>Children</h2>
+    <p>Wonder Wallet is not directed to children and does not knowingly collect data from anyone, including
+      children under 13.</p>
+
+    <h2>Changes to this policy</h2>
+    <p>If this policy changes, we will update the "Last updated" date above. Material changes will be reflected in
+      the extension's listing.</p>
+
+    <h2>Contact</h2>
+    <p>Questions about privacy or security? Please reach out through the project's GitHub repository. For security
+      vulnerabilities, follow the responsible-disclosure process in our
+      <a href="https://github.com/StampBlaster5000/wonder-wallet/blob/main/SECURITY.md">SECURITY.md</a>.</p>
+
+    <div class="foot">Wonder Wallet is beta software provided as-is, with no warranty. Your keys, your art, your
+      data — all local.</div>
+  </div>
+</body>
+</html>
