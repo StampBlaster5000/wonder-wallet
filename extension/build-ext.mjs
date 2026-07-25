@@ -52,7 +52,7 @@ const PROXY = 'https://build-1dadb019a5802eb5fee63753.emblem.build';
 const manifest = {
   manifest_version: 3,
   name: 'Wonder Wallet',
-  version: '0.47.22',
+  version: '0.47.23',
   description: 'Self-custodial BTC · ETH · SOL wallet for the Counterparty / Stamps / SRC-20 community. Asset-aware UTXO control + native Emblem Vault bridging.',
   action: { default_title: 'Wonder Wallet', default_popup: 'popup.html' },
   background: { service_worker: 'background.js' },

@@ -281,6 +281,9 @@
     return chain === 'btc' ? acc.bitcoin[acctBtcType(curAccount)].address : chain === 'eth' ? acc.ethereum.address : acc.solana.address;
   }
 
+  // Return to the correct dashboard from a sub-view (Activity, Send…): the Ledger view for a connected
+  // hardware account, otherwise the normal wallet.
+  function backToMain() { if (acctKind === 'hardware' && HW) return hwRenderMain(); return renderMain(); }
   // ── header helper (no-vault / locked screens) ──
   function header(right) {
     return '<div class="p-head"><div class="p-brand"><span class="p-seal">' + SEAL + '</span>'
@@ -417,7 +420,10 @@
       '<div class="p-head"><button class="chain-btn" id="chainBtn" title="Switch blockchain"><span class="cs-ic ' + chain + '">' + c.ic + '</span><span class="chev">▾</span></button>'
       + '<div class="p-brand-mid"><div class="p-name">🔐 Ledger</div><div class="p-sub">' + esc(sub) + '</div></div>'
       + '<div class="p-icons"><button class="p-ibtn" id="bRefresh" title="Refresh">' + HW_REFRESH + '</button>'
-      + (IN_PANEL ? '' : '<button class="p-ibtn" id="bPanel" title="Dock as side panel">' + PANEL_ICON + '</button>') + '</div></div>'
+      + '<button class="p-ibtn" id="bTerm" title="Wonder Terminal">' + TERM_ICON + '</button>'
+      + (IN_PANEL ? '' : '<button class="p-ibtn" id="bPanel" title="Dock as side panel">' + PANEL_ICON + '</button>')
+      + '<button class="p-ibtn" id="bHwSettings" title="Settings — appearance, auto-lock, Ledger">' + GEAR_SVG + '</button>'
+      + '<button class="p-ibtn" id="bLock" title="Lock wallet">' + LOCK_SVG + '</button></div></div>'
       + '<div class="acct-bar">' + accountSelectHtml() + '<button class="p-ibtn acct-x" id="hwUnpair" title="Unpair this Ledger">×</button></div>'
       + '<div class="total"><div class="amt-wrap"><div class="amt" id="nativeVal">…</div><button class="priv-eye' + (PRIVACY ? ' on' : '') + '" id="bPrivacy" title="Privacy view">' + (PRIVACY ? EYE_OFF_SVG : EYE_SVG) + '</button></div><div class="lbl" id="nativeLbl">Ledger · read-only</div></div>'
       + '<div class="addr-row"><div class="addr-chip" data-copy="' + esc(addr || '') + '" title="Copy address">' + (hwAgg && chain === 'btc' ? '⊕ all addresses' : esc(short(addr || '—'))) + '</div>'
@@ -431,7 +437,7 @@
       + '<div class="asset-tabs"><button class="atab ' + (tab === 'tokens' ? 'on' : '') + '" data-tab="tokens">Tokens</button><button class="atab ' + (tab === 'collectibles' ? 'on' : '') + '" data-tab="collectibles">Collectibles</button></div>'
       + '<div id="assetBody"><div class="empty">Loading ' + esc(c.name) + ' assets…</div></div>'
       + '<div class="ext-footer"><div class="actions">'
-      + ((chain === 'btc' && hwBt === 'nativeSegwit' && !hwAgg && HW.mfp) ? '<button class="btn" id="bHwSend">Send</button>' : '')
+      + ((chain === 'btc' && hwBt === 'nativeSegwit' && HW.mfp) ? '<button class="btn" id="bHwSend">Send</button>' : '')
       + '<button class="btn ghost" id="bReceive">Receive</button></div>'
       + '<div class="foot-strip"><span class="foot-lock">🔐 keys stay on your Ledger</span><span class="pill"><span class="pdot"></span>' + ((chain === 'btc' && hwBt === 'nativeSegwit' && HW.mfp) ? 'sign on device' : 'read-only view') + '</span>' + (VER ? '<span class="foot-ver">v' + esc(VER) + '</span>' : '') + '</div></div>';
     document.getElementById('chainBtn').onclick = hwChainMenu;
@@ -446,6 +452,8 @@
     var ag = document.getElementById('bAgg'); if (ag) ag.onclick = function () { hwAgg = !hwAgg; hwViewAddr = null; hwViewIndex = null; hwRenderMain(); };
     var ac = document.getElementById('bActivity'); if (ac) ac.onclick = function () { renderActivity(hwAddr()); };
     var pn = document.getElementById('bPanel'); if (pn) pn.onclick = openSidePanel;
+    var stg = document.getElementById('bHwSettings'); if (stg) stg.onclick = hwSettingsMenu;
+    var lk = document.getElementById('bLock'); if (lk) lk.onclick = function () { C.lock(); render(); };
     var hs = document.getElementById('bHwSend'); if (hs) hs.onclick = renderHwSend;
     document.getElementById('bReceive').onclick = hwReceive;
     app.querySelectorAll('.atab').forEach(function (b) { b.onclick = function () { tab = b.dataset.tab; app.querySelectorAll('.atab').forEach(function (x) { x.classList.toggle('on', x === b); }); renderAssetBody(); }; });
@@ -537,18 +545,42 @@
     var e = list.find(function (d) { return d.address === from; }) || list[idx] || list[0];
     return e ? { path: e.path, pub: e.pub, address: e.address } : null;
   }
+  var hwSpendable = function (u) { return u.category === 'spendable' && !u.frozen && !u.timelocked; };
+  // Gather spendable UTXOs (each tagged with its OWN pub + derivation path so the Ledger can sign each
+  // input). Single-address mode → the viewed address; portfolio mode → every derived address, so the
+  // wallet is "smart" and spends whatever's available across the account. Change always returns to the
+  // main address (index 0). Asset-bearing / frozen / time-locked UTXOs are excluded (coin-control aware).
+  async function hwGatherUtxos(agg) {
+    var bt = hwBt, acct = HW.bitcoin[bt] && HW.bitcoin[bt].acct;
+    if (!agg) {
+      var src = hwSourceEntry(); if (!src) return null;
+      var cc = ccApplyMeta(src.address, await fetch('api/btc/' + src.address + '/coincontrol').then(function (r) { return r.json(); }));
+      return { utxos: (cc.utxos || []).filter(hwSpendable).map(function (u) { return { txid: u.txid, vout: u.vout, value: u.value, pub: src.pub, path: src.path }; }), change: src, from: src.address };
+    }
+    if (!acct || !acct.pub || !acct.chainCode) return null;
+    var derived = C.deriveReceiveAddrs(acct.pub, acct.chainCode, bt, 20, 0);
+    var all = [], N = 5;
+    for (var i = 0; i < derived.length; i += N) {
+      await Promise.all(derived.slice(i, i + N).map(async function (d) {
+        try { var cc = ccApplyMeta(d.address, await fetch('api/btc/' + d.address + '/coincontrol').then(function (r) { return r.json(); })); (cc.utxos || []).filter(hwSpendable).forEach(function (u) { all.push({ txid: u.txid, vout: u.vout, value: u.value, pub: d.pub, path: d.path }); }); } catch (e) {}
+      }));
+    }
+    return { utxos: all, change: { pub: derived[0].pub, path: derived[0].path, address: derived[0].address }, from: 'all addresses' };
+  }
   async function renderHwSend() {
     stopCd();
     if (hwBt !== 'nativeSegwit' || !HW.mfp) { overlay('<div class="menu" style="padding:16px"><div class="p-hint">On-device sending is available for <b>Native SegWit</b> (bc1q…) in this version. Switch the address type, or re-pair the Ledger if there’s no device fingerprint yet.</div><div class="actions" style="margin-top:10px"><button class="btn" id="hsX">Close</button></div></div>'); document.getElementById('hsX').onclick = closeOv; return; }
-    var src = hwSourceEntry();
-    if (!src) { overlay('<div class="menu" style="padding:16px"><div class="p-hint">Couldn’t resolve the signing key for this address — re-pair your Ledger and try again.</div><div class="actions" style="margin-top:10px"><button class="btn" id="hsX">Close</button></div></div>'); document.getElementById('hsX').onclick = closeOv; return; }
-    var from = src.address;
+    var agg = hwAgg;
+    var src = agg ? null : hwSourceEntry();
+    if (!agg && !src) { overlay('<div class="menu" style="padding:16px"><div class="p-hint">Couldn’t resolve the signing key for this address — re-pair your Ledger and try again.</div><div class="actions" style="margin-top:10px"><button class="btn" id="hsX">Close</button></div></div>'); document.getElementById('hsX').onclick = closeOv; return; }
+    var fromLabel = agg ? '⊕ all addresses' : short(src.address);
     if (!PRICES.bitcoin) { try { PRICES = await fetch('api/prices').then(function (r) { return r.json(); }); } catch (e) {} }
     var fees = { fastestFee: 10, halfHourFee: 6, hourFee: 3 };
     try { fees = await fetch('api/btc/fees').then(function (r) { return r.json(); }); } catch (e) {}
     var feeRate = fees.halfHourFee || 6;
-    app.innerHTML = '<div class="p-head"><button class="p-ibtn" id="bBack" title="Back">←</button><div class="p-brand-mid"><div class="p-name">Send Bitcoin</div><div class="p-sub">🔐 Ledger · ' + esc(short(from)) + '</div></div><div class="p-icons"></div></div>'
+    app.innerHTML = '<div class="p-head"><button class="p-ibtn" id="bBack" title="Back">←</button><div class="p-brand-mid"><div class="p-name">Send Bitcoin</div><div class="p-sub">🔐 Ledger · ' + esc(fromLabel) + '</div></div><div class="p-icons"></div></div>'
       + '<div class="send-form">'
+      + (agg ? '<div class="p-hint">Portfolio send — the wallet spends from <b>whatever address holds the balance</b> and returns change to your main address.</div>' : '')
       + '<input id="hTo" class="p-in" placeholder="Address or name.btc" spellcheck="false" autocomplete="off" autocapitalize="off"/>'
       + '<div id="hNameRes" class="name-resolve" hidden></div>'
       + '<div class="send-amt"><input id="hAmt" class="p-in" type="number" step="0.00000001" min="0" placeholder="Amount (BTC)"/><label class="send-max"><input type="checkbox" id="hMax"/> Max</label></div>'
@@ -560,7 +592,7 @@
     wireFeeRow(function (r) { feeRate = r; });
     wireNameResolve('hTo', 'hNameRes');
     document.getElementById('hReview').onclick = async function () {
-      var s = document.getElementById('hStatus'); s.className = 'p-hint'; s.textContent = 'Selecting UTXOs & building…';
+      var s = document.getElementById('hStatus'); s.className = 'p-hint'; s.textContent = agg ? 'Scanning your addresses & building…' : 'Selecting UTXOs & building…';
       try {
         var to = document.getElementById('hTo').value.trim();
         if (RE_DOTBTC.test(to)) { var rr = await fetch('api/src101/resolve/' + encodeURIComponent(to)).then(function (x) { return x.json(); }).catch(function () { return null; }); if (!rr || !rr.exists || !rr.address) throw new Error('“' + to + '” is not a registered Bitcoin Stamps name.'); to = rr.address; }
@@ -568,11 +600,10 @@
         var sendMax = document.getElementById('hMax').checked;
         var amountSats = sendMax ? 0 : Math.round(parseFloat(document.getElementById('hAmt').value) * 1e8);
         if (!sendMax && (!amountSats || amountSats < 0)) throw new Error('Enter a valid amount.');
-        var cc = ccApplyMeta(from, await fetch('api/btc/' + from + '/coincontrol').then(function (r) { return r.json(); }));
-        var spendable = (cc.utxos || []).filter(function (u) { return u.category === 'spendable' && !u.frozen && !u.timelocked; }).map(function (u) { return { txid: u.txid, vout: u.vout, value: u.value }; });
-        if (!spendable.length) throw new Error('No spendable UTXOs on this address.');
-        var built = C.buildHwSend({ utxos: spendable, recipient: to, amountSats: amountSats, feeRate: feeRate, sendMax: sendMax, rbf: true, mfp: HW.mfp, accountPath: "84'/0'/" + (HW.account || 0) + "'", sourcePath: src.path, sourcePub: src.pub, type: hwBt });
-        renderHwSendPreview(built, from, to);
+        var g = await hwGatherUtxos(agg);
+        if (!g || !g.utxos.length) throw new Error(agg ? 'No spendable UTXOs across your addresses.' : 'No spendable UTXOs on this address.');
+        var built = C.buildHwSend({ utxos: g.utxos, recipient: to, amountSats: amountSats, feeRate: feeRate, sendMax: sendMax, rbf: true, mfp: HW.mfp, accountPath: "84'/0'/" + (HW.account || 0) + "'", sourcePath: g.change.path, sourcePub: g.change.pub, type: hwBt });
+        renderHwSendPreview(built, g.from, to);
       } catch (err) { s.className = 'p-err'; s.textContent = err.message === 'insufficient_funds' ? 'Insufficient spendable balance for that + fee.' : (err.message || 'Could not build transaction.'); }
     };
   }
@@ -616,6 +647,24 @@
         : /No device selected|not connected|failed to open|open the .* app|INS_NOT_SUPPORTED|6d00|access denied|in use/i.test(m) ? 'Couldn’t reach the Ledger — unlock it with the Bitcoin app open. If nothing prompts, pair again from the Connect flow (a fresh device grant may be needed for signing).'
         : ('Failed: ' + m);
     }
+  }
+  // Hardware-view settings (the gear): the globally-useful prefs + Ledger controls (no seed-only ops).
+  function hwSettingsMenu() {
+    overlay('<div class="stamp-detail"><div class="st-head"><div class="st-htitle">Settings</div><button class="m-close-x" id="hgX" title="Close" aria-label="Close">✕</button></div>'
+      + '<div class="adv-menu">'
+      + '<button class="adv-opt" data-hg="theme"><b>Appearance</b><span>Dark or light wallet skin</span></button>'
+      + '<button class="adv-opt" data-hg="autolock"><b>Auto-lock timer</b><span>Change or turn off the idle lock</span></button>'
+      + '<button class="adv-opt" data-hg="addresses"><b>Ledger addresses</b><span>Every receiving address type</span></button>'
+      + '<button class="adv-opt" data-hg="repair"><b>Reconnect / re-pair Ledger</b><span>Refresh the device pairing</span></button>'
+      + '</div><button class="btn ghost" id="hgClose">Close</button></div>');
+    document.getElementById('hgX').onclick = closeOv; document.getElementById('hgClose').onclick = closeOv;
+    document.querySelectorAll('[data-hg]').forEach(function (b) { b.onclick = function () {
+      var a = b.dataset.hg;
+      if (a === 'theme') advTheme();
+      else if (a === 'autolock') advAutoLock();
+      else if (a === 'addresses') { closeOv(); hwReceive(); }
+      else if (a === 'repair') { closeOv(); if (IS_HW_WIN) hwConnect(); else openHardwareTab(); }
+    }; });
   }
   function hwUnpair() {
     overlay('<div class="menu" style="padding:12px;display:flex;flex-direction:column;gap:9px"><div class="p-title" style="font-size:15px">Unpair this Ledger?</div>'
@@ -1795,7 +1844,7 @@
       + '<div class="p-hint">Wonder Wallet locks after this much inactivity. <b>Never</b> keeps it unlocked until you lock it manually or close the browser — use only on a device you trust.</div>'
       + '<div class="adv-menu">' + opts.map(function (o) { var sub = o[0] === cur ? '✓ current' : (o[0] === 'off' ? 'No idle lock — trusted devices only' : ''); return '<button class="adv-opt' + (o[0] === cur ? ' on' : '') + (o[0] === 'off' ? ' danger' : '') + '" data-al="' + o[0] + '"><b>' + esc(o[1]) + '</b><span>' + esc(sub) + '</span></button>'; }).join('') + '</div>'
       + '<button class="btn ghost" id="alClose" style="margin-top:8px">Close</button></div>');
-    document.getElementById('alBack').onclick = advancedMenu; document.getElementById('alClose').onclick = closeOv;
+    document.getElementById('alBack').onclick = (acctKind === 'hardware' && HW) ? hwSettingsMenu : advancedMenu; document.getElementById('alClose').onclick = closeOv;
     document.querySelectorAll('[data-al]').forEach(function (b) { b.onclick = function () { try { if (window.WWSession && window.WWSession.setIdle) window.WWSession.setIdle(b.dataset.al); } catch (e) {} advAutoLock(); }; });
   }
   function advTheme() {
@@ -1805,7 +1854,7 @@
       + '<div class="p-hint">Choose your wallet skin — saved on this device.</div>'
       + '<div class="adv-menu">' + opt('dark', 'Midnight', 'The original deep-black gold theme') + opt('light', 'Parchment', 'A warm, light-toned skin') + '</div>'
       + '<button class="btn ghost" id="thClose" style="margin-top:8px">Close</button></div>');
-    document.getElementById('thBack').onclick = advancedMenu; document.getElementById('thClose').onclick = closeOv;
+    document.getElementById('thBack').onclick = (acctKind === 'hardware' && HW) ? hwSettingsMenu : advancedMenu; document.getElementById('thClose').onclick = closeOv;
     document.querySelectorAll('[data-theme]').forEach(function (b) { b.onclick = function () { setTheme(b.dataset.theme); advTheme(); }; });
   }
   function advAllAddresses() {
@@ -1963,7 +2012,7 @@
     var coinBtn = canSignBtc() ? '<button class="p-ibtn" id="acCoin" title="Coin Control — UTXO management (freeze, label &amp; protect asset-bound coins)">' + GRID_ICON + '</button>' : '';
     app.innerHTML = '<div class="p-head"><button class="p-ibtn" id="bBack" title="Back">←</button><div class="p-brand-mid"><div class="p-name">Activity</div><div class="p-sub">' + esc(short(addr)) + '</div></div><div class="p-icons">' + coinBtn + '<button class="p-ibtn" id="acRefresh" title="Refresh">' + CC_REFRESH + '</button></div></div>'
       + '<div id="acBody"><div class="empty">Loading activity…</div></div>';
-    document.getElementById('bBack').onclick = renderMain;
+    document.getElementById('bBack').onclick = backToMain;
     var acCoin = document.getElementById('acCoin'); if (acCoin) acCoin.onclick = function () { renderCoinControl(addr, true); };
     document.getElementById('acRefresh').onclick = function () { ACT.items = null; loadActivity(); };
     loadActivity();
