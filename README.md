@@ -1,5 +1,11 @@
 # Wonder Wallet
 
+[![CI](https://github.com/StampBlaster5000/wonder-wallet/actions/workflows/ci.yml/badge.svg)](https://github.com/StampBlaster5000/wonder-wallet/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-E0B453.svg)](LICENSE)
+[![Website](https://img.shields.io/badge/website-wonder--wallet.com-E0B453.svg)](https://wonder-wallet.com)
+
+🌐 **[wonder-wallet.com](https://wonder-wallet.com)**  ·  💬 **[Telegram community](https://t.me/TryWonderWallet)**  ·  🧩 **Chrome extension** (open beta)
+
 **The collector's command deck for Bitcoin.** A fully self-custodial **BTC · ETH · SOL** wallet built for the Counterparty / Bitcoin&nbsp;Stamps / SRC-20 community — asset-aware UTXO control, a native on-chain DEX, the full issuance suite, and Emblem&nbsp;Vault bridging to Ethereum & Solana. **Your keys, your art, your data — all local.**
 
 > ⚠️ **Beta software.** Use a **test wallet**, not your life savings. This is community software provided as-is; audit before trusting it with real funds.
