@@ -203,6 +203,8 @@ button:disabled { opacity: .55; cursor: default; }
   font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--border);
 }
 .foot .dot { opacity: .5; }
+.foot-link { color: var(--gold); text-decoration: none; }
+.foot-link:hover { color: var(--gold2); text-decoration: underline; }
 
 /* ── Portfolio ── */
 .label-in { flex: 0 0 130px; background: var(--bg); border: 1px solid var(--border2); border-radius: 10px; color: var(--text); font-size: 13.5px; padding: 12px 12px; outline: none; }
@@ -663,6 +665,8 @@ a.dapp-name:hover { text-decoration: underline; }
   -webkit-mask-image: radial-gradient(ellipse 80% 55% at 50% 0%, #000 10%, transparent 75%); }
 
 /* topbar CTAs */
+.nav-social { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 999px; border: 1px solid var(--border2); color: var(--muted2); text-decoration: none; transition: color .15s, border-color .15s; }
+.nav-social:hover { color: var(--gold2); border-color: var(--gold); }
 .nav-login { font-size: 12.5px; font-weight: 600; padding: 6px 13px; border-radius: 999px; background: transparent; color: var(--text); border: 1px solid var(--border2); cursor: pointer; }
 .nav-login:hover { border-color: var(--gold); color: var(--gold2); }
 .nav-dl { font-size: 12.5px; font-weight: 700; padding: 6px 14px; border-radius: 999px; cursor: pointer; border: 1px solid transparent;
