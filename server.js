@@ -784,5 +784,16 @@ app.post('/api/emblem/unvault', limitMoney, wrap(async (req, res) => {
 // slash so the page's relative asset URLs (styles.css, wallet-core.js …) resolve against the app root.
 app.get('/app', (req, res) => res.sendFile(path.join(__dirname, 'public', 'app.html')));
 app.get('/app/', (req, res) => res.redirect(301, 'app'));
+// RFC 9116 security.txt — points researchers at our responsible-disclosure process (express.static
+// ignores dotfiles, so serve it explicitly; also answer the legacy /security.txt path).
+app.get(['/.well-known/security.txt', '/security.txt'], (req, res) => {
+  res.type('text/plain').send(
+    'Contact: https://github.com/StampBlaster5000/wonder-wallet/security/advisories/new\n' +
+    'Policy: https://github.com/StampBlaster5000/wonder-wallet/blob/main/SECURITY.md\n' +
+    'Preferred-Languages: en\n' +
+    'Canonical: https://wonder-wallet.com/.well-known/security.txt\n' +
+    'Expires: 2027-07-28T00:00:00.000Z\n'
+  );
+});
 app.use(express.static(path.join(__dirname, 'public')));
 app.listen(PORT, () => console.log(`[wonder-wallet] ${PHASE} listening on ${PORT}`));
