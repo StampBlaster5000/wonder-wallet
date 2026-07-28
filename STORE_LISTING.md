@@ -3,9 +3,9 @@
 Everything needed to fill out the Chrome Web Store submission for Wonder Wallet. Copy-paste the fields;
 the justifications are written to answer the reviewer's questions directly.
 
-> **Privacy policy URL** (required): host `public/privacy.html` — e.g.
-> `https://build-1dadb019a5802eb5fee63753.emblem.build/pub/bitcoin_wallet/wonder-wallet/privacy.html`
-> (or a custom domain if you connect one). Paste that URL into the "Privacy policy" field.
+> **Website:** `https://wonder-wallet.com`
+> **Privacy policy URL** (required): `https://wonder-wallet.com/privacy.html`
+> (Live on the custom domain — a Cloudflare Worker proxies wonder-wallet.com to the wallet artifact.)
 
 ---
 
