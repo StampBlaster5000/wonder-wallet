@@ -536,8 +536,18 @@ app.post('/api/cp/estimate/:type', limitMoney, wrap(async (req, res) => {
   if (!CP_TYPES.has(type)) { const e = new Error('bad_type'); e.status = 400; throw e; }
   const source = String(req.body.source || '');
   if (!okBtc(source)) { const e = new Error('bad_source'); e.status = 400; throw e; }
+  const params = req.body.params || {};
+  // Issuance has NO estimatexcpfees route — the Counterparty asset-naming fee is a FIXED protocol
+  // constant: a first-issued named asset costs 0.5 XCP, a subasset 0.25 XCP, numeric (A#) assets are
+  // free, and re-issuing an asset you already own has no naming fee. Returned in XCP sats (1e8).
+  if (type === 'issuance') {
+    const asset = String(params.asset || '');
+    let xcpFee = /^A\d+$/.test(asset) ? 0 : (asset.includes('.') ? 25_000_000 : 50_000_000);
+    try { const chk = await cp.checkAssetName(asset); if (chk && chk.exists && chk.owner === source) xcpFee = 0; } catch (_) {}
+    return res.json({ xcpFee });
+  }
   try {
-    const r = await fetch(`${cp.BASE}/addresses/${source}/compose/${type}/estimatexcpfees?${qstr(req.body.params)}`, { headers: { Accept: 'application/json' } });
+    const r = await fetch(`${cp.BASE}/addresses/${source}/compose/${type}/estimatexcpfees?${qstr(params)}`, { headers: { Accept: 'application/json' } });
     const j = await r.json();
     res.json({ xcpFee: typeof j.result === 'number' ? j.result : null });
   } catch (_) { res.json({ xcpFee: null }); }

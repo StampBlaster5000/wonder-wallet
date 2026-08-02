@@ -63,6 +63,12 @@
   var short = function (a) { a = String(a || ''); return a.length > 16 ? a.slice(0, 7) + '…' + a.slice(-6) : a; };
   var fmt = function (x, d) { var n = Number(x); return isFinite(n) ? n.toLocaleString('en-US', { maximumFractionDigits: d }) : '0'; };
   var fmtBytes = function (n) { n = Number(n); if (!isFinite(n) || n <= 0) return '—'; if (n < 1024) return n + ' B'; if (n < 1048576) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB'; return (n / 1048576).toFixed(1) + ' MB'; };
+  // Network-aware block-explorer links for a broadcast id → a clickable "Broadcast ✓" confirmation.
+  var mempoolTx = function (txid) { return (isTN() ? 'https://mempool.space/testnet4/tx/' : 'https://mempool.space/tx/') + encodeURIComponent(String(txid || '')); };
+  var explLinkHtml = function (url, id) { return 'Broadcast ✓ — <a href="' + url + '" target="_blank" rel="noopener" style="color:var(--gold2);text-decoration:underline">' + esc(String(id).slice(0, 18)) + '…</a> ↗'; };
+  var txLinkHtml = function (txid) { return explLinkHtml(mempoolTx(txid), txid); }; // BTC
+  var ethTxLinkHtml = function (h) { return explLinkHtml((ethNet() === 'sepolia' ? 'https://sepolia.etherscan.io/tx/' : 'https://etherscan.io/tx/') + encodeURIComponent(String(h || '')), h); };
+  var solTxLinkHtml = function (sig) { return explLinkHtml('https://solscan.io/tx/' + encodeURIComponent(String(sig || '')) + (isTN() ? '?cluster=devnet' : ''), sig); };
   // " · ≈ $X" USD tag for a sats amount on the signing/confirm screens (blank until the BTC price is known).
   function usdSuffix(sats) { if (isTN()) return ''; var p = (PRICES && PRICES.bitcoin) || 0; if (!p || !sats) return ''; return ' · ≈ $' + ((sats / 1e8) * p).toLocaleString('en-US', { maximumFractionDigits: 2 }); }
   // Absolute proxy URL for images set via JS (the shim only rewrites fetch() + DOM <img src="api/…">,
@@ -1485,7 +1491,7 @@
         var signed = C.signCp(c.psbt, c.inputs_values, c.lock_scripts, curAccount, stype, prevTxs, curImportedId());
         var r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then(function (x) { return x.json(); });
         if (r.error) throw new Error(r.detail || r.error);
-        st.className = 'p-hint'; st.innerHTML = '<span style="color:var(--green)">Broadcast ✓ — ' + esc(String(r.txid).slice(0, 20)) + '…</span>';
+        st.className = 'p-hint'; st.innerHTML = txLinkHtml(r.txid);
         setTimeout(function () { closeOv(); renderMain(); }, 1800);
       } catch (err) { st.className = 'p-err'; st.textContent = 'Failed: ' + (err.message || 'sign/broadcast error'); }
     };
@@ -1762,10 +1768,11 @@
     var recip = dest ? checkCpRecipient(c.psbt, c.data, dest) : null;
     pop.innerHTML = '<div class="stamp-detail"><div class="st-head"><button class="p-ibtn" id="cpcBack" title="Back">←</button><div class="st-htitle">Confirm · ' + esc(a.label) + '</div></div>'
       + '<div class="p-card" style="display:flex;flex-direction:column;gap:7px">'
+      + ((key === 'issuance' && CPH.last && CPH.last.asset) ? '<div class="sd-row"><span class="sd-k">Name</span><span class="sd-v" style="font-family:var(--mono)">' + esc(CPH.last.asset) + '</span></div>' : '')
       + '<div class="sd-row"><span class="sd-k">Action</span><span class="sd-v">' + esc(a.label) + '</span></div>'
       + (dest ? '<div class="sd-row"><span class="sd-k">To</span><span class="sd-v" style="font-family:var(--mono);font-size:11px">' + esc(short(dest)) + '</span></div>' : '')
-      + '<div class="sd-row"><span class="sd-k">Miner fee</span><span class="sd-v">' + sat(c.btc_fee) + usdSuffix(c.btc_fee) + (vsz ? ' (' + vsz + ' vB)' : '') + '</span></div>'
       + (xcpFee != null ? '<div class="sd-row"><span class="sd-k">XCP fee</span><span class="sd-v">' + xcp(xcpFee) + '</span></div>' : '')
+      + '<div class="sd-row"><span class="sd-k">Miner fee</span><span class="sd-v">' + sat(c.btc_fee) + usdSuffix(c.btc_fee) + (vsz ? ' (' + vsz + ' vB)' : '') + '</span></div>'
       + '</div>'
       + (recip ? (recip.ok ? '<div class="cp-verify ok">✓ Verified recipient <b>' + esc(short(dest)) + '</b> <span class="sub">(via ' + recip.via + ')</span></div>' : '<div class="cp-verify bad">⚠ Recipient MISMATCH — ' + esc(short(dest)) + ' is not encoded in this transaction. Do not sign.</div>') : '')
       + (c.data ? '<div class="disp-panel" style="display:block"><div class="disp-hit" style="font-family:var(--mono);word-break:break-all">CP: ' + esc(String(c.data).slice(0, 64)) + (String(c.data).length > 64 ? '…' : '') + '</div></div>' : '')
@@ -1787,7 +1794,7 @@
         var signed = C.signCp(c.psbt, c.inputs_values, c.lock_scripts, curAccount, CPH.type, prevTxs, curImportedId());
         var r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then(function (x) { return x.json(); });
         if (r.error) throw new Error(r.detail || r.error);
-        st.className = 'p-hint'; st.innerHTML = '<span style="color:var(--green)">Broadcast ✓ — ' + esc(String(r.txid).slice(0, 20)) + '…</span>';
+        st.className = 'p-hint'; st.innerHTML = txLinkHtml(r.txid);
         var go = document.getElementById('cpcGo'), bk = document.getElementById('cpcBack2'); if (bk) bk.remove(); if (go) { go.textContent = 'Done'; go.onclick = function () { closeOv(); renderMain(); }; }
       } catch (err) { st.className = 'p-err'; st.textContent = 'Failed: ' + (err.message || 'sign/broadcast error'); }
     };
@@ -1896,7 +1903,7 @@
         var signed = C.signCp(c.psbt, c.inputs_values, c.lock_scripts, curAccount, CPH.type, prevTxs, curImportedId());
         var r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then(function (x) { return x.json(); });
         if (r.error) throw new Error(r.detail || r.error);
-        st.className = 'p-hint'; st.innerHTML = '<span style="color:var(--green)">Broadcast ✓ — ' + esc(String(r.txid).slice(0, 20)) + '…</span>';
+        st.className = 'p-hint'; st.innerHTML = txLinkHtml(r.txid);
         var go = document.getElementById('adcGo'), bk = document.getElementById('adcBack2'); if (bk) bk.remove(); if (go) { go.textContent = 'Done'; go.onclick = function () { closeOv(); renderMain(); }; }
       } catch (err) { st.className = 'p-err'; st.textContent = 'Failed: ' + (err.message || 'sign/broadcast error'); }
     };
@@ -2541,7 +2548,7 @@
       try {
         var r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: tx.txhex }) }).then(function (x) { return x.json(); });
         if (r.error) throw new Error(r.detail || r.error);
-        s.className = 'p-hint'; s.innerHTML = '<span style="color:var(--green)">Broadcast ✓ — ' + esc(String(r.txid).slice(0, 20)) + '…</span>';
+        s.className = 'p-hint'; s.innerHTML = txLinkHtml(r.txid);
         setTimeout(renderMain, 1800);
       } catch (err) { s.className = 'p-err'; s.textContent = 'Failed: ' + (err.message || 'broadcast error'); }
     };
@@ -2607,7 +2614,7 @@
         var signed = C.signStamp(r.hex, curAccount, stype, prevTxs, curImportedId());
         var b = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then(function (x) { return x.json(); });
         if (b.error) throw new Error(b.detail || b.error);
-        s.className = 'p-hint'; s.innerHTML = '<span style="color:var(--green)">Broadcast ✓ — ' + esc(String(b.txid).slice(0, 20)) + '…</span>';
+        s.className = 'p-hint'; s.innerHTML = txLinkHtml(b.txid);
         setTimeout(renderMain, 1800);
       } catch (err) { s.className = 'p-err'; s.textContent = 'Failed: ' + (err.message || 'sign/broadcast error'); }
     };
@@ -2731,7 +2738,7 @@
         var signed = C.signStamp(r.hex, curAccount, stype, prevTxs, curImportedId());
         var b = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then(function (x) { return x.json(); });
         if (b.error) throw new Error(b.detail || b.error);
-        s.className = 'p-hint'; s.innerHTML = '<span style="color:var(--green)">Broadcast ✓ — ' + esc(String(b.txid).slice(0, 20)) + '…</span>';
+        s.className = 'p-hint'; s.innerHTML = txLinkHtml(b.txid);
         setTimeout(renderMain, 1800);
       } catch (err) { s.className = 'p-err'; s.textContent = 'Failed: ' + (err.message || 'sign/broadcast error'); }
     };
@@ -2803,7 +2810,7 @@
       try {
         var r = await fetch('api/eth/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raw: x.signed.raw, network: ethNet() }) }).then(function (z) { return z.json(); });
         if (r.error) throw new Error(r.detail || r.error);
-        s.className = 'p-hint'; s.innerHTML = '<span style="color:var(--green)">Broadcast ✓ — ' + esc(String(r.txhash).slice(0, 20)) + '…</span>';
+        s.className = 'p-hint'; s.innerHTML = ethTxLinkHtml(r.txhash);
         setTimeout(renderMain, 2000);
       } catch (err) { s.className = 'p-err'; s.textContent = 'Rejected: ' + (err.message || 'broadcast failed'); }
     };
@@ -2857,7 +2864,7 @@
       try {
         var r = await fetch('api/sol/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txBase64: x.signed.txBase64 }) }).then(function (z) { return z.json(); });
         if (r.error) throw new Error(r.detail || r.error);
-        s.className = 'p-hint'; s.innerHTML = '<span style="color:var(--green)">Broadcast ✓ — ' + esc(String(r.signature).slice(0, 20)) + '…</span>';
+        s.className = 'p-hint'; s.innerHTML = solTxLinkHtml(r.signature);
         setTimeout(renderMain, 2000);
       } catch (err) { s.className = 'p-err'; s.textContent = 'Rejected: ' + (err.message || 'broadcast failed'); }
     };
