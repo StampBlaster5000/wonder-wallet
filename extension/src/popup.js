@@ -2620,6 +2620,39 @@
       + '<button class="menu-opt" data-op="mint"><span>Mint an existing token<br><span class="fine">Mint from a ticker that\'s already deployed</span></span></button></div>');
     app.querySelectorAll('#pop-ov [data-op]').forEach(function (b) { b.onclick = function () { closeOv(); renderSrc20Create(b.dataset.op); }; });
   }
+  // Live SRC-20 ticker/namespace check as the user types, mirroring the web Terminal:
+  //  deploy → ✓ available / ✗ taken   ·   mint → ✓ mintable (shows per-mint limit) / not-deployed / fully-minted
+  function wireSrc20TickCheck(op) {
+    var inp = document.getElementById('s_tick'), chip = document.getElementById('s_tickchk'), limHint = document.getElementById('s_mintlim');
+    if (!inp || !chip) return;
+    var set = function (txt, color) { chip.textContent = txt; chip.style.color = color || ''; };
+    var t = null;
+    inp.addEventListener('input', function () {
+      clearTimeout(t);
+      if (limHint) { limHint.textContent = ''; }
+      inp.removeAttribute('data-lim');
+      var v = inp.value.trim();
+      if (!v) return set('');
+      if (v.length > 5) return set('max 5 characters', 'var(--red)');
+      set('checking…', '');
+      t = setTimeout(async function () {
+        try {
+          var st = await fetch('api/stamps/src20/tick/' + encodeURIComponent(v)).then(function (x) { return x.json(); });
+          if (inp.value.trim() !== v) return; // stale — user kept typing
+          if (op === 'deploy') {
+            if (st.deployed) set('✗ taken', 'var(--red)'); else set('✓ available', 'var(--green)');
+          } else {
+            if (!st.deployed) set('✗ not deployed', 'var(--red)');
+            else if (st.complete || Number(st.mints_left) <= 0) set('✗ fully minted', 'var(--red)');
+            else {
+              set('✓ mintable', 'var(--green)');
+              if (st.limit) { inp.setAttribute('data-lim', st.limit); if (limHint) limHint.textContent = '· max ' + Number(st.limit).toLocaleString('en-US') + '/mint'; }
+            }
+          }
+        } catch (e) { set(''); }
+      }, 350);
+    });
+  }
   async function renderSrc20Create(op) {
     stopCd();
     if (!canSignBtc()) return renderMain();
@@ -2628,17 +2661,18 @@
     try { fees = await fetch('api/btc/fees').then(function (r) { return r.json(); }); } catch (e) {}
     var feeRate = fees.halfHourFee || 6;
     var fields = op === 'deploy'
-      ? '<label class="cpf"><span>Ticker <span id="s_tickchk" class="tickchk"></span></span><input id="s_tick" class="p-in" maxlength="5" spellcheck="false" autocomplete="off" placeholder="e.g. WNDR"/></label>'
+      ? '<label class="cpf"><span>Ticker <span id="s_tickchk" class="fine"></span></span><input id="s_tick" class="p-in" maxlength="5" spellcheck="false" autocomplete="off" placeholder="e.g. WNDR"/></label>'
         + '<label class="cpf"><span>Max supply</span><input id="s_max" class="p-in" type="number" min="0" step="any"/></label>'
         + '<label class="cpf"><span>Per-mint limit</span><input id="s_lim" class="p-in" type="number" min="0" step="any"/></label>'
         + '<label class="cpf"><span>Decimals (0–18)</span><input id="s_dec" class="p-in" type="number" min="0" max="18" step="1" value="18"/></label>'
-      : '<label class="cpf"><span>Ticker</span><input id="s_tick" class="p-in" maxlength="5" spellcheck="false" autocomplete="off" placeholder="e.g. WNDR"/></label>'
-        + '<label class="cpf"><span>Amount to mint</span><input id="s_amt" class="p-in" type="number" min="0" step="any"/></label>';
+      : '<label class="cpf"><span>Ticker <span id="s_tickchk" class="fine"></span></span><input id="s_tick" class="p-in" maxlength="5" spellcheck="false" autocomplete="off" placeholder="e.g. WNDR"/></label>'
+        + '<label class="cpf"><span>Amount to mint <span id="s_mintlim" class="fine"></span></span><input id="s_amt" class="p-in" type="number" min="0" step="any"/></label>';
     app.innerHTML = '<div class="p-head"><button class="p-ibtn" id="bBack" title="Back">←</button><div class="p-brand-mid"><div class="p-name">' + (op === 'deploy' ? 'Deploy SRC-20' : 'Mint SRC-20') + '</div><div class="p-sub">SRC-20 · ' + esc(short(from)) + '</div></div><div class="p-icons"></div></div>'
       + '<div class="send-form">' + fields + feeRowHtml(fees)
       + '<div id="xStatus" class="p-err"></div><button class="btn" id="xReview">Review</button></div>';
     document.getElementById('bBack').onclick = function () { renderMain(); };
     wireFeeRow(function (r) { feeRate = r; });
+    wireSrc20TickCheck(op); // live ticker/namespace availability chip
     document.getElementById('xReview').onclick = async function () {
       var s = document.getElementById('xStatus'); s.className = 'p-hint'; s.textContent = 'Composing via stampchain…';
       try {
@@ -2659,13 +2693,21 @@
           if (!(amt > 0)) throw new Error('Amount must be greater than 0.');
           var st2 = await fetch('api/stamps/src20/tick/' + encodeURIComponent(tick)).then(function (x) { return x.json(); });
           if (!st2.deployed) throw new Error('Ticker "' + tick + '" isn\'t deployed yet — nothing to mint.');
-          if (st2.complete) throw new Error('"' + tick + '" is fully minted — no mints left.');
+          if (st2.complete || Number(st2.mints_left) <= 0) throw new Error('"' + tick + '" is fully minted — no mints left.');
+          if (st2.limit && amt > parseFloat(st2.limit)) throw new Error('Max per mint for "' + tick + '" is ' + Number(st2.limit).toLocaleString('en-US') + '.');
           params.amt = String(amt); summ = 'mint ' + amt + ' ' + tick;
         }
         var r = await fetch('api/stamps/src20/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: from, params: params }) }).then(function (x) { return x.json(); });
         if (r.error) throw new Error(r.detail || r.error);
+        if (!r.hex) throw new Error('compose_empty');
         renderSrc20CreatePreview(op, r, tick, summ);
-      } catch (err) { s.className = 'p-err'; s.textContent = /No spendable|compose_failed/i.test(err.message) ? 'Insufficient BTC on this address to compose.' : (err.message || 'Could not compose.'); }
+      } catch (err) {
+        var m = String(err.message || '');
+        s.className = 'p-err';
+        if (/No spendable|insufficient|not enough/i.test(m)) s.textContent = 'Not enough spendable BTC here to fund the ' + op + ' (asset-bearing UTXOs are protected). Add some plain BTC and retry.';
+        else if (/aborted|abort|timeout|process SRC20|INTERNAL|upstream|502|500|compose_empty|Failed to process/i.test(m)) s.textContent = 'The SRC-20 compose service is temporarily unavailable — please try again in a moment.';
+        else s.textContent = m || 'Could not compose the ' + op + '.';
+      }
     };
   }
   function renderSrc20CreatePreview(op, r, tick, summ) {
