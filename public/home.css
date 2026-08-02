@@ -100,7 +100,7 @@ h1, h2, h3 { font-family: 'Fraunces', Georgia, serif; font-weight: 600; margin: 
 .browsers .bset { display: flex; align-items: center; gap: 10px; }
 .bchip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: #c7c1d1;
   border: 1px solid var(--line); background: var(--glass); padding: 5px 10px; border-radius: 999px; }
-.bchip svg { width: 15px; height: 15px; }
+.bchip svg, .bchip img { width: 16px; height: 16px; display: block; }
 .sync { display: flex; flex-wrap: wrap; gap: 8px; margin: 26px 0 0; }
 .syncpill { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted);
   border: 1px solid var(--line); background: rgba(255,255,255,.02); padding: 5px 11px; border-radius: 999px; font-family: 'JetBrains Mono', monospace; }
@@ -146,10 +146,8 @@ h1, h2, h3 { font-family: 'Fraunces', Georgia, serif; font-weight: 600; margin: 
 .chains { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 .chain { display: flex; align-items: center; gap: 14px; padding: 18px 20px; border-radius: var(--r);
   border: 1px solid var(--line); background: var(--glass); }
-.chain .ic { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; flex: 0 0 auto; }
-.chain .ic.btc { background: rgba(247,147,26,.14); color: #f7931a; }
-.chain .ic.eth { background: rgba(108,132,240,.16); color: #8ba0f0; }
-.chain .ic.sol { background: rgba(20,241,149,.12); color: #14f195; }
+.chain .ic { width: 42px; height: 42px; display: grid; place-items: center; flex: 0 0 auto; }
+.chain .ic img { width: 42px; height: 42px; display: block; border-radius: 50%; }
 .chain b { font-size: 15px; } .chain small { display: block; font-size: 12px; color: var(--faint); margin-top: 2px; }
 
 /* ── feature: big highlight ── */
