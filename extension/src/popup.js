@@ -62,6 +62,7 @@
   var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); };
   var short = function (a) { a = String(a || ''); return a.length > 16 ? a.slice(0, 7) + '…' + a.slice(-6) : a; };
   var fmt = function (x, d) { var n = Number(x); return isFinite(n) ? n.toLocaleString('en-US', { maximumFractionDigits: d }) : '0'; };
+  var fmtBytes = function (n) { n = Number(n); if (!isFinite(n) || n <= 0) return '—'; if (n < 1024) return n + ' B'; if (n < 1048576) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB'; return (n / 1048576).toFixed(1) + ' MB'; };
   // " · ≈ $X" USD tag for a sats amount on the signing/confirm screens (blank until the BTC price is known).
   function usdSuffix(sats) { if (isTN()) return ''; var p = (PRICES && PRICES.bitcoin) || 0; if (!p || !sats) return ''; return ' · ≈ $' + ((sats / 1e8) * p).toLocaleString('en-US', { maximumFractionDigits: 2 }); }
   // Absolute proxy URL for images set via JS (the shim only rewrites fetch() + DOM <img src="api/…">,
@@ -1157,13 +1158,13 @@
     pop.innerHTML = '<div class="stamp-detail">'
       + (isHtml ? '<iframe class="sd-art sd-frame" id="sdFrame" sandbox="allow-scripts" scrolling="no"></iframe>' : '<img class="sd-art" loading="lazy" src="api/stamp/' + encodeURIComponent(s.stamp) + '/content"/>')
       + '<div class="sd-title">Stamp #' + esc(String(s.stamp)) + '</div>'
-      + '<div class="sd-grid">' + (s.held != null ? sdRow('You hold', fmt(s.held, 0)) : '') + sdRow('Supply', s.supply != null ? fmt(s.supply, 0) : '—') + sdRow('Locked', s.locked ? 'yes' : 'no') + sdRow('Divisible', s.divisible ? 'yes' : 'no') + sdRow('Type', s.mime || '—') + '</div>'
+      + '<div class="sd-grid">' + (s.held != null ? sdRow('You hold', fmt(s.held, 0)) : '') + sdRow('Supply', s.supply != null ? fmt(s.supply, 0) : '—') + sdRow('Locked', s.locked ? 'yes' : 'no') + sdRow('Divisible', s.divisible ? 'yes' : 'no') + sdRow('Type', s.mime || '—') + (s.fileSize ? sdRow('Size', fmtBytes(s.fileSize)) : '') + '</div>'
       + '<div class="sd-mono" data-copy="' + esc(s.cpid || '') + '" title="Copy CPID">CPID · ' + esc(s.cpid || '—') + '</div>'
-      + '<div class="sd-sub">Creator ' + esc(short(s.creator || '—')) + (s.fileSize ? ' · ' + fmt(s.fileSize, 0) + ' B' : '') + '</div>'
+      + '<div class="sd-sub">Creator <span data-copy="' + esc(s.creator || '') + '" title="Copy creator address" style="font-family:var(--mono);cursor:pointer">' + esc(s.creator ? (s.creator.length > 24 ? s.creator.slice(0, 12) + '…' + s.creator.slice(-8) : s.creator) : '—') + '</span></div>'
       + tools
       + '<button class="btn ghost" id="sdClose">Close</button></div>';
     if (isHtml) { var sf = document.getElementById('sdFrame'); if (sf) sf.src = proxied('api/stamp/' + encodeURIComponent(s.stamp) + '/content'); }
-    var cp = pop.querySelector('.sd-mono'); if (cp) cp.onclick = function () { copy(cp.getAttribute('data-copy'), cp); };
+    pop.querySelectorAll('[data-copy]').forEach(function (el) { if (el.getAttribute('data-copy')) el.onclick = function () { copy(el.getAttribute('data-copy'), el); }; });
     var cl = document.getElementById('sdClose'); if (cl) cl.onclick = closeOv;
     pop.querySelectorAll('.sd-tool').forEach(function (b) { b.onclick = function () {
       if (b.dataset.op === 'vault') {
