@@ -43,3 +43,20 @@ jobs:
             node --check "$f" || { echo "::error file=$f::Syntax error"; exit 1; }
           done
           echo "All server + browser scripts parsed cleanly."
+
+      - name: Run test suites
+        # Pure logic/crypto tests — no server, no browser, no secrets. Covers BIP-322/EIP-712/
+        # personal_sign signing, the dApp provider spine, local tx verification, and testnet isolation.
+        # (tests/playwright + tests/selenium are excluded — they need a live server/browser.)
+        run: |
+          fail=0
+          for t in tests/*.mjs tests/*.cjs; do
+            if out=$(node "$t" 2>&1) && printf '%s' "$out" | grep -q "✅"; then
+              echo "✓ $t"
+            else
+              echo "::error file=$t::Test suite failed"
+              printf '%s\n' "$out" | tail -25
+              fail=1
+            fi
+          done
+          [ "$fail" = 0 ] && echo "All test suites passed." || exit 1
