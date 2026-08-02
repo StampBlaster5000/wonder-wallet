@@ -1,15 +1,21 @@
 /** Shared fetch + TTL cache + small concurrency helper for all data sources. */
 'use strict';
 
+const netctx = require('./netctx');
+
 const cache = new Map();
+// Cache keys are network-scoped so a testnet read can never serve a cached mainnet
+// value (or vice-versa) for the same address / asset id / txid.
+const nk = (key) => `${netctx.current()}|${key}`;
 function cacheGet(key) {
-  const hit = cache.get(key);
+  const k = nk(key);
+  const hit = cache.get(k);
   if (hit && Date.now() < hit.exp) return hit.v;
-  if (hit) cache.delete(key);
+  if (hit) cache.delete(k);
   return null;
 }
 function cacheSet(key, v, ttl = 30_000) {
-  cache.set(key, { v, exp: Date.now() + ttl });
+  cache.set(nk(key), { v, exp: Date.now() + ttl });
   if (cache.size > 2000) cache.delete(cache.keys().next().value);
 }
 

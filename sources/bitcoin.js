@@ -2,16 +2,22 @@
 'use strict';
 
 const { fetchJson, cacheGet, cacheSet } = require('./http');
+const netctx = require('./netctx');
 
-const BASE = process.env.BTC_API || 'https://mempool.space/api';
+// Esplora-compatible REST. Testnet uses mempool.space's testnet4 instance (same routes).
+const BASES = {
+  mainnet: process.env.BTC_API || 'https://mempool.space/api',
+  testnet: process.env.BTC_API_TESTNET || 'https://mempool.space/testnet4/api',
+};
+const base = () => BASES[netctx.current()] || BASES.mainnet;
 
 async function getAddress(address) {
   const key = `btc:addr:${address}`;
   const hit = cacheGet(key);
   if (hit) return hit;
   const [info, utxos] = await Promise.all([
-    fetchJson(`${BASE}/address/${address}`),
-    fetchJson(`${BASE}/address/${address}/utxo`),
+    fetchJson(`${base()}/address/${address}`),
+    fetchJson(`${base()}/address/${address}/utxo`),
   ]);
   const cs = info.chain_stats || {};
   const ms = info.mempool_stats || {};
@@ -36,7 +42,7 @@ async function getTipHeight() {
   const key = 'btc:tip';
   const hit = cacheGet(key);
   if (hit) return hit;
-  const h = await fetchJson(`${BASE}/blocks/tip/height`);
+  const h = await fetchJson(`${base()}/blocks/tip/height`);
   cacheSet(key, h, 30_000);
   return h;
 }
@@ -50,8 +56,8 @@ async function getFees() {
   // finer sub-1 tiers from the projected mempool blocks (the same data mempool.space's site shows)
   // so the presets stay useful for patient, low-fee sends. Busy-mempool behavior is unchanged.
   const [rec, blocks] = await Promise.all([
-    fetchJson(`${BASE}/v1/fees/recommended`).catch(() => null),
-    fetchJson(`${BASE}/v1/fees/mempool-blocks`).catch(() => null),
+    fetchJson(`${base()}/v1/fees/recommended`).catch(() => null),
+    fetchJson(`${base()}/v1/fees/mempool-blocks`).catch(() => null),
   ]);
   const fees = rec || { fastestFee: 1, halfHourFee: 1, hourFee: 1, economyFee: 1, minimumFee: 1 };
   const nb = Array.isArray(blocks) && blocks[0] && blocks[0].medianFee > 0 ? blocks[0].medianFee : null;
@@ -74,7 +80,7 @@ async function getRawTx(txid) {
   const key = `btc:rawtx:${txid}`;
   const hit = cacheGet(key);
   if (hit) return hit;
-  const r = await fetch(`${BASE}/tx/${txid}/hex`, { headers: { Accept: 'text/plain' } });
+  const r = await fetch(`${base()}/tx/${txid}/hex`, { headers: { Accept: 'text/plain' } });
   if (!r.ok) { const e = new Error('tx_not_found'); e.status = 404; throw e; }
   const raw = (await r.text()).trim();
   if (!/^[0-9a-fA-F]+$/.test(raw)) throw new Error('bad_tx_hex');
@@ -89,7 +95,7 @@ async function getTxInfo(txid) {
   const key = `btc:txinfo:${txid}`;
   const hit = cacheGet(key);
   if (hit) return hit;
-  const r = await fetch(`${BASE}/tx/${txid}`, { headers: { Accept: 'application/json' } });
+  const r = await fetch(`${base()}/tx/${txid}`, { headers: { Accept: 'application/json' } });
   if (!r.ok) { const e = new Error('tx_not_found'); e.status = 404; throw e; }
   const t = await r.json();
   const out = {
@@ -105,4 +111,4 @@ async function getTxInfo(txid) {
   return out;
 }
 
-module.exports = { getAddress, getFees, getTipHeight, getRawTx, getTxInfo, BASE };
+module.exports = { getAddress, getFees, getTipHeight, getRawTx, getTxInfo, base, get BASE() { return base(); } };

@@ -21,3 +21,9 @@ Thumbs.db
 *.log
 .vscode/
 .idea/
+
+# ── Versioned beta zips (build artifacts, like the extension zip above) ──
+public/wonder-wallet-b*.zip
+
+# ── Internal studio/promo harnesses (asset tooling, not shipped app) ──
+public/_*

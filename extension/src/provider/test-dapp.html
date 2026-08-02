@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<!-- Wonder Wallet dApp provider — test harness + developer example. Phase 12 (v0.48). STAGED.
+     Once the provider is active (v0.48) and this page's host is in the content-script allowlist,
+     it exercises the whole flow: detect → connect (with BIP-322 proof) → getPublicKey → signMessage
+     → signPsbt. It also IS the copy-paste integration snippet for site developers. -->
+<html lang="en">
+<head>
+<meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Wonder Wallet — provider test dApp</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 18px; background: #0a0a0f; color: #ECE8E1; }
+  h1 { font-size: 22px; } .gold { color: #E0B453; }
+  button { background: linear-gradient(180deg,#F4D58D,#E0B453); color: #241a04; font-weight: 600; border: 0; border-radius: 8px; padding: 9px 14px; margin: 4px 6px 4px 0; cursor: pointer; }
+  button:disabled { opacity: .5; }
+  pre { background: #13131c; border: 1px solid #22222e; border-radius: 10px; padding: 12px; white-space: pre-wrap; word-break: break-all; font-size: 12.5px; }
+  .row { margin: 14px 0; } .muted { color: #8b8597; font-size: 13px; }
+</style>
+</head>
+<body>
+  <h1>🔌 Wonder Wallet <span class="gold">provider test</span></h1>
+  <p class="muted" id="detect">Detecting <code>window.wonderWallet</code>…</p>
+  <div class="row">
+    <button id="bConnect">Connect</button>
+    <button id="bPub" disabled>getPublicKey</button>
+    <button id="bMsg" disabled>signMessage</button>
+    <button id="bPsbt" disabled>signPsbt (paste below)</button>
+    <button id="bDisc" disabled>disconnect</button>
+  </div>
+  <div class="row"><textarea id="psbt" rows="3" style="width:100%;background:#13131c;color:#ECE8E1;border:1px solid #22222e;border-radius:8px;padding:8px" placeholder="PSBT hex or base64 to sign…"></textarea></div>
+  <pre id="out">—</pre>
+
+  <script>
+    // ── The entire integration (this is the copy-paste example for site devs) ──
+    const out = document.getElementById('out');
+    const log = (label, v) => { out.textContent = label + '\n' + (typeof v === 'string' ? v : JSON.stringify(v, null, 2)); };
+    function ready(cb) { if (window.wonderWallet) return cb(); window.addEventListener('wonder-wallet#initialized', cb, { once: true }); setTimeout(() => { if (!window.wonderWallet) document.getElementById('detect').textContent = 'Wonder Wallet not detected — is the extension installed and this site allowlisted?'; }, 1500); }
+
+    ready(function () {
+      const ww = window.wonderWallet;
+      document.getElementById('detect').innerHTML = '✅ <span class="gold">window.wonderWallet</span> detected (isWonderWallet=' + ww.isWonderWallet + ')';
+      const enable = (on) => ['bPub', 'bMsg', 'bPsbt', 'bDisc'].forEach(id => document.getElementById(id).disabled = !on);
+
+      ww.on('accountsChanged', (a) => log('event: accountsChanged', a));
+      ww.on('disconnect', () => { log('event: disconnect', 'site disconnected'); enable(false); });
+
+      document.getElementById('bConnect').onclick = () => ww.requestAccounts().then(r => { log('requestAccounts → (accounts + BIP-322 proof)', r); enable(true); }).catch(e => log('rejected', e));
+      document.getElementById('bPub').onclick = () => ww.getPublicKey().then(r => log('getPublicKey', r)).catch(e => log('error', e));
+      document.getElementById('bMsg').onclick = () => ww.signMessage('Hello from the test dApp').then(r => log('signMessage (BIP-322)', r)).catch(e => log('error', e));
+      document.getElementById('bPsbt').onclick = () => ww.signPsbt(document.getElementById('psbt').value.trim()).then(r => log('signPsbt', r)).catch(e => log('error', e));
+      document.getElementById('bDisc').onclick = () => ww.disconnect().then(() => { log('disconnect', 'ok'); enable(false); }).catch(e => log('error', e));
+    });
+  </script>
+</body>
+</html>

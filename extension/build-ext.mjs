@@ -21,9 +21,12 @@ mkdirSync(join(DIST, 'shots'), { recursive: true });
 
 // 1. Copy the shared engine + UI modules the expanded view reuses (unchanged).
 const MODULES = [
-  'wallet-core.js', 'wallet-hw.js', 'styles.css', 'qrcode.js',
+  'wallet-core.js', 'net-mode.js', 'wallet-hw.js', 'styles.css', 'qrcode.js',
   'app.js', 'coin-control.js', 'cp-actions.js', 'evm.js', 'sol.js', 'emblem.js',
-  'hardware-ui.js', 'minting.js', 'dapps.js', 'src101.js', 'backup.js', 'wallet-ui.js', 'topbar.js',
+  // NOTE: dapps.js (the dApp dashboard + external-site directory) is intentionally NOT bundled in the
+  // extension — the extension is a self-contained wallet with no external-site launching. The full dApp
+  // dashboard lives on the web Terminal (wonder-wallet.com). (Chrome "single-purpose launcher" hygiene.)
+  'hardware-ui.js', 'minting.js', 'src101.js', 'backup.js', 'wallet-ui.js', 'topbar.js',
 ];
 for (const m of MODULES) copyFileSync(join(PUB, m), join(DIST, m));
 if (existsSync(join(PUB, 'shots'))) for (const f of readdirSync(join(PUB, 'shots'))) copyFileSync(join(PUB, 'shots', f), join(DIST, 'shots', f));
@@ -31,6 +34,15 @@ if (existsSync(join(PUB, 'shots'))) for (const f of readdirSync(join(PUB, 'shots
 // 2. Copy extension source (shim, popup, background). The side panel reuses the popup UI.
 for (const f of ['shim.js', 'ext-session.js', 'popup.html', 'popup.css', 'popup.js', 'background.js']) copyFileSync(join(SRC, f), join(DIST, f));
 copyFileSync(join(SRC, 'popup.html'), join(DIST, 'sidepanel.html'));
+
+// 2b. dApp provider (v0.49) — copy the provider stack into dist/provider/. These inject the wallet
+// connector on the ALLOWLISTED dApp sites only (see manifest content_scripts below). approval.html
+// lands in dist/provider/ and links ../popup.css + ../wallet-core.js (resolve to dist root — correct).
+mkdirSync(join(DIST, 'provider'), { recursive: true });
+for (const f of ['protocol.js', 'permissions.js', 'broker.js', 'inpage.js', 'eth-provider.js', 'sol-provider.js',
+  'content.js', 'tx-summary.js', 'proof.js', 'background-provider.js', 'background-wire.js',
+  'approval.js', 'approval.css', 'approval.html', 'connected-sites.js'])
+  copyFileSync(join(SRC, 'provider', f), join(DIST, 'provider', f));
 
 // 3. Icons — render the gold seal to 16/48/128.
 const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
@@ -47,18 +59,35 @@ for (const size of [16, 48, 128]) {
   writeFileSync(join(DIST, 'icons', `icon-${size}.png`), png);
 }
 
-// 4. manifest.json (v1 — popup + expanded; reads via the stateless proxy).
+// 4. manifest.json (v2 — popup + expanded + dApp provider; reads via the stateless proxy).
 const PROXY = 'https://build-1dadb019a5802eb5fee63753.emblem.build';
+// UNIVERSAL WALLET (v0.50): the dApp provider injects on ALL websites so any BTC/ETH/SOL dApp can
+// discover + connect to Wonder Wallet with zero setup — the MetaMask/Phantom model. Safety rests on the
+// per-origin approval model (every connect + every signature is user-approved; origin authenticated from
+// Chrome's sender), NOT on the injection allowlist. ETH uses EIP-6963 (no window.ethereum clobber) and
+// SOL uses the Wallet Standard, so we coexist with other wallets. content.js runs at document_start;
+// the inpage/eth/sol page scripts are web_accessible_resources.
+const DAPP_HOSTS = ['http://*/*', 'https://*/*'];
 const manifest = {
   manifest_version: 3,
   name: 'Wonder Wallet',
-  version: '0.47.23',
-  description: 'Self-custodial BTC · ETH · SOL wallet for the Counterparty / Stamps / SRC-20 community. Asset-aware UTXO control + native Emblem Vault bridging.',
+  version: '0.51.0',
+  description: 'A self-custodial Bitcoin wallet for collectors. Your keys, your assets, and your data stay on your own device.',
   action: { default_title: 'Wonder Wallet', default_popup: 'popup.html' },
   background: { service_worker: 'background.js' },
   side_panel: { default_path: 'sidepanel.html' },
-  permissions: ['storage', 'alarms', 'sidePanel'],
+  permissions: ['storage', 'alarms', 'sidePanel', 'scripting'],
   host_permissions: [PROXY + '/*'],
+  content_scripts: [{
+    matches: DAPP_HOSTS,
+    js: ['provider/content.js'],
+    run_at: 'document_start',
+    all_frames: false,
+  }],
+  web_accessible_resources: [{
+    resources: ['provider/inpage.js', 'provider/eth-provider.js', 'provider/sol-provider.js'],
+    matches: DAPP_HOSTS,
+  }],
   content_security_policy: {
     extension_pages: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: ${PROXY}; connect-src 'self' ${PROXY}; frame-src ${PROXY}; object-src 'none'; base-uri 'self'`,
   },
@@ -86,7 +115,6 @@ const EXPANDED = `<!DOCTYPE html>
       <div class="wordmark"><span class="name">Wonder Wallet</span><span class="attribution">Secured by Emblem Vault</span></div>
     </div>
     <div class="meta">
-      <button class="dapps-btn" id="dappsBtn">⊞ dApps</button>
       <button class="dapps-btn" id="backupBtn" title="Back up / restore">Backup</button>
       <span class="badge" id="phaseBadge">Extension</span>
       <span class="ver" id="verTag"></span>
@@ -101,6 +129,7 @@ const EXPANDED = `<!DOCTYPE html>
   <div id="modal" class="modal" hidden><div class="modal-card" id="modalCard"></div></div>
   <script src="shim.js"></script>
   <script src="wallet-core.js"></script>
+  <script src="net-mode.js"></script>
   <script src="ext-session.js"></script>
   <script src="qrcode.js"></script>
   <script src="app.js"></script>
@@ -111,7 +140,6 @@ const EXPANDED = `<!DOCTYPE html>
   <script src="emblem.js"></script>
   <script src="hardware-ui.js"></script>
   <script src="minting.js"></script>
-  <script src="dapps.js"></script>
   <script src="src101.js"></script>
   <script src="backup.js"></script>
   <script src="wallet-ui.js"></script>

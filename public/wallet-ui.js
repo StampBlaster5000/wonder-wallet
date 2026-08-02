@@ -4,6 +4,10 @@
 (function () {
   const C = window.WonderCore;
   const $ = (s) => document.querySelector(s);
+  // Active network (Testnet Mode) — testnet derives coin-type-1' BTC addresses and hides fiat.
+  // Reads either the Terminal (WWNet) or the extension (WWNetMode) API, whichever is present.
+  const isTN = () => !!((window.WWNet && window.WWNet.isTestnet()) || (window.WWNetMode && window.WWNetMode.isTestnet()));
+  const NET = () => (isTN() ? 'testnet' : 'mainnet');
   // Wallet-wide safety: no numeric field (quantity, amount, fee, price…) may go below its floor.
   // One document-level guard covers every Terminal module (send, CP actions, emblem, minting…).
   document.addEventListener('input', (e) => {
@@ -45,9 +49,21 @@
   function modal(html) {
     let m = $('#wmodal');
     if (!m) { m = el('div', 'modal'); m.id = 'wmodal'; m.innerHTML = '<div class="modal-card" id="wmodalCard"></div>'; document.body.appendChild(m); m.addEventListener('click', (e) => { if (e.target.id === 'wmodal') closeModal(); }); }
-    $('#wmodalCard').innerHTML = html;
+    const card = $('#wmodalCard');
+    card.innerHTML = html;
+    // Persistent corner ✕ close on every modal (in addition to any Cancel/Back button).
+    try {
+      if (getComputedStyle(card).position === 'static') card.style.position = 'relative';
+      const x = document.createElement('button');
+      x.type = 'button'; x.setAttribute('aria-label', 'Close'); x.title = 'Close'; x.textContent = '✕';
+      Object.assign(x.style, { position: 'absolute', top: '10px', right: '12px', width: '26px', height: '26px', border: 'none', borderRadius: '7px', background: 'transparent', color: '#8b8597', fontSize: '16px', lineHeight: '1', cursor: 'pointer', zIndex: '3', padding: '0' });
+      x.onmouseenter = () => { x.style.background = 'rgba(255,255,255,.08)'; x.style.color = '#ECE8E1'; };
+      x.onmouseleave = () => { x.style.background = 'transparent'; x.style.color = '#8b8597'; };
+      x.onclick = closeModal;
+      card.appendChild(x);
+    } catch (_) {}
     m.hidden = false;
-    return $('#wmodalCard');
+    return card;
   }
   // SECURITY (audit §4): clear modal contents on close so revealed seed/keys don't linger in the DOM.
   function closeModal() { const m = $('#wmodal'); if (m) { m.hidden = true; const c = $('#wmodalCard'); if (c) c.innerHTML = ''; } }
@@ -79,30 +95,77 @@
   }
 
   // ── Top-level render by state ──
+  // The network (Mainnet/Testnet) badge lives INSIDE the wallet window — mounted into the card
+  // header only once a wallet is open, and removed on the create/restore/unlock screens so the
+  // hero stays clean. Clicking it toggles the network (same control as before, relocated).
+  // `open` = a wallet is open (banner belongs inside the card, incl. a connected testnet wallet).
+  // `withChip` = the network TOGGLE chip (local-vault only — a connected/Ledger wallet owns its own network).
+  function syncNetBadge(open, withChip) {
+    if (!window.WWNet) return;
+    const card = $('#wallet');
+    const head = document.querySelector('#wallet .card-h');
+    const existing = document.getElementById('wwNetInWallet');
+    let bMount = document.getElementById('wwBannerMount');
+    // toggle chip
+    if (open && withChip && head) {
+      if (!existing) {
+        const span = document.createElement('span');
+        span.id = 'wwNetInWallet';
+        span.style.marginLeft = '8px';
+        span.appendChild(window.WWNet.chip());
+        head.appendChild(span);
+      }
+    } else if (existing) { existing.remove(); }
+    // testnet banner mount at the very top of the wallet card (net-mode fills it only when testnet)
+    if (open && card) {
+      if (!bMount) { bMount = document.createElement('div'); bMount.id = 'wwBannerMount'; card.insertBefore(bMount, card.firstChild); }
+    } else if (bMount) { bMount.remove(); }
+    window.WWNet.paint();
+  }
+
   async function render() {
     const card = $('#wallet');
     if (!card) return;
     ensurePrivacyBtn(); // inject the topbar privacy toggle once
     window.__activeAccount = null; // cleared on lock/none; set by renderUnlocked
-    if (acctKind === 'hardware') { if (HW) return renderHardware(); acctKind = 'hd'; } // Ledger dashboard (no vault needed)
+    // Network toggle is a LOCAL-VAULT feature (our own derivation). A connected UniSat/OKX wallet
+    // owns its own network, and Ledger-testnet isn't validated — so hide the badge for those.
+    if (acctKind === 'connected' && CONN) { setTopbarTools(true); syncNetBadge(true, false); return renderConnected(); } // external wallet (UniSat/OKX/Wonder) — no vault
+    if (acctKind === 'hardware') { if (HW) { setTopbarTools(true); syncNetBadge(true, false); return renderHardware(); } acctKind = 'hd'; } // Ledger dashboard (no vault needed)
     let state = 'none';
     try { if (C.isUnlocked()) state = 'unlocked'; else if (await C.hasVault()) state = 'locked'; } catch (_) {}
+    setTopbarTools(state === 'unlocked'); // dApps / Backup / privacy only make sense once a wallet is open — hide on the create/restore/unlock screens
     if (state === 'unlocked') { refreshImported(); if (acctKind === 'imported' && !currentImported()) acctKind = 'hd'; return renderUnlocked(); }
     if (state === 'locked') return renderLocked();
+    // No local vault → restore a connected-wallet session across a page refresh (web Terminal only).
+    // Silent (no prompt); only after confirming there's no local wallet, so a seed vault always wins.
+    if (!CONN && window.WalletConnect && WalletConnect.lastConnected && WalletConnect.lastConnected()) {
+      const restored = await tryReconnect();
+      if (restored) { CONN = restored; acctKind = 'connected'; watchId = null; setTopbarTools(true); return renderConnected(); }
+      // else keep the ww:connected flag so a locked/uninjected wallet auto-reconnects once it's ready + refreshed.
+    }
     return renderNone();
   }
 
   function renderNone() {
+    syncNetBadge(false, false); // clean hero — nothing until a wallet is open
+    // "Connect an existing wallet" is a WEB-TERMINAL feature (needs wallet-connect.js, which detects
+    // injected UniSat/OKX/Wonder providers). The extension IS the wallet, doesn't bundle wallet-connect.js,
+    // so the button + hint only appear when WalletConnect is present.
+    const canConnect = !!window.WalletConnect;
     body().innerHTML = `
       <p class="fine">Create a new self-custodial wallet, or restore one from a seed phrase. Keys are generated and encrypted <b>in your browser</b> — they never reach the server.</p>
       <div class="wbtns">
         <button id="bCreate" class="primary">Create wallet</button>
         <button id="bRestore" class="ghost">Restore from seed</button>
         <button id="bHardware" class="ghost">Connect hardware wallet</button>
-      </div>`;
+        ${canConnect ? '<button id="bConnect" class="ghost">Connect an existing wallet</button>' : ''}
+      </div>
+      ${canConnect ? '<p class="fine" style="margin-top:8px">Already have UniSat, OKX, or the Wonder Wallet extension? <b>Connect an existing wallet</b> to use the Terminal with your keys.</p>' : ''}`;
     $('#bCreate').onclick = flowCreate;
     $('#bRestore').onclick = flowRestore;
     $('#bHardware').onclick = () => window.HardwareWallet && window.HardwareWallet.connectFlow();
+    if (canConnect) $('#bConnect').onclick = connectWalletPicker;
     // Deep-link from the extension popup: #hardware auto-opens the Ledger connect flow (WebHID needs
     // this persistent full window). #restore jumps straight to the restore form.
     try {
@@ -111,7 +174,285 @@
     } catch (_) {}
   }
 
+  // Silent reconnect on page load: the injected provider may not be present on first paint (extensions
+  // inject async), so poll detect() briefly until the saved wallet appears, then reconnect once (no prompt).
+  async function tryReconnect() {
+    const WC = window.WalletConnect;
+    if (!(WC && WC.reconnect && WC.lastConnected)) return null;
+    const id = WC.lastConnected(); if (!id) return null;
+    for (let i = 0; i < 8; i++) {
+      const installed = (WC.detect() || []).some((w) => w.id === id);
+      if (installed) { try { return await WC.reconnect(id); } catch (_) { return null; } }
+      await new Promise((r) => setTimeout(r, 150)); // provider not injected yet — wait (~1.2s max)
+    }
+    return null; // wallet never appeared (uninstalled/disabled)
+  }
+
+  // ── Connect an existing wallet (UniSat / OKX / Wonder Wallet) via wallet-connect.js ──
+  function connectWalletPicker() {
+    const found = (window.WalletConnect ? WalletConnect.detect() : []);
+    const rows = found.length
+      ? found.map((w) => `<button class="wc-opt ghost" data-id="${esc(w.id)}" style="display:flex;justify-content:space-between;align-items:center;width:100%;margin:6px 0"><b>${esc(w.name)}</b><span class="fine">Connect →</span></button>`).join('')
+      : `<p class="fine">No supported wallet detected in this browser. Install <a href="https://unisat.io" target="_blank" rel="noopener">UniSat</a>, <a href="https://www.okx.com/web3" target="_blank" rel="noopener">OKX</a>, or the Wonder Wallet extension, then reload.</p>`;
+    const c = modal(`<h3 class="m-title">Connect a wallet</h3><p class="fine">Use an existing browser wallet to access your assets on the Terminal — read balances and sign transactions with your own keys.</p><div class="wc-list">${rows}</div><div class="wbtns"><button class="ghost" id="wcCancel">Cancel</button></div>`);
+    c.querySelector('#wcCancel').onclick = closeModal;
+    c.querySelectorAll('[data-id]').forEach((b) => (b.onclick = async () => {
+      const id = b.dataset.id; c.querySelectorAll('[data-id]').forEach((x) => (x.disabled = true)); b.querySelector('.fine').textContent = 'Connecting…';
+      try { CONN = await WalletConnect.connect(id); acctKind = 'connected'; watchId = null; closeModal(); render(); }
+      catch (e) { c.querySelectorAll('[data-id]').forEach((x) => (x.disabled = false)); b.querySelector('.fine').textContent = 'Failed — ' + (/rejected|4001/i.test(e.message || '') ? 'you declined' : (e.message || 'error')); }
+    }));
+  }
+  // Connected external wallet — reuse the SAME dashboard shell + loaders as the seed/hardware views, so it
+  // matches the web wallet exactly (portfolio card, Tokens/Collectibles tabs, styled rows, stamp grid).
+  // activeAddr() returns CONN.address for acctKind 'connected', so loadPortfolio/loadDashAssets just work.
+  async function renderConnected() {
+    const addr = CONN.address; dashChain = 'btc';
+    // Mirror the connected wallet's network: a Wonder extension in Testnet Mode grants a testnet
+    // address (tb1…/m/n/2…) — scope the Terminal to testnet so reads hit testnet4 and the banner shows.
+    // (Toggling here fires onChange→render, but the guard prevents a loop once already in sync.)
+    if (window.WWNet && addr) {
+      const tnAddr = /^(tb1|[mn2])/.test(String(addr));
+      if (tnAddr && !window.WWNet.isTestnet()) return window.WWNet.set('testnet');
+      if (!tnAddr && window.WWNet.isTestnet()) return window.WWNet.set('mainnet');
+    }
+    body().innerHTML = `
+      <div class="dash-head">
+        <div class="acct-sel"><div class="hw-acct">🔌 ${esc(CONN.name)} · connected</div></div>
+        <div class="dash-head-r"><button class="ghost sm" id="connDisc">Disconnect</button></div>
+      </div>
+      <div class="pf-strip" id="pfStrip">
+        <button class="pf-card on solo" data-ch="btc"><span class="pf-ch">Bitcoin · ${esc(CONN.name)}</span>
+          <span class="pf-usd" id="pfUsd-btc">…</span><span class="pf-nat" id="pfNat-btc">—</span></button>
+      </div>
+      <div class="dash-tabs">
+        <div class="dash-chaintabs"><button class="dctab on" disabled>Bitcoin</button></div>
+        <div class="dash-assettabs"><button class="datab${dashTab === 'tokens' ? ' on' : ''}" data-tab="tokens">Tokens</button><button class="datab${dashTab === 'collectibles' ? ' on' : ''}" data-tab="collectibles">Collectibles</button></div>
+      </div>
+      <div class="addr-row" style="margin:2px 0 8px"><span class="addr-chip" data-copy="${esc(addr)}" title="Copy address">${esc(shortA(addr))}</span></div>
+      <div id="dashAssets" class="dash-assets"><div class="fine">Loading Bitcoin assets…</div></div>
+      <div class="dash-actions wbtns" id="dashActions"></div>
+      <div class="fine" style="margin-top:8px;opacity:.85">🔌 Connected via ${esc(CONN.name)} — you compose here, ${esc(CONN.name)} signs &amp; broadcasts. Keys never leave your wallet.</div>`;
+    $('#connDisc').onclick = () => { try { CONN && CONN.disconnect(); } catch (_) {} try { WalletConnect.forget(); } catch (_) {} CONN = null; acctKind = 'hd'; render(); };
+    body().querySelectorAll('[data-copy]').forEach((el) => (el.onclick = () => copy(el.dataset.copy, el)));
+    body().querySelectorAll('.datab').forEach((b) => (b.onclick = () => { dashTab = b.dataset.tab; body().querySelectorAll('.datab').forEach((x) => x.classList.toggle('on', x === b)); renderDashAssets(null); }));
+    const bar = $('#dashActions');
+    bar.innerHTML = `<button class="primary sm" data-a="send">Send</button><button class="ghost sm" data-a="receive">Receive</button><button class="primary sm" data-a="cp">Counterparty</button><button class="ghost sm" data-a="dex">⇄ DEX</button><button class="ghost sm" data-a="issue">✦ Issuance</button><button class="ghost sm" data-a="activity">⧗ Activity</button><button class="ghost sm" data-a="coincontrol">Coin Control</button>`;
+    bar.querySelectorAll('[data-a]').forEach((b) => (b.onclick = () => {
+      const act = b.dataset.a;
+      if (act === 'send') renderConnectedSend();
+      else if (act === 'cp') { if (window.CpActions) window.CpActions.openConnected(CONN); }
+      else if (act === 'dex') { if (window.CpActions) window.CpActions.dexConnected(CONN); }
+      else if (act === 'issue') { if (window.CpActions) window.CpActions.issuanceSuiteConnected(CONN); }
+      else if (act === 'activity') openActivity(addr);
+      else if (act === 'coincontrol') { if (window.CoinControl) window.CoinControl.open(addr); }
+      else if (act === 'receive') { const c = modal(`<h3 class="m-title">Receive · ${esc(CONN.name)}</h3><p class="fine">Your connected Bitcoin address:</p><div class="vmono" style="word-break:break-all;background:var(--surface2,#17131f);padding:10px;border-radius:8px;margin:6px 0">${esc(addr)}</div><div class="wbtns"><button class="ghost" id="rcCopy">Copy address</button><button class="ghost" id="rcX">Close</button></div>`); c.querySelector('#rcX').onclick = closeModal; c.querySelector('#rcCopy').onclick = () => copy(addr, c.querySelector('#rcCopy')); }
+    }));
+    loadPortfolio(null); loadDashAssets(null);
+  }
+  function connBtcType(a) { if (/^bc1p/i.test(a)) return 'taproot'; if (/^bc1q/i.test(a)) return 'nativeSegwit'; if (/^3/.test(a)) return 'nestedSegwit'; if (/^1/.test(a)) return 'legacy'; return 'nativeSegwit'; }
+  function b64ToHex(b64) { const bin = atob(b64); let h = ''; for (let i = 0; i < bin.length; i++) h += (bin.charCodeAt(i) & 0xff).toString(16).padStart(2, '0'); return h; }
+  // Connected-wallet BTC send: WonderCore composes an UNSIGNED PSBT from the connected pubkey (asset-safe
+  // UTXO selection via coincontrol), the connected wallet signs + broadcasts. Keys never touch us.
+  async function renderConnectedSend() {
+    const from = CONN.address, type = connBtcType(from);
+    let fees = { fastestFee: 10, halfHourFee: 6, hourFee: 3, economyFee: 2 };
+    try { fees = await fetch('api/btc/fees').then((r) => r.json()); } catch (_) {}
+    let feeRate = fees.halfHourFee || 6;
+    // Fetch the spendable UTXO set + BTC price ONCE up front — powers the available balance, Max, and USD.
+    let spendable = [], spendableSats = 0, btcUsd = 0;
+    try { const cc = await fetch(`api/btc/${from}/coincontrol`).then((r) => r.json()); spendable = (cc.utxos || []).filter((u) => u.category === 'spendable' && !u.frozen && !u.timelocked).map((u) => ({ txid: u.txid, vout: u.vout, value: u.value })); spendableSats = spendable.reduce((a, u) => a + u.value, 0); } catch (_) {}
+    try { if (!isTN()) btcUsd = (await fetch('api/prices').then((r) => r.json())).bitcoin || 0; } catch (_) {}
+    const usd = (sats) => { const u = (Number(sats) / 1e8) * btcUsd; return u ? ' ≈ $' + u.toLocaleString('en-US', { maximumFractionDigits: 2 }) : ''; };
+    const availBtc = (spendableSats / 1e8).toLocaleString('en-US', { maximumFractionDigits: 8 });
+    const c = modal(`<h3 class="m-title">Send Bitcoin · ${esc(CONN.name)}</h3>
+      <div class="send-from">${esc(from)}</div>
+      <div class="fine" style="margin:6px 0"><b>Available:</b> ${availBtc} BTC${usd(spendableSats)} <span style="opacity:.7">· spendable</span></div>
+      <div class="fine">Only spendable UTXOs are used — asset-bearing / frozen outputs are never spent. You approve the signature in ${esc(CONN.name)}.</div>
+      <input id="cTo" class="m-in" placeholder="Recipient address (bc1q… / bc1p… / 1… / 3…)" spellcheck="false" autocapitalize="off" />
+      <div class="send-amt"><input id="cAmt" class="m-in" type="number" step="0.00000001" min="0" placeholder="Amount (BTC)" /><label class="send-max"><input type="checkbox" id="cMax" /> Max</label></div>
+      <div id="cAmtUsd" class="fine" style="min-height:16px"></div>
+      <div class="fee-row" id="cFeeRow">${[['fastestFee', 'Fast'], ['halfHourFee', '30m'], ['hourFee', '1h'], ['economyFee', 'Econ']].map(([k, l], i) => `<button class="feeopt ${i === 1 ? 'on' : ''}" data-r="${fees[k] || 5}">${l} · ${fees[k] || '–'}</button>`).join('')}<input id="cFee" class="m-in fee-custom" type="number" min="0.1" step="0.1" placeholder="custom s/vB" /></div>
+      <div id="cStatus" class="statusline" hidden></div>
+      <div class="wbtns"><button class="ghost" id="mc">Cancel</button><button class="primary" id="cReview">Review</button></div>`);
+    c.querySelector('#mc').onclick = closeModal;
+    const amtUsd = () => { const el = $('#cAmtUsd'); if (!el) return; const v = parseFloat($('#cAmt').value); el.textContent = (v > 0 && btcUsd) ? '≈ $' + (v * btcUsd).toLocaleString('en-US', { maximumFractionDigits: 2 }) : ''; };
+    $('#cAmt').oninput = amtUsd;
+    $('#cMax').onchange = () => { const on = $('#cMax').checked; const a = $('#cAmt'); a.disabled = on; if (on) a.value = (spendableSats / 1e8).toFixed(8); amtUsd(); };
+    c.querySelectorAll('.feeopt').forEach((b) => (b.onclick = () => { c.querySelectorAll('.feeopt').forEach((x) => x.classList.remove('on')); b.classList.add('on'); feeRate = Number(b.dataset.r); $('#cFee').value = ''; }));
+    $('#cFee').oninput = (e) => { if (e.target.value !== '') { const r = Number(e.target.value); if (r > 0) { feeRate = r; c.querySelectorAll('.feeopt').forEach((x) => x.classList.remove('on')); } } };
+    $('#cReview').onclick = async () => {
+      const s = $('#cStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Composing…';
+      try {
+        const RE_ADDR = /^(bc1[a-z0-9]{8,87}|[13][a-km-zA-HJ-NP-Z1-9]{25,39})$/;
+        const to = $('#cTo').value.trim();
+        if (!RE_ADDR.test(to)) throw new Error('Enter a valid Bitcoin address.');
+        const sendMax = $('#cMax').checked;
+        const amountSats = sendMax ? 0 : Math.round(parseFloat($('#cAmt').value) * 1e8);
+        if (!sendMax && !(amountSats > 0)) throw new Error('Enter a valid amount.');
+        if (!spendable.length) throw new Error('No spendable UTXOs on this address.');
+        const prevTxs = type === 'legacy' ? await fetchPrevTxs(type, spendable.map((u) => u.txid), s) : {};
+        const pk = CONN.publicKey || await CONN.getPublicKey();
+        if (!pk) throw new Error('Could not read your public key from ' + CONN.name + '.');
+        const tx = C.buildUnsignedSend({ pubkey: pk, type, utxos: spendable, recipient: to, amountSats, feeRate, sendMax, prevTxs });
+        connSendPreview(tx, to, btcUsd, feeRate);
+      } catch (err) { s.className = 'statusline err'; s.textContent = err.message === 'insufficient_funds' ? 'Insufficient spendable balance for that amount + fee.' : (err.message || 'Could not build transaction.'); }
+    };
+  }
+  function connSendPreview(tx, to, btcUsd, feeRate) {
+    const btc = (n) => (n / 1e8).toLocaleString('en-US', { maximumFractionDigits: 8 });
+    const usd = (sats) => { const u = (Number(sats) / 1e8) * (btcUsd || 0); return u ? ' ≈ $' + u.toLocaleString('en-US', { maximumFractionDigits: 2 }) : ''; };
+    const rate = tx.vsize ? (tx.fee / tx.vsize).toFixed(1) : String(feeRate || '');
+    const c = modal(`<h3 class="m-title">Confirm send</h3>
+      <div class="m-rows">
+        <div class="m-row"><span class="k">Send</span><span class="v">${btc(tx.amountSats)} BTC<span class="fine">${usd(tx.amountSats)}</span></span></div>
+        <div class="m-row" style="flex-direction:column;align-items:flex-start;gap:3px"><span class="k">To</span><span class="v vmono" data-copy="${esc(to)}" title="Copy address" style="white-space:nowrap;overflow-x:auto;max-width:100%;font-size:11px;cursor:pointer">${esc(to)}</span></div>
+        <div class="m-row"><span class="k">Network fee</span><span class="v">${tx.fee.toLocaleString('en-US')} sats${usd(tx.fee)}</span></div>
+        <div class="m-row"><span class="k">Fee rate</span><span class="v">≈ ${rate} sat/vB${tx.vsize ? ' · ' + tx.vsize + ' vB' : ''}</span></div>
+        <div class="m-row"><span class="k">Total (amount + fee)</span><span class="v">${btc(tx.amountSats + tx.fee)} BTC${usd(tx.amountSats + tx.fee)}</span></div>
+        ${tx.change != null && tx.change > 0 ? `<div class="m-row"><span class="k">Change back</span><span class="v">${btc(tx.change)} BTC</span></div>` : ''}
+        <div class="m-row"><span class="k">Inputs</span><span class="v">${(tx.inputs || []).length} UTXO${(tx.inputs || []).length === 1 ? '' : 's'}</span></div>
+      </div>
+      <div class="fine" style="margin-top:8px">Wonder Wallet composed this; ${esc(CONN.name)} will sign &amp; broadcast. Verify the details in ${esc(CONN.name)} too.</div>
+      <div id="cbStatus" class="statusline" hidden></div>
+      <div class="wbtns"><button class="ghost" id="cbBack">Back</button><button class="primary" id="cbSend">Sign in ${esc(CONN.name)}</button></div>`);
+    c.querySelectorAll('[data-copy]').forEach((el) => (el.onclick = () => copy(el.dataset.copy, el)));
+    c.querySelector('#cbBack').onclick = () => renderConnectedSend();
+    c.querySelector('#cbSend').onclick = () => connSubmit($('#cbStatus'), tx.psbt);
+  }
+  // Shared: hand a composed PSBT (hex OR base64) to the connected wallet to sign + broadcast, show the txid.
+  async function connSubmit(s, psbt) {
+    s.hidden = false; s.className = 'statusline load'; s.textContent = 'Waiting for approval in ' + CONN.name + '…';
+    try {
+      const psbtHex = /^[0-9a-fA-F]+$/.test(psbt) ? psbt : b64ToHex(psbt);
+      const signed = await CONN.signPsbt(psbtHex, { autoFinalized: true });
+      s.textContent = 'Broadcasting…';
+      let id;
+      if (signed && typeof signed === 'object' && signed.txhex) {
+        // Wonder Wallet's signPsbt(autoFinalized) returns the FINALIZED raw tx {txhex,txid}. Broadcast the
+        // raw tx via our server — no second wallet prompt (avoids the clunky extra "Broadcast" approval).
+        const r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then((x) => x.json());
+        if (r.error) throw new Error(r.detail || r.error);
+        id = r.txid || signed.txid;
+      } else {
+        // UniSat / OKX return a signed PSBT hex → let the wallet finalize + broadcast (its own one prompt).
+        const signedStr = typeof signed === 'string' ? signed : (signed && (signed.psbt || signed.hex)) || psbtHex;
+        const pushed = await CONN.pushPsbt(signedStr);
+        id = typeof pushed === 'string' ? pushed : (pushed && (pushed.txid || pushed.result)) || String(pushed);
+      }
+      s.className = 'statusline'; s.innerHTML = `Broadcast ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(id)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(id).slice(0, 18))}…</a>`;
+      setTimeout(() => { closeModal(); DASH_ASSETS = null; renderConnected(); }, 2600);
+    } catch (err) { const m = err && err.message ? err.message : String(err); s.className = 'statusline err'; s.textContent = 'Failed: ' + (/reject|cancel|4001|denied/i.test(m) ? 'you declined in ' + CONN.name : m); }
+  }
+  // Cached BTC price for connected-wallet confirm screens (USD on network fees).
+  let _connBtcUsd = 0;
+  async function connPrice() { if (isTN()) return 0; if (!_connBtcUsd) { try { _connBtcUsd = (await fetch('api/prices').then((r) => r.json())).bitcoin || 0; } catch (_) {} } return _connBtcUsd; }
+  const usdSats = (sats) => { const u = (Number(sats) / 1e8) * _connBtcUsd; return u ? ` <span class="fine">≈ $${u.toLocaleString('en-US', { maximumFractionDigits: 2 })}</span>` : ''; };
+  // Connected-wallet SRC-20 transfer: compose via stampchain (op:transfer) → connected wallet signs + broadcasts.
+  async function renderConnectedSrc20Send(tick, avail) {
+    const from = CONN.address;
+    let fees = { fastestFee: 10, halfHourFee: 6, hourFee: 3, economyFee: 2 };
+    try { fees = await fetch('api/btc/fees').then((r) => r.json()); } catch (_) {}
+    try { await connPrice(); } catch (_) {}
+    let feeRate = fees.halfHourFee || 6;
+    const c = modal(`<h3 class="m-title">Send ${esc(tick)} · ${esc(CONN.name)}</h3>
+      <div class="fine">SRC-20 transfer · from <span class="vmono">${esc(from.slice(0, 14))}…</span></div>
+      <div class="fine" style="margin:6px 0"><b>You hold:</b> ${esc(String(avail))} ${esc(tick)}</div>
+      <input id="tTo" class="m-in" placeholder="Recipient address (bc1q… / 1… )" spellcheck="false" autocapitalize="off" />
+      <input id="tAmt" class="m-in" type="number" step="any" min="0" placeholder="Amount of ${esc(tick)}" />
+      <div class="fee-row" id="tFeeRow">${[['fastestFee', 'Fast'], ['halfHourFee', '30m'], ['hourFee', '1h'], ['economyFee', 'Econ']].map(([k, l], i) => `<button class="feeopt ${i === 1 ? 'on' : ''}" data-r="${fees[k] || 5}">${l} · ${fees[k] || '–'}</button>`).join('')}<input id="tFee" class="m-in fee-custom" type="number" min="0.1" step="0.1" placeholder="custom s/vB" /></div>
+      <div id="tStatus" class="statusline" hidden></div>
+      <div class="wbtns"><button class="ghost" id="mc">Cancel</button><button class="primary" id="tReview">Review</button></div>`);
+    c.querySelector('#mc').onclick = closeModal;
+    c.querySelectorAll('.feeopt').forEach((b) => (b.onclick = () => { c.querySelectorAll('.feeopt').forEach((x) => x.classList.remove('on')); b.classList.add('on'); feeRate = Number(b.dataset.r); $('#tFee').value = ''; }));
+    $('#tFee').oninput = (e) => { if (e.target.value !== '') { const r = Number(e.target.value); if (r > 0) { feeRate = r; c.querySelectorAll('.feeopt').forEach((x) => x.classList.remove('on')); } } };
+    $('#tReview').onclick = async () => {
+      const s = $('#tStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Composing via stampchain…';
+      try {
+        const RE_ADDR = /^(bc1[a-z0-9]{8,87}|[13][a-km-zA-HJ-NP-Z1-9]{25,39})$/;
+        const to = $('#tTo').value.trim();
+        if (!RE_ADDR.test(to)) throw new Error('Enter a valid Bitcoin address.');
+        const amt = parseFloat($('#tAmt').value);
+        if (!(amt > 0)) throw new Error('Enter an amount greater than 0.');
+        const av = parseFloat(String(avail).replace(/,/g, '')); if (av && amt > av) throw new Error('You only hold ' + avail + ' ' + tick + '.');
+        const params = { op: 'transfer', tick, satsPerVB: feeRate, amt: String(amt), toAddress: to };
+        const r = await fetch('api/stamps/src20/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: from, params }) }).then((x) => x.json());
+        if (r.error) throw new Error(r.detail || r.error);
+        connSrc20Preview(r, tick, amt, to, avail);
+      } catch (err) { s.className = 'statusline err'; s.textContent = /No spendable|compose_failed/i.test(err.message) ? 'Insufficient BTC on this address to compose the transfer.' : (err.message || 'Could not compose transfer.'); }
+    };
+  }
+  function connSrc20Preview(r, tick, amt, to, avail) {
+    const c = modal(`<h3 class="m-title">Confirm SRC-20 transfer</h3>
+      <div class="m-rows">
+        <div class="m-row"><span class="k">Send</span><span class="v">${esc(String(amt))} ${esc(tick)}</span></div>
+        <div class="m-row" style="flex-direction:column;align-items:flex-start;gap:3px"><span class="k">To</span><span class="v vmono" data-copy="${esc(to)}" title="Copy address" style="white-space:nowrap;overflow-x:auto;max-width:100%;font-size:11px;cursor:pointer">${esc(to)}</span></div>
+        <div class="m-row"><span class="k">Network fee</span><span class="v">${Number(r.fee).toLocaleString('en-US')} sats${r.vsize ? ' · ' + r.vsize + ' vB' : ''}${usdSats(r.fee)}</span></div>
+      </div>
+      <div class="fine" style="margin-top:8px">Permanent on-chain SRC-20 transfer. ${esc(CONN.name)} will sign &amp; broadcast — verify the details there too.</div>
+      <div id="tbStatus" class="statusline" hidden></div>
+      <div class="wbtns"><button class="ghost" id="tbBack">Back</button><button class="primary" id="tbSend">Sign in ${esc(CONN.name)}</button></div>`);
+    c.querySelectorAll('[data-copy]').forEach((el) => (el.onclick = () => copy(el.dataset.copy, el)));
+    c.querySelector('#tbBack').onclick = () => renderConnectedSrc20Send(tick, avail);
+    c.querySelector('#tbSend').onclick = () => connSubmit($('#tbStatus'), r.hex);
+  }
+  // Connected-wallet Counterparty asset send: compose via CP Core (server) → connected wallet signs + broadcasts.
+  async function renderConnectedCpSend(t) {
+    const from = CONN.address, asset = t.asset;
+    let info = {}; try { info = await fetch('api/cp/asset/' + encodeURIComponent(asset)).then((r) => r.json()); } catch (_) {}
+    const divisible = info.divisible != null ? !!info.divisible : !!t.divisible;
+    let fees = { fastestFee: 10, halfHourFee: 6, hourFee: 3, economyFee: 2 };
+    try { fees = await fetch('api/btc/fees').then((r) => r.json()); } catch (_) {}
+    try { await connPrice(); } catch (_) {}
+    let feeRate = fees.halfHourFee || 6;
+    const c = modal(`<h3 class="m-title">Send ${esc(t.name)} · ${esc(CONN.name)}</h3>
+      <div class="fine">Counterparty · from <span class="vmono">${esc(from.slice(0, 14))}…</span></div>
+      <div class="fine" style="margin:6px 0"><b>You hold:</b> ${esc(String(t.amount))} ${esc(t.name)}${divisible ? '' : ' · indivisible'}</div>
+      <input id="pTo" class="m-in" placeholder="Recipient address (bc1q… / 1… )" spellcheck="false" autocapitalize="off" />
+      <input id="pAmt" class="m-in" type="number" step="${divisible ? 'any' : '1'}" min="0" placeholder="Quantity of ${esc(t.name)}" />
+      <input id="pMemo" class="m-in" placeholder="Memo (optional)" maxlength="34" />
+      <div class="fee-row" id="pFeeRow">${[['fastestFee', 'Fast'], ['halfHourFee', '30m'], ['hourFee', '1h'], ['economyFee', 'Econ']].map(([k, l], i) => `<button class="feeopt ${i === 1 ? 'on' : ''}" data-r="${fees[k] || 5}">${l} · ${fees[k] || '–'}</button>`).join('')}<input id="pFee" class="m-in fee-custom" type="number" min="0.1" step="0.1" placeholder="custom s/vB" /></div>
+      <div id="pStatus" class="statusline" hidden></div>
+      <div class="wbtns"><button class="ghost" id="mc">Cancel</button><button class="primary" id="pReview">Review</button></div>`);
+    c.querySelector('#mc').onclick = closeModal;
+    c.querySelectorAll('.feeopt').forEach((b) => (b.onclick = () => { c.querySelectorAll('.feeopt').forEach((x) => x.classList.remove('on')); b.classList.add('on'); feeRate = Number(b.dataset.r); $('#pFee').value = ''; }));
+    $('#pFee').oninput = (e) => { if (e.target.value !== '') { const r = Number(e.target.value); if (r > 0) { feeRate = r; c.querySelectorAll('.feeopt').forEach((x) => x.classList.remove('on')); } } };
+    $('#pReview').onclick = async () => {
+      const s = $('#pStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Composing via Counterparty…';
+      try {
+        const RE_ADDR = /^(bc1[a-z0-9]{8,87}|[13][a-km-zA-HJ-NP-Z1-9]{25,39})$/;
+        const to = $('#pTo').value.trim();
+        if (!RE_ADDR.test(to)) throw new Error('Enter a valid Bitcoin address.');
+        const amt = parseFloat($('#pAmt').value);
+        if (!(amt > 0)) throw new Error('Enter a quantity greater than 0.');
+        const av = parseFloat(String(t.amount).replace(/,/g, '')); if (av && amt > av) throw new Error('You only hold ' + t.amount + ' ' + t.name + '.');
+        const quantity = divisible ? Math.round(amt * 1e8) : Math.round(amt);
+        const memo = $('#pMemo').value.trim();
+        const params = { destination: to, asset, quantity, sat_per_vbyte: feeRate };
+        if (memo) params.memo = memo;
+        const composed = await fetch('api/cp/compose/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: from, params }) }).then((r) => r.json());
+        if (composed.error) throw new Error(composed.detail || composed.error);
+        connCpPreview(composed, t, amt, to);
+      } catch (err) { s.className = 'statusline err'; s.textContent = /insufficient/i.test(err.message || '') ? 'Insufficient balance (asset, or BTC for fees) on this address.' : (err.message || 'Compose failed.'); }
+    };
+  }
+  function connCpPreview(cx, t, amt, to) {
+    const c = modal(`<h3 class="m-title">Confirm · Send ${esc(t.name)}</h3>
+      <div class="m-rows">
+        <div class="m-row"><span class="k">Send</span><span class="v">${esc(String(amt))} ${esc(t.name)}</span></div>
+        <div class="m-row" style="flex-direction:column;align-items:flex-start;gap:3px"><span class="k">To</span><span class="v vmono" data-copy="${esc(to)}" title="Copy address" style="white-space:nowrap;overflow-x:auto;max-width:100%;font-size:11px;cursor:pointer">${esc(to)}</span></div>
+        <div class="m-row"><span class="k">Miner fee</span><span class="v">${(cx.btc_fee != null ? Number(cx.btc_fee).toLocaleString('en-US') : '—')} sats${cx.signed_tx_estimated_size && cx.signed_tx_estimated_size.vsize ? ' · ' + cx.signed_tx_estimated_size.vsize + ' vB' : ''}${cx.btc_fee != null ? usdSats(cx.btc_fee) : ''}</span></div>
+      </div>
+      ${cx.data ? `<div class="fine" style="margin-top:6px">Counterparty data: <code style="word-break:break-all">${esc(String(cx.data).slice(0, 48))}${String(cx.data).length > 48 ? '…' : ''}</code></div>` : ''}
+      <div class="fine" style="margin-top:6px">Permanent on-chain Counterparty transfer. ${esc(CONN.name)} will sign &amp; broadcast — verify the details there too.</div>
+      <div id="pbStatus" class="statusline" hidden></div>
+      <div class="wbtns"><button class="ghost" id="pbBack">Back</button><button class="primary" id="pbSend">Sign in ${esc(CONN.name)}</button></div>`);
+    c.querySelectorAll('[data-copy]').forEach((el) => (el.onclick = () => copy(el.dataset.copy, el)));
+    c.querySelector('#pbBack').onclick = () => renderConnectedCpSend(t);
+    c.querySelector('#pbSend').onclick = () => connSubmit($('#pbStatus'), cx.psbt);
+  }
+
   function renderLocked() {
+    syncNetBadge(false, false); // clean hero — nothing on the unlock screen
     body().innerHTML = `
       <p class="fine">Your encrypted wallet is locked. Enter your password to unlock.</p>
       <form id="unlockForm" class="row">
@@ -131,6 +472,8 @@
 
   // ── Dashboard state ──
   let curAccount = 0, acctKind = 'hd', watchId = null, dashChain = 'btc', dashTab = 'tokens';
+  let CONN = null; // a connected external wallet (UniSat / OKX / Wonder Wallet) via wallet-connect.js
+  function isConn() { return acctKind === 'connected' && !!CONN; } // connected external-wallet session (no local keys)
   let DASH_PRICES = {}, DASH_ASSETS = null, dashSeq = 0, _vaultDL = false;
   // ── Privacy view — masks balances / values across BTC · ETH · SOL. Shares the extension's key. ──
   let PRIVACY = false; try { PRIVACY = localStorage.getItem('ww:privacy') === '1'; } catch (_) {}
@@ -166,6 +509,11 @@
     paintPortfolio(); if (DASH_ASSETS) renderDashAssets(DASH_ACC); // repaint token amounts from cache
   }
   // Inject the privacy toggle into the topbar once (works for both the web /app and the extension expanded view).
+  // Show/hide the wallet-only topbar tools (dApps, Backup, privacy eye). They're meaningless before a
+  // wallet is open, so they stay hidden on the create / restore / connect / unlock screens.
+  function setTopbarTools(show) {
+    ['dappsBtn', 'backupBtn', 'privacyBtn'].forEach((id) => { const el = document.getElementById(id); if (el) el.style.display = show ? '' : 'none'; });
+  }
   function ensurePrivacyBtn() {
     if ($('#privacyBtn')) return;
     const meta = document.querySelector('.topbar .meta'); if (!meta) return;
@@ -215,6 +563,7 @@
   const canSignBtc = () => acctKind === 'hd' || acctKind === 'imported';
   function impBtcAddr() { const im = currentImported(); return im ? (im.bitcoin[impBtcType(impId)] || im.bitcoin.nativeSegwit).address : null; }
   function activeAddr(acc, ch) {
+    if (acctKind === 'connected' && CONN) return ch === 'btc' ? CONN.address : null; // external wallet = BTC address
     if (acctKind === 'hardware') return ch === 'btc' ? (hwViewAddr || hwAddr(hwBtcType)) : (HW && HW[ch] ? HW[ch].address : null);
     const w = currentWatch(); if (w) return CHAIN_OF[w.chain] === ch ? w.address : null;
     if (acctKind === 'imported') return ch === 'btc' ? impBtcAddr() : null;
@@ -222,12 +571,13 @@
   }
 
   function renderUnlocked() {
+    syncNetBadge(true, true); // local vault: banner + toggle chip inside the open wallet (mounted into the card header)
     // Resolve the active account: HD (own keys) or watch-only (read-only, no signing).
     let watch = null;
     if (acctKind === 'watch') { watch = currentWatch(); if (!watch) acctKind = 'hd'; else dashChain = CHAIN_OF[watch.chain] || dashChain; }
     if (acctKind === 'imported') { if (!currentImported()) acctKind = 'hd'; else dashChain = 'btc'; }
     let acc = null;
-    if (acctKind === 'hd') { try { acc = C.accounts(curAccount, 0); } catch (_) { return render(); } }
+    if (acctKind === 'hd') { try { acc = C.accounts(curAccount, 0, NET()); } catch (_) { return render(); } }
     else if (acctKind === 'imported') { const im = currentImported(); if (im) acc = { account: 0, importedId: impId, bitcoin: im.bitcoin, ethereum: null, solana: null, imported: true }; }
     window.__activeAccount = acc; // watch-only → null; imported → synthetic {importedId, bitcoin}
     const acctNames = loadMap(ACCT_NAMES);
@@ -444,7 +794,7 @@
     if (!acct || !acct.pub || !acct.chainCode) { hwAggregate = false; return renderHardware(); }
     let derived; try { derived = C.deriveReceiveAddrs(acct.pub, acct.chainCode, bt, 20, 0); }
     catch (_) { hwAggregate = false; return renderHardware(); }
-    if (!DASH_PRICES || !DASH_PRICES.bitcoin) { try { DASH_PRICES = await fetch('api/prices').then((r) => r.json()); } catch (_) {} }
+    if (!isTN() && (!DASH_PRICES || !DASH_PRICES.bitcoin)) { try { DASH_PRICES = await fetch('api/prices').then((r) => r.json()); } catch (_) {} }
     const box = $('#dashAssets');
     let btcTotal = 0, done = 0;
     const tokMap = new Map(); const colls = []; const used = []; let primaryName = null;
@@ -617,7 +967,7 @@
   function btcTypeMenu() {
     let addrs, curType, setType, title;
     if (acctKind === 'imported') { const im = currentImported(); if (!im) return; addrs = im.bitcoin; curType = impBtcType(impId); setType = (t) => setImpBtcType(impId, t); title = 'Bitcoin address type · imported'; }
-    else { let acc; try { acc = C.accounts(curAccount, 0); } catch (_) { return; } addrs = acc.bitcoin; curType = acctBtcType(curAccount); setType = (t) => setAcctBtcType(curAccount, t); title = `Bitcoin address type · Account ${curAccount}`; }
+    else { let acc; try { acc = C.accounts(curAccount, 0, NET()); } catch (_) { return; } addrs = acc.bitcoin; curType = acctBtcType(curAccount); setType = (t) => setAcctBtcType(curAccount, t); title = `Bitcoin address type · Account ${curAccount}`; }
     modal(`<h3 class="m-title">${title}</h3>
       <div class="adv-menu">${BTC_TYPES.map(([t, l]) => `<button class="adv-opt${t === curType ? ' on' : ''}" data-t="${t}"><b>${l}</b><span class="vmono">${esc((addrs[t] || {}).address || '')}</span></button>`).join('')}</div>
       <div class="wbtns"><button class="ghost" id="btClose">Close</button></div>`);
@@ -675,8 +1025,8 @@
 
   // Portfolio strip — native balance + USD per chain (or the single watched chain), plus a grand total.
   async function loadPortfolio(acc) {
-    try { if (!DASH_PRICES.bitcoin) DASH_PRICES = await fetch('api/prices').then((r) => r.json()); } catch (_) {}
-    const chains = (acctKind === 'watch' || acctKind === 'imported' || acctKind === 'hardware') ? [dashChain] : ['btc', 'eth', 'sol'];
+    try { if (!isTN() && !DASH_PRICES.bitcoin) DASH_PRICES = await fetch('api/prices').then((r) => r.json()); } catch (_) {}
+    const chains = (acctKind === 'watch' || acctKind === 'imported' || acctKind === 'hardware' || acctKind === 'connected') ? [dashChain] : ['btc', 'eth', 'sol'];
     const natOf = (ch, addr) => {
       if (!addr) return Promise.resolve(0);
       if (ch === 'btc') return fetch('api/btc/' + encodeURIComponent(addr)).then((r) => r.json()).then((d) => (d.balanceSats || 0) / 1e8).catch(() => 0);
@@ -758,19 +1108,26 @@
     if (!DASH_ASSETS) { box.innerHTML = '<div class="fine">Loading…</div>'; return; }
     if (dashTab === 'tokens') {
       if (!DASH_ASSETS.tokens.length) { box.innerHTML = `<div class="dash-empty">No tokens on this ${esc(DCH[dashChain].name)} address.</div>`; return; }
-      box.innerHTML = `<table class="asset-table"><thead><tr><th>Asset</th><th>Balance</th><th></th></tr></thead><tbody>${DASH_ASSETS.tokens.map((t, i) => {
+      const nTok = DASH_ASSETS.tokens.length;
+      box.innerHTML = `<div class="tok-grid-wrap" style="max-height:430px;overflow-y:auto;padding-right:2px">
+        <div class="tok-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px">${DASH_ASSETS.tokens.map((t, i) => {
         const ic = t.img ? `<img class="at-ic" loading="lazy" src="api/img?url=${encodeURIComponent(t.img)}"/>`
           : (t.kind === 'cp' && t.asset ? `<img class="at-ic" loading="lazy" alt="" src="api/cp/assetimg/${encodeURIComponent(t.asset)}" data-cpic="${esc(String(t.name || '?').slice(0, 2))}"/>`
             : `<span class="at-ic ph">${esc(String(t.name || '?').slice(0, 2))}</span>`);
-        const act = acc && t.kind === 'src20' ? `<button class="mini" data-send="${i}">Send</button>` : (t.kind === 'cp' ? `<button class="mini" data-cp="${i}">View</button>` : '');
-        const nameCell = t.kind === 'cp' ? `<td class="at-name at-cp" data-cprow="${i}" title="View asset">${ic}<span>${esc(t.name)}</span></td>` : `<td class="at-name">${ic}<span>${esc(t.name)}</span></td>`;
-        return `<tr>${nameCell}<td class="at-amt">${esc(mask(String(t.amount)))}</td><td class="at-act">${act}</td></tr>`;
-      }).join('')}</tbody></table>`;
+        const act = ((acc || acctKind === 'connected') && t.kind === 'src20') ? `<button class="mini" data-send="${i}">Send</button>` : (t.kind === 'cp' ? (acctKind === 'connected' ? `<button class="mini" data-cpsend="${i}">Send</button>` : `<button class="mini" data-cp="${i}">View</button>`) : '');
+        const nameAttr = t.kind === 'cp' ? ` data-cprow="${i}" title="View asset" style="cursor:pointer;display:flex;align-items:center;gap:8px;flex:1;min-width:0"` : ` style="display:flex;align-items:center;gap:8px;flex:1;min-width:0"`;
+        return `<div class="tok-cell" style="background:var(--surface2,#17131f);border:1px solid var(--border,#2a2436);border-radius:9px;padding:8px 10px;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px"><span${nameAttr}>${ic}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.name)}</span></span>${act}</div>
+          <div class="at-amt" style="font-weight:600;font-size:13px;margin-top:4px;word-break:break-all;opacity:.92">${esc(mask(String(t.amount)))}</div></div>`;
+      }).join('')}</div></div>
+        ${nTok > 20 ? `<button class="ghost sm" id="tokExpand" style="margin-top:8px;width:100%">Show all ${nTok}</button>` : ''}`;
       const assetFrom = acctKind === 'imported' ? impBtcAddr() : (acc && acc.bitcoin ? acc.bitcoin.nativeSegwit.address : null);
-      box.querySelectorAll('[data-send]').forEach((b) => (b.onclick = () => { const t = DASH_ASSETS.tokens[+b.dataset.send]; if (t && window.MintingModules) window.MintingModules.sendSrc20(acc.account, assetFrom, t.tick); }));
+      box.querySelectorAll('[data-send]').forEach((b) => (b.onclick = () => { const t = DASH_ASSETS.tokens[+b.dataset.send]; if (!t) return; if (acctKind === 'connected') renderConnectedSrc20Send(t.tick, t.amount); else if (window.MintingModules) window.MintingModules.sendSrc20(acc.account, assetFrom, t.tick); }));
       const openCp = (i) => { const t = DASH_ASSETS.tokens[+i]; if (t) cpTokenDetailModal(t, acc); };
       box.querySelectorAll('[data-cp]').forEach((b) => (b.onclick = () => openCp(b.dataset.cp)));
       box.querySelectorAll('[data-cprow]').forEach((el) => (el.onclick = () => openCp(el.dataset.cprow)));
+      const tExp = $('#tokExpand'); if (tExp) tExp.onclick = () => { const w = box.querySelector('.tok-grid-wrap'); if (!w) return; const collapsed = w.style.maxHeight !== 'none'; w.style.maxHeight = collapsed ? 'none' : '430px'; tExp.textContent = collapsed ? 'Collapse' : 'Show all ' + DASH_ASSETS.tokens.length; };
+      box.querySelectorAll('[data-cpsend]').forEach((b) => (b.onclick = () => { const t = DASH_ASSETS.tokens[+b.dataset.cpsend]; if (t) renderConnectedCpSend(t); }));
       // CP token icons are embedded <img> so the extension shim can rewrite the relative api/ src
       // (a JS-set new Image().src is invisible to the shim). If art doesn't resolve, drop back to the
       // 2-letter placeholder. Handle the already-errored case for fast 404s.
@@ -820,7 +1177,7 @@
   // mirroring the extension popup but with the Terminal's full Cp + Emblem modules behind it.
   // SRC-101 .btc name detail — image, resolution target, owner, expiry + manage actions.
   function nameDetailModal(n, acc) {
-    const btc = acc ? acc.bitcoin.nativeSegwit.address : null;
+    const btc = isConn() ? CONN.address : (acc ? acc.bitcoin.nativeSegwit.address : null);
     modal(`<div class="statusline load">Loading ${esc(n.name)}…</div>`);
     fetch('api/src101/resolve/' + encodeURIComponent(n.name)).then((r) => r.json()).then((d) => {
       let expStr = '—';
@@ -834,7 +1191,7 @@
             <div><span class="k">Expires</span><span class="v">${esc(expStr)}</span></div>
           </div>
           <div class="fine">Bitcoin Stamps SRC-101 · permanent on-chain name</div>
-          ${acc ? `<div class="m-actions">
+          ${(acc || isConn()) ? `<div class="m-actions">
             <button class="m-act" data-act="transfer">Transfer</button>
             <button class="m-act" data-act="setrecord">Set address</button>
             <button class="m-act" data-act="renew">Renew</button>
@@ -844,8 +1201,9 @@
       const card = $('#wmodalCard');
       const cp = card.querySelector('[data-copy]'); if (cp) cp.onclick = () => copy(cp.dataset.copy);
       $('#ndmClose').onclick = closeModal;
-      if (acc) card.querySelectorAll('.m-act').forEach((b) => (b.onclick = () => {
+      if (acc || isConn()) card.querySelectorAll('.m-act').forEach((b) => (b.onclick = () => {
         const act = b.dataset.act; closeModal();
+        if (isConn()) { if (window.Src101 && window.Src101.manageConnected) window.Src101.manageConnected(CONN, act, { name: n.name, deploy: n.deploy }); else window.open('https://bitname.pro', '_blank', 'noopener'); return; }
         if (window.Src101 && window.Src101.manage) window.Src101.manage(acc.account, btc, act, { name: n.name, deploy: n.deploy });
         else window.open('https://bitname.pro', '_blank', 'noopener');
       }));
@@ -853,7 +1211,7 @@
   }
 
   function stampDetailModal(n, acc) {
-    const btc = acctKind === 'imported' ? impBtcAddr() : acctKind === 'hardware' ? hwAddr(hwBtcType) : (acc && acc.bitcoin ? acc.bitcoin.nativeSegwit.address : null);
+    const btc = isConn() ? CONN.address : acctKind === 'imported' ? impBtcAddr() : acctKind === 'hardware' ? hwAddr(hwBtcType) : (acc && acc.bitcoin ? acc.bitcoin.nativeSegwit.address : null);
     modal(`<div class="statusline load">Loading stamp #${esc(String(n.stamp))}…</div>`);
     fetch('api/stamp/' + encodeURIComponent(n.stamp)).then((r) => r.json()).then((s) => {
       const cpid = s.cpid || n.cpid || '';
@@ -873,21 +1231,26 @@
           </div>
           <div class="m-row" data-copy="${esc(cpid)}" title="Copy CPID"><span class="k">CPID</span><span class="vmono">${esc(cpid || '—')}</span></div>
           <div class="fine">Creator ${esc(shortA(s.creator || '—'))}${s.fileSize ? ' · ' + fmtN(s.fileSize, 0) + ' B' : ''}</div>
-          ${acc ? `<div class="m-actions">
+          ${(acc || isConn()) ? `<div class="m-actions">
             <button class="m-act" data-act="send">Send</button>
             <button class="m-act" data-act="dispenser">Dispenser</button>
             <button class="m-act" data-act="dividend">Dividend</button>
             <button class="m-act danger" data-act="burn">Burn</button>
             <button class="m-act" data-act="attach">Attach</button>
-            ${acctKind === 'imported' ? '' : '<button class="m-act gold" data-act="vault">Vault</button>'}
+            ${(acctKind === 'imported' || isConn()) ? '' : '<button class="m-act gold" data-act="vault">Vault</button>'}
           </div>` : '<div class="fine" style="margin-top:6px">Watch-only — switch to your own account for Send / Dispenser / Dividend / Burn / Attach / Vault.</div>'}
         </div>
         <div class="wbtns"><button class="ghost" id="sdmClose">Close</button></div>`);
       const card = $('#wmodalCard');
       const cp = card.querySelector('[data-copy]'); if (cp) cp.onclick = () => copy(cp.dataset.copy);
       $('#sdmClose').onclick = closeModal;
-      if (acc) card.querySelectorAll('.m-act').forEach((b) => (b.onclick = () => {
+      if (acc || isConn()) card.querySelectorAll('.m-act').forEach((b) => (b.onclick = () => {
         const act = b.dataset.act; closeModal();
+        if (isConn()) { // connected external wallet signs (Burn maps to the CP destroy compose)
+          if (act === 'attach') { if (window.CpActions) window.CpActions.attachDetachConnected(CONN, { asset: cpid, qty: 1 }); }
+          else if (window.CpActions) window.CpActions.quickConnected(CONN, act === 'burn' ? 'destroy' : act, { asset: cpid });
+          return;
+        }
         if (act === 'send') window.CpActions && window.CpActions.quick(acc.account, btc, 'send', { asset: cpid });
         else if (act === 'dispenser') window.CpActions && window.CpActions.quick(acc.account, btc, 'dispenser', { asset: cpid });
         else if (act === 'dividend') window.CpActions && window.CpActions.quick(acc.account, btc, 'dividend', { asset: cpid });
@@ -906,7 +1269,7 @@
   // Counterparty token detail — full-res art preview + metadata + the same power tools a stamp gets
   // (Send · Dispenser · Dividend · Destroy · Vault). Mirrors the extension popup's asset-detail window.
   function cpTokenDetailModal(t, acc) {
-    const btc = acctKind === 'imported' ? impBtcAddr() : acctKind === 'hardware' ? hwAddr(hwBtcType) : (acc && acc.bitcoin ? acc.bitcoin.nativeSegwit.address : null);
+    const btc = isConn() ? CONN.address : acctKind === 'imported' ? impBtcAddr() : acctKind === 'hardware' ? hwAddr(hwBtcType) : (acc && acc.bitcoin ? acc.bitcoin.nativeSegwit.address : null);
     const cpid = t.asset;
     const held = (t.amount != null ? Number(t.amount) : null);
     modal(`<div class="statusline load">Loading ${esc(t.name || cpid)}…</div>`);
@@ -928,13 +1291,13 @@
           </div>
           <div class="m-row" data-copy="${esc(cpid)}" title="Copy asset name"><span class="k">Asset</span><span class="vmono">${esc(cpid)}</span></div>
           <div class="fine">Counterparty asset</div>
-          ${acc ? `<div class="m-actions">
+          ${(acc || isConn()) ? `<div class="m-actions">
             <button class="m-act" data-act="send">Send</button>
             <button class="m-act" data-act="dispenser">Dispenser</button>
             <button class="m-act" data-act="dividend">Dividend</button>
             <button class="m-act danger" data-act="destroy">Destroy</button>
             <button class="m-act" data-act="attach">Attach</button>
-            ${acctKind === 'imported' ? '' : '<button class="m-act gold" data-act="vault">Vault</button>'}
+            ${(acctKind === 'imported' || isConn()) ? '' : '<button class="m-act gold" data-act="vault">Vault</button>'}
           </div>` : '<div class="fine" style="margin-top:6px">Watch-only — switch to your own account for Send / Dispenser / Dividend / Destroy / Attach / Vault.</div>'}
         </div>
         <div class="wbtns"><button class="ghost" id="ctmClose">Close</button></div>`);
@@ -944,8 +1307,13 @@
       if (art) { const fail = () => { try { art.remove(); } catch (e) {} if (dsc) dsc.style.display = ''; }; art.onerror = fail; if (art.complete && !art.naturalWidth) fail(); }
       const cp = card.querySelector('[data-copy]'); if (cp) cp.onclick = () => copy(cp.dataset.copy);
       $('#ctmClose').onclick = closeModal;
-      if (acc) card.querySelectorAll('.m-act').forEach((b) => (b.onclick = () => {
+      if (acc || isConn()) card.querySelectorAll('.m-act').forEach((b) => (b.onclick = () => {
         const act = b.dataset.act; closeModal();
+        if (isConn()) { // connected external wallet signs — route through the EXT-aware CP entries
+          if (act === 'attach') { if (window.CpActions) window.CpActions.attachDetachConnected(CONN, { asset: cpid, qty: 1 }); }
+          else if (window.CpActions) window.CpActions.quickConnected(CONN, act, { asset: cpid });
+          return;
+        }
         if (act === 'vault') {
           if (window.EmblemBridge) (window.EmblemBridge.vaultAsset
             ? window.EmblemBridge.vaultAsset(acc.account, acc.ethereum.address, btc, cpid, { label: t.name || cpid })
@@ -998,7 +1366,7 @@
           if (!/^0x[0-9a-fA-F]{40}$/.test(to)) throw new Error('Enter a valid 0x recipient.');
           const from = acc.ethereum.address;
           const data = n.tokenType === 'ERC1155' ? erc1155Data(from, to, n.tokenId, 1) : erc721Data(from, to, n.tokenId);
-          const prep = await fetch('api/eth/prepare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: n.contract, valueWei: '0x0', data, network: 'ethereum' }) }).then((r) => r.json());
+          const prep = await fetch('api/eth/prepare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to: n.contract, valueWei: '0x0', data, network: (window.WWNet ? window.WWNet.evm() : 'ethereum') }) }).then((r) => r.json());
           if (prep.error) throw new Error(prep.detail || prep.error);
           const signed = C.sendEvm({ account: acc.account, to: n.contract, valueWei: '0x0', data, nonce: prep.nonce, chainId: prep.chainId, maxFeePerGas: prep.maxFeePerGas, maxPriorityFeePerGas: prep.maxPriorityFeePerGas, gasLimit: prep.gasLimit });
           const gasEth = Number(BigInt(prep.gasLimit) * BigInt(prep.maxFeePerGas)) / 1e18;
@@ -1033,7 +1401,7 @@
       const s = $('#nfcStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Broadcasting…';
       try {
         let r, id;
-        if (x.kind === 'eth') { r = await fetch('api/eth/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raw: x.signed.raw, network: 'ethereum' }) }).then((z) => z.json()); id = r.txhash; }
+        if (x.kind === 'eth') { r = await fetch('api/eth/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raw: x.signed.raw, network: (window.WWNet ? window.WWNet.evm() : 'ethereum') }) }).then((z) => z.json()); id = r.txhash; }
         else { r = await fetch('api/sol/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txBase64: x.signed.txBase64 }) }).then((z) => z.json()); id = r.signature; }
         if (r.error) throw new Error(r.detail || r.error);
         s.className = 'statusline load'; s.innerHTML = `Sent ✓ — <span style="color:var(--green)">${esc(String(id).slice(0, 20))}…</span>`;
@@ -1054,13 +1422,13 @@
     if (acctKind === 'imported') {
       // Imported keys sign with their own WIF — full BTC toolset (Counterparty, SRC-20, stamps via dApps).
       // Emblem bridge is omitted (it needs an ETH address the imported BTC key doesn't have).
-      bar.innerHTML = [`<button class="primary sm" data-a="send">Send BTC</button>`, `<button class="ghost sm" data-a="receive">Receive</button>`, `<button class="primary sm" data-a="cp">Counterparty</button>`, `<button class="ghost sm" data-a="coincontrol">Coin Control</button>`, `<button class="ghost sm" data-a="activity">⧗ Activity</button>`, `<button class="ghost sm" data-a="dapps">dApps</button>`].join('');
+      bar.innerHTML = [`<button class="primary sm" data-a="send">Send BTC</button>`, `<button class="ghost sm" data-a="receive">Receive</button>`, `<button class="primary sm" data-a="cp">Counterparty</button>`, `<button class="ghost sm" data-a="coincontrol">Coin Control</button>`, `<button class="ghost sm" data-a="activity">⧗ Activity</button>`, (window.DappDashboard ? `<button class="ghost sm" data-a="dapps">dApps</button>` : ``)].join('');
       bar.querySelectorAll('[data-a]').forEach((btn) => (btn.onclick = () => dashAction(btn.dataset.a, acc)));
       return;
     }
     const b = [`<button class="primary sm" data-a="send">Send ${DCH[dashChain].sym}</button>`, `<button class="ghost sm" data-a="receive">Receive</button>`];
-    if (dashChain === 'btc') { b.push(`<button class="primary sm" data-a="cp">Counterparty</button>`, `<button class="ghost sm" data-a="coincontrol">Coin Control</button>`, `<button class="ghost sm" data-a="activity">⧗ Activity</button>`, `<button class="ghost sm" data-a="dapps">dApps</button>`, `<button class="ghost sm" data-a="emblem">Emblem bridge</button>`); }
-    else if (dashChain === 'eth') { b.push(`<button class="ghost sm" data-a="dapps">dApps</button>`, `<button class="ghost sm" data-a="emblem">Emblem bridge</button>`); }
+    if (dashChain === 'btc') { b.push(`<button class="primary sm" data-a="cp">Counterparty</button>`, `<button class="ghost sm" data-a="coincontrol">Coin Control</button>`, `<button class="ghost sm" data-a="activity">⧗ Activity</button>`, (window.DappDashboard ? `<button class="ghost sm" data-a="dapps">dApps</button>` : ``), `<button class="ghost sm" data-a="emblem">Emblem bridge</button>`); }
+    else if (dashChain === 'eth') { b.push((window.DappDashboard ? `<button class="ghost sm" data-a="dapps">dApps</button>` : ``), `<button class="ghost sm" data-a="emblem">Emblem bridge</button>`); }
     bar.innerHTML = b.join('');
     bar.querySelectorAll('[data-a]').forEach((btn) => (btn.onclick = () => dashAction(btn.dataset.a, acc)));
   }
@@ -1356,7 +1724,7 @@
     $('#sFee').oninput = (e) => { if (e.target.value !== '') { const r = Number(e.target.value); if (r > 0) { feeRate = r; c.querySelectorAll('.feeopt').forEach((x) => x.classList.remove('on')); feeHint(r); } } };
     // Dispenser detection: if the recipient runs an open Counterparty dispenser, offer trigger quantities.
     let _dispT = null, btcUsd = 0;
-    try { btcUsd = (await fetch('api/prices').then((r) => r.json())).bitcoin || 0; } catch (_) {}
+    try { if (!isTN()) btcUsd = (await fetch('api/prices').then((r) => r.json())).bitcoin || 0; } catch (_) {}
     const sats = (n) => Number(n).toLocaleString('en-US');
     const toUsd = (satsAmt) => { const u = (satsAmt / 1e8) * btcUsd; return u ? ' ≈ $' + u.toLocaleString('en-US', { maximumFractionDigits: 2 }) : ''; };
     function renderDisp(d) {
@@ -1499,7 +1867,7 @@
       <div class="wbtns"><button class="ghost" id="mc">Close</button><button class="primary" id="bSignIt">Sign</button></div>`);
     $('#mc').onclick = closeModal;
     const typeSel = $('#smType'), addrEl = $('#smAddr');
-    const showAddr = () => { try { const t = typeSel.value; let addr; if (isImp) { const im = currentImported(); addr = im && im.bitcoin[t] ? im.bitcoin[t].address : ''; } else { const acc = C.accounts(curAccount, 0); addr = acc.bitcoin[t] ? acc.bitcoin[t].address : ''; } addrEl.textContent = addr ? ('address: ' + addr) : ''; } catch (e) { addrEl.textContent = ''; } };
+    const showAddr = () => { try { const t = typeSel.value; let addr; if (isImp) { const im = currentImported(); addr = im && im.bitcoin[t] ? im.bitcoin[t].address : ''; } else { const acc = C.accounts(curAccount, 0, NET()); addr = acc.bitcoin[t] ? acc.bitcoin[t].address : ''; } addrEl.textContent = addr ? ('address: ' + addr) : ''; } catch (e) { addrEl.textContent = ''; } };
     typeSel.onchange = showAddr; showAddr();
     $('#bSignIt').onclick = () => {
       try {
@@ -1535,5 +1903,8 @@
 
   // boot
   if (document.readyState !== 'loading') render(); else document.addEventListener('DOMContentLoaded', render);
+  // Switching network from the in-wallet badge re-renders so balances/addresses re-derive for the
+  // new network (clear cached assets first so mainnet holdings don't flash under a testnet address).
+  if (window.WWNet && window.WWNet.onChange) window.WWNet.onChange(() => { DASH_ASSETS = null; DASH_PRICES = {}; render(); });
   window.WonderWalletUI = { render, showHardware };
 })();

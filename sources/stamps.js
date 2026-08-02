@@ -223,7 +223,40 @@ async function getSrc101Primary(address) {
   return p ? p.name : null;
 }
 
+/**
+ * SRC-20 DRY RUN (Testnet Mode). There is no reliable public testnet Stamps/SRC-20 indexer,
+ * so on testnet we do NOT broadcast — we locally construct the exact SRC-20 inscription the
+ * transaction would carry and estimate its cost, returning NO broadcastable hex. This lets a
+ * builder test the *construction* path (the easy-to-get-wrong part) at zero risk. Pure function.
+ */
+function src20DryRun(params, feeRate) {
+  const p = params || {};
+  const op = String(p.op || '').toLowerCase();
+  const json = { p: 'src-20', op };
+  if (p.tick) json.tick = String(p.tick).toUpperCase();
+  if (op === 'deploy') { json.max = String(p.max); json.lim = String(p.lim); if (p.dec != null && p.dec !== '') json.dec = String(p.dec); }
+  else if (op === 'mint' || op === 'transfer') { json.amt = String(p.amt); }
+  const payload = JSON.stringify(json);
+  // Modern SRC-20 (post-block 796,000) encodes "stamp:"+JSON directly onto BTC, length-prefixed and
+  // chunked into 32-byte P2WSH "data" outputs (OLGA). Estimate outputs, dust and miner fee from that.
+  const data = 'stamp:' + payload;
+  const bytes = Buffer.byteLength(data, 'utf8');
+  const dataOutputs = Math.ceil((bytes + 2) / 32);         // 2-byte length prefix + 32B per P2WSH output
+  const DUST = 330;                                         // P2WSH dust floor
+  const estDust = dataOutputs * DUST;
+  const estVsize = Math.ceil(10 + 68 + (dataOutputs + 1) * 43); // ~1 input + N P2WSH + 1 change
+  const rate = Math.max(1, Number(feeRate) || 10);
+  const estMinerFee = Math.ceil(estVsize * rate);
+  return {
+    dryRun: true, op, json, payload,
+    encoding: 'SRC-20 · OLGA (P2WSH data outputs)',
+    bytes, dataOutputs,
+    est_dust_value: estDust, est_tx_size: estVsize, est_miner_fee: estMinerFee, total_cost: estDust + estMinerFee,
+    note: 'Testnet dry run — the transaction is constructed and priced locally but NOT broadcast (no public testnet SRC-20 indexer exists).',
+  };
+}
+
 module.exports = {
-  getBalance, getStamp, getSrc20Tick, src20Create, olgaMint, olgaEstimate, BASE,
+  getBalance, getStamp, getSrc20Tick, src20Create, olgaMint, olgaEstimate, src20DryRun, BASE,
   src101Create, resolveSrc101, getSrc101Names, getSrc101Primary, isSrc101Name, normSrc101, SRC101_BTC_DEPLOY,
 };

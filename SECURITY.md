@@ -74,6 +74,31 @@ The core promise is **your keys, your art, your data — all local**. Concretely
 - **Hardware signing (Ledger, WebHID)** keeps keys on the device; the wallet builds asset-safe PSBTs
   and the device signs them. Keys never leave the Ledger.
 
+### dApp provider (website connections)
+- **Per-origin permission model.** A website gets access only after the user approves a connect
+  request; the origin is authenticated from **Chrome's verified sender**, not from anything the page
+  claims. Switching accounts in the wallet never silently moves an already-connected site (the grant
+  pins the account).
+- **No blind signing.** Every connect and every signature opens an approval dialog that shows the
+  origin, a full transaction breakdown, and prioritized warnings (asset-bearing UTXOs, unusual sighash,
+  high fee, a "message" that is actually transaction data). Read-only RPC calls are served without a
+  prompt; anything that signs or spends requires explicit approval.
+- **Keys stay in the wallet context.** The page ↔ content-script ↔ background bridge carries only
+  method calls and results — never key material or API tokens. Signing happens in the approval window,
+  which holds the unlocked session; the service worker holds no keys.
+- **Coexistence, not impersonation.** Ethereum uses **EIP-6963** (it announces itself, it does not
+  clobber `window.ethereum`) and Solana uses the **Wallet Standard**, so Wonder Wallet sits alongside
+  other wallets rather than masquerading as them.
+
+### Testnet Mode
+- **Networks are cryptographically isolated.** Testnet derives Bitcoin addresses at **BIP-44 coin type
+  1′** — a different key set that can never collide with mainnet. A testnet-signed transaction cannot
+  target a mainnet endpoint, and a mainnet key cannot sign a testnet input (both enforced in the core
+  and covered by `tests/testnet-isolation.mjs`).
+- **No accidental real-value actions.** Testnet is a deliberate, clearly-indicated mode (persistent
+  banner, "no value" labeling). Where a testnet has no reliable indexer (Stamps / SRC-20), those
+  actions run as a **local dry run** that constructs and prices the transaction but never broadcasts.
+
 ## Out of scope
 
 - Compromise of the **user's own device** (malware, a malicious browser extension with broad

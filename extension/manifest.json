@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Wonder Wallet",
   "version": "0.13.0",
-  "description": "Self-custodial BTC · ETH · SOL wallet for the Counterparty / Stamps / SRC-20 community. Asset-aware UTXO control + native Emblem Vault bridging.",
+  "description": "A self-custodial Bitcoin wallet for collectors. Your keys, your assets, and your data stay on your own device.",
   "action": {
     "default_title": "Wonder Wallet",
     "default_popup": "popup.html"

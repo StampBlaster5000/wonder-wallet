@@ -14,6 +14,10 @@
   const FALLBACK_DEPLOY = '77fb147b72a551cf1e2f0b37dccf9982a1c25623a7fe8b4d5efaac566cf63fed';
 
   let ACCOUNT = 0, FROM = null, DEPLOY = FALLBACK_DEPLOY;
+  // CONN2: a connected external wallet ({ address, name, signPsbt, pushPsbt }). When set, the composed
+  // name op is signed + broadcast by IT instead of the local seed. Cleared on every local entry.
+  let CONN2 = null;
+  const s101hex = (b) => { const bin = atob(b); let h = ''; for (let i = 0; i < bin.length; i++) h += (bin.charCodeAt(i) & 0xff).toString(16).padStart(2, '0'); return h; };
 
   function modal(html) {
     let m = $('#s101modal');
@@ -35,14 +39,23 @@
   ];
 
   async function open(account, fromAddress) {
-    ACCOUNT = account; FROM = fromAddress;
+    CONN2 = null; ACCOUNT = account; FROM = fromAddress;
     // Pick up the canonical .btc deploy hash from the address's names route (falls back to constant).
     try { const nm = await fetch('api/src101/names/' + encodeURIComponent(FROM)).then((r) => r.json()); if (nm.deploy) DEPLOY = nm.deploy; } catch (_) {}
     renderHub();
   }
   // Deep-link from a name's detail modal straight into an action, name pre-filled.
   function manage(account, fromAddress, action, ctx) {
-    ACCOUNT = account; FROM = fromAddress; if (ctx && ctx.deploy) DEPLOY = ctx.deploy;
+    CONN2 = null; ACCOUNT = account; FROM = fromAddress; if (ctx && ctx.deploy) DEPLOY = ctx.deploy;
+    const nm = ctx && ctx.name ? bare(ctx.name) : '';
+    if (action === 'transfer') return formTransfer(nm);
+    if (action === 'setrecord') return formSetRecord(nm);
+    if (action === 'renew') return formRenew(nm);
+    return renderHub();
+  }
+  // Connected external wallet (UniSat/OKX/Wonder) deep-link into a name action — signed by the wallet.
+  function manageConnected(conn, action, ctx) {
+    CONN2 = conn; ACCOUNT = 0; FROM = conn.address; if (ctx && ctx.deploy) DEPLOY = ctx.deploy;
     const nm = ctx && ctx.name ? bare(ctx.name) : '';
     if (action === 'transfer') return formTransfer(nm);
     if (action === 'setrecord') return formSetRecord(nm);
@@ -79,6 +92,18 @@
     try {
       const c = await fetch('api/src101/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: FROM, params: { op, ...params } }) }).then((r) => r.json());
       if (c.error || !c.hex) throw new Error(c.detail || c.error || 'compose_unavailable');
+      // Connected external wallet (UniSat/OKX/Wonder): hand the composed PSBT to it to sign + broadcast.
+      if (CONN2) {
+        s.textContent = 'Waiting for approval in ' + (CONN2.name || 'your wallet') + '…';
+        const hex = /^[0-9a-fA-F]+$/.test(c.hex) ? c.hex : s101hex(c.hex);
+        const signedTx = await CONN2.signPsbt(hex, { autoFinalized: true });
+        s.textContent = 'Broadcasting…';
+        const signedStr = typeof signedTx === 'string' ? signedTx : (signedTx && (signedTx.psbt || signedTx.hex)) || hex;
+        const pushed = await CONN2.pushPsbt(signedStr);
+        const id = typeof pushed === 'string' ? pushed : (pushed && (pushed.txid || pushed.result)) || String(pushed);
+        s.className = 'statusline load'; s.innerHTML = `${label} ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(id)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(id).slice(0, 18))}…</a>`;
+        return;
+      }
       s.textContent = 'Signing locally & broadcasting…';
       const signed = C.signStamp(c.hex, ACCOUNT, 'nativeSegwit');
       const r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then((x) => x.json());
@@ -200,5 +225,5 @@
     wireBack();
   }
 
-  window.Src101 = { open, manage };
+  window.Src101 = { open, manage, manageConnected };
 })();

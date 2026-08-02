@@ -1,9 +1,10 @@
-/* Wonder Wallet — landing: live chain/index sync badges + login/download wiring. */
+/* Wonder Wallet — landing: live chain/index sync badges + the "beta build" modal. */
 'use strict';
 (function () {
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const n = (x) => (x == null ? '?' : Number(x).toLocaleString('en-US'));
+  const STORE = 'https://chromewebstore.google.com/detail/wonder-wallet/jbdjhkopmpiihcnemgacddimdopbnnin';
 
   async function loadStatus() {
     const el = $('#syncBadges'); if (!el) return;
@@ -17,28 +18,31 @@
     } catch (_) { el.innerHTML = '<span class="syncpill warn">status unavailable</span>'; }
   }
 
-  // The wallet lives on its own page now (the Wonder Terminal) — Log in / Open the wallet navigate there.
-  function openWallet() { window.location.href = 'app.html'; }
-  function downloadModal() {
-    const ZIP = 'wonder-wallet-extension.zip';
-    const html = `<h3 class="m-title">Wonder Wallet — Beta is live 🎉</h3>
-      <p class="fine">The browser extension (Chrome · Brave · Edge) is now in <b>open beta</b>: self-custodial BTC · ETH · SOL, Counterparty / Stamps / SRC-20 native, isolated storage, strict CSP, local keys.</p>
-      <a class="cta-gold lg dl-btn" href="${ZIP}" download>⬇ Download the beta (.zip)</a>
+  // "Get the latest beta build" — the newest unpacked build (ahead of the Chrome Web Store version).
+  function betaModal(e) {
+    if (e) e.preventDefault();
+    const html = `<h3 class="m-title">Latest beta build</h3>
+      <p class="fine">The <b>Chrome Web Store</b> version is the easiest install — but power users can run the very latest unpacked build (newest multi-chain dApp features) here.</p>
+      <a class="btn btn-gold" href="${STORE}" target="_blank" rel="noopener">Get it from the Chrome Web Store →</a>
+      <p class="fine" style="margin-top:16px"><b>Or load the latest unpacked build:</b></p>
+      <a class="btn btn-ghost" href="wonder-wallet-b22.zip" download>⬇ Download the beta (.zip) — v0.51 · Testnet Mode</a>
       <div class="dl-steps">
         <div class="dl-step"><span class="dl-n">1</span><span>Unzip the download.</span></div>
         <div class="dl-step"><span class="dl-n">2</span><span>Open <code>chrome://extensions</code> and turn on <b>Developer mode</b> (top-right).</span></div>
         <div class="dl-step"><span class="dl-n">3</span><span>Click <b>Load unpacked</b> and select the unzipped <code>wonder-wallet-extension</code> folder.</span></div>
-        <div class="dl-step"><span class="dl-n">4</span><span>Pin it, open the popup, and restore with a <b>fresh test seed</b>.</span></div>
+        <div class="dl-step"><span class="dl-n">4</span><span>Pin it, open the popup, and create or restore a wallet.</span></div>
       </div>
-      <p class="fine dl-warn">⚠ Beta software — please use a <b>test wallet</b>, not your main funds. To update later, re-download and hit <b>↻ reload</b> on the extension.</p>`;
-    if (typeof window.openModal === 'function') window.openModal(html);
-    else { const mc = $('#modalCard'); if (mc) { mc.innerHTML = html + '<button class="modal-x" id="dlx">Close</button>'; $('#modal').hidden = false; const x = $('#dlx'); if (x) x.onclick = () => { $('#modal').hidden = true; }; } }
+      <p class="fine dl-warn">⚠ Beta software — please use a <b>test wallet</b> until you've kicked the tires. To update later, re-download and hit <b>↻ reload</b> on the extension.</p>
+      <button class="modal-x" id="dlx">Close</button>`;
+    const mc = $('#modalCard'); if (!mc) return;
+    mc.innerHTML = html; $('#modal').hidden = false;
+    const x = $('#dlx'); if (x) x.onclick = () => { $('#modal').hidden = true; };
   }
 
   function init() {
     loadStatus(); setInterval(loadStatus, 60000);
-    ['#loginBtn', '#heroOpen'].forEach((id) => { const b = $(id); if (b) b.onclick = openWallet; });
-    ['#downloadBtn', '#heroDownload', '#dlbandBtn'].forEach((id) => { const b = $(id); if (b) b.onclick = downloadModal; });
+    const b = $('#betaBtn'); if (b) b.onclick = betaModal;
+    const m = $('#modal'); if (m) m.addEventListener('click', (e) => { if (e.target.id === 'modal') m.hidden = true; });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();

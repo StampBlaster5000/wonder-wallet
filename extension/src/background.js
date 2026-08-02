@@ -4,6 +4,12 @@
    and to open the full wallet in a tab. */
 'use strict';
 
+// dApp provider (v0.49): one importScripts pulls in the whole provider background — protocol,
+// permissions store, broker, router + the message listeners (ww_provider_request / decision /
+// sites). No keys here: signing + account compute happen in the approval window (which resumes the
+// unlocked session); the SW only routes requests, stores per-origin grants, and serves cached reads.
+try { importScripts('provider/background-wire.js'); } catch (e) { /* provider unavailable — wallet still works */ }
+
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
     chrome.tabs.create({ url: chrome.runtime.getURL('expanded.html#welcome') });

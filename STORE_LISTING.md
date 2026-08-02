@@ -11,44 +11,40 @@ the justifications are written to answer the reviewer's questions directly.
 
 ## Listing fields
 
-**Name** (≤ 45 chars)
+**Name** (≤ 45 chars) — ⚠️ PRODUCT NAME ONLY. Appending "— BTC · Stamps · SRC-20" triggered the Spam / "Yellow Nickel" rejection (keyword-in-title). Do NOT add descriptors.
 ```
-Wonder Wallet — BTC · Stamps · SRC-20
-```
-
-**Summary** (≤ 132 chars)
-```
-Self-custodial Bitcoin wallet for Counterparty, Bitcoin Stamps & SRC-20 — asset-safe UTXO control, Ledger support. Keys stay local.
+Wonder Wallet
 ```
 
-**Category:** `Productivity`  (alternative: `Developer Tools`)
+**Summary** (≤ 132 chars) — plain-language, no stacked keyword/brand list
+```
+A self-custodial Bitcoin wallet for collectors. Your keys, your assets, and your data stay on your own device.
+```
+
+**Category:** `Tools`  — ⚠️ NOT "Privacy & Security" (that premium category for a wallet reads as placement manipulation → contributed to the "Spam and Placement" rejection). "Tools" matches the closest peer, XCP Wallet. Category is editable on the listing page (not from the package).
 
 **Language:** English
 
-**Detailed description** (paste as-is):
+**Detailed description** (paste as-is) — ⚠️ REVISED after the Spam rejection: natural prose (no keyword-stuffed lists), tagline appears ONCE (was duplicated), third-party brand names minimized (Ledger = nominative "works with"; dropped the "Emblem Vault" brand line; ecosystems named once, in context).
 ```
-Wonder Wallet is a fully self-custodial BTC · ETH · SOL wallet built for the Counterparty, Bitcoin Stamps, and SRC-20 collector community. Your keys, your art, your data — all local.
+Wonder Wallet is a self-custodial Bitcoin wallet. Your keys, your assets, and your data stay on your own device — always.
 
-WHY WONDER WALLET
-Counterparty, Bitcoin Stamps, and SRC-20 are some of the oldest asset ecosystems on Bitcoin, but the tooling has always been fragmented and often custodial. Wonder Wallet puts the whole stack behind one self-custodial key.
+Built for collectors on Bitcoin, Wonder Wallet lets you hold your own keys and manage your Bitcoin, Ethereum, and Solana from a single recovery phrase, with first-class support for Bitcoin Stamps, SRC-20, and Counterparty assets.
 
-FEATURES
-• Asset-aware coin control — never accidentally spends a Stamp or asset-bearing UTXO as plain sats.
-• Bitcoin Stamps + SRC-20 + Counterparty: view, send, and manage your collection with full-resolution art.
-• Send / receive BTC, ETH, and SOL from a single seed.
-• Hardware wallet support — connect a Ledger (WebHID). Keys never leave the device; you approve every transaction on-screen.
-• Emblem Vault bridging to Ethereum & Solana.
-• Bind assets to UTXOs (attach/detach), RBF / CPFP fee-bumping, and more.
-• Dark and light themes, customizable auto-lock.
+What you can do:
+• Hold your own keys — generated and encrypted in your browser, never sent anywhere.
+• View and manage your collection with full-resolution on-chain art.
+• Coin control that recognizes asset-bearing coins, so you don't spend a collectible by accident.
+• Send and receive Bitcoin, Ethereum, and Solana from one recovery phrase.
+• Works with Ledger hardware wallets over WebHID — your keys stay on the device and you approve each transaction.
+• Fee controls (replace-by-fee and child-pays-for-parent), customizable auto-lock, and dark or light themes.
 
-SECURITY & PRIVACY
-• Keys are generated and encrypted (Argon2id + AES-GCM) in your browser and never leave your device.
-• Signing happens locally. We collect no personal data, have no accounts, and run no trackers.
-• No remote code — strict Content-Security-Policy.
+Security and privacy:
+• Keys are encrypted locally with Argon2id and AES-GCM and never leave your device.
+• All signing happens on your device. No accounts, no trackers, and no personal data collected.
+• No remotely hosted code — the extension runs under a strict Content-Security-Policy.
 
-BETA SOFTWARE — use a test wallet, not your life savings. Community software provided as-is.
-
-Your keys, your art, your data — all local.
+Wonder Wallet is beta software, provided as-is. Please use a test wallet, not your life savings.
 ```
 
 ---

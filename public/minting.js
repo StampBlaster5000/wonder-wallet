@@ -122,6 +122,7 @@
         }
         const r = await fetch('api/stamps/src20/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: BTC, params }) }).then((x) => x.json());
         if (r.error) throw new Error(r.detail || r.error);
+        if (r.dryRun) return dryPreview(`SRC-20 ${op} · ${esc(tick)}`, r, () => src20Form(op));
         preview(`SRC-20 ${op} · ${esc(tick)}`, r, op === 'deploy' ? `${$('#s_max').value} max · ${$('#s_lim').value}/mint` : (op === 'mint' ? `mint ${$('#s_amt').value}` : `send ${$('#s_amt').value}`), () => src20Form(op));
       } catch (e) { s.className = 'statusline err'; s.textContent = e.message === 'compose_failed' || /No spendable/i.test(e.message) ? 'Insufficient BTC on this address to compose the mint.' : ('Failed: ' + e.message); }
     };
@@ -217,6 +218,27 @@
   }
 
   // shared preview → sign PSBT → broadcast
+  // Testnet SRC-20 DRY RUN — show exactly what would be inscribed + estimated cost, with NO
+  // sign/broadcast path. There is no reliable public testnet SRC-20 indexer, so we never broadcast.
+  function dryPreview(label, r, back) {
+    modal(`<button class="m-close-x" id="m_x" title="Close" aria-label="Close">✕</button>
+      <h3 class="m-title" style="padding-right:34px">🧪 Dry run · ${label}</h3>
+      <div class="warn" style="margin-top:0;background:repeating-linear-gradient(45deg,rgba(244,183,64,.14),rgba(244,183,64,.14) 12px,rgba(224,160,32,.14) 12px,rgba(224,160,32,.14) 24px);border-color:rgba(224,160,32,.5)">
+        <b>DRY RUN — nothing is broadcast.</b> This constructs and prices the exact SRC-20 inscription locally so you can test the flow. There is no public testnet SRC-20 indexer, so it is never sent.</div>
+      <div class="cp-data" style="margin-top:12px"><span class="k">Inscription (${esc(r.encoding || 'SRC-20')})</span><code>${esc(r.payload || JSON.stringify(r.json || {}))}</code></div>
+      <div class="m-grid" style="margin-top:12px">
+        <div><span class="k">Data size</span><span class="v">${r.bytes} bytes · ${r.dataOutputs} output${r.dataOutputs === 1 ? '' : 's'}</span></div>
+        <div><span class="k">Est. miner fee</span><span class="v">${sat(r.est_miner_fee)}</span></div>
+        <div><span class="k">Est. dust</span><span class="v">${sat(r.est_dust_value)}</span></div>
+        <div><span class="k">Est. total cost</span><span class="v">${sat(r.total_cost)}</span></div>
+        <div><span class="k">Est. size</span><span class="v">${r.est_tx_size} vB</span></div>
+      </div>
+      <div class="wbtns"><button class="ghost" id="m_back">Back</button><button class="primary" id="m_done">Done</button></div>`);
+    $('#m_back').onclick = (typeof back === 'function') ? back : close;
+    if ($('#m_x')) $('#m_x').onclick = close;
+    $('#m_done').onclick = close;
+  }
+
   function preview(label, r, detail, back) {
     modal(`<button class="m-close-x" id="m_x" title="Close" aria-label="Close">✕</button><h3 class="m-title" style="padding-right:34px">Confirm · ${label}</h3>
       <div class="m-grid">

@@ -6,8 +6,14 @@
 'use strict';
 
 const { rpc, fetchJson, cacheGet, cacheSet } = require('./http');
+const netctx = require('./netctx');
 
-const RPC = process.env.SOL_RPC || 'https://api.mainnet-beta.solana.com';
+// Public Solana RPC. Testnet Mode uses devnet (faucet-fundable, same key/signing).
+const RPCS = {
+  mainnet: process.env.SOL_RPC || 'https://api.mainnet-beta.solana.com',
+  testnet: process.env.SOL_RPC_DEVNET || 'https://api.devnet.solana.com',
+};
+const rpcUrl = () => RPCS[netctx.current()] || RPCS.mainnet;
 // Tolerate any casing the host used for the env var (HELIUS_KEY / Helius_Key / …).
 const HELIUS_KEY = process.env.HELIUS_KEY || (function () {
   const k = Object.keys(process.env).find((x) => x.toLowerCase() === 'helius_key');
@@ -21,8 +27,8 @@ async function getAddress(address) {
   if (hit) return hit;
 
   const [balLamports, tokenAccounts] = await Promise.all([
-    rpc(RPC, 'getBalance', [address]),
-    rpc(RPC, 'getTokenAccountsByOwner', [address, { programId: SPL_PROGRAM }, { encoding: 'jsonParsed' }]),
+    rpc(rpcUrl(), 'getBalance', [address]),
+    rpc(rpcUrl(), 'getTokenAccountsByOwner', [address, { programId: SPL_PROGRAM }, { encoding: 'jsonParsed' }]),
   ]);
 
   const sol = (balLamports?.value ?? 0) / 1e9;
@@ -53,16 +59,16 @@ async function getAddress(address) {
 }
 
 async function getBlockhash() {
-  const r = await rpc(RPC, 'getLatestBlockhash', [{ commitment: 'confirmed' }]);
+  const r = await rpc(rpcUrl(), 'getLatestBlockhash', [{ commitment: 'confirmed' }]);
   return { blockhash: r.value.blockhash, lastValidBlockHeight: r.value.lastValidBlockHeight };
 }
 
 async function broadcast(txBase64) {
-  return rpc(RPC, 'sendTransaction', [txBase64, { encoding: 'base64', skipPreflight: false, maxRetries: 3 }]);
+  return rpc(rpcUrl(), 'sendTransaction', [txBase64, { encoding: 'base64', skipPreflight: false, maxRetries: 3 }]);
 }
 
 async function simulate(txBase64) {
-  const r = await rpc(RPC, 'simulateTransaction', [txBase64, { encoding: 'base64', sigVerify: true, replaceRecentBlockhash: true, commitment: 'processed' }]);
+  const r = await rpc(rpcUrl(), 'simulateTransaction', [txBase64, { encoding: 'base64', sigVerify: true, replaceRecentBlockhash: true, commitment: 'processed' }]);
   return r.value; // { err, logs, unitsConsumed }
 }
 
@@ -114,7 +120,7 @@ async function getCnftContext(id) {
   const tree = proofR.tree_id || comp.tree;
   let canopyDepth = 0;
   try {
-    const acc = await rpc(RPC, 'getAccountInfo', [tree, { encoding: 'base64' }]);
+    const acc = await rpc(rpcUrl(), 'getAccountInfo', [tree, { encoding: 'base64' }]);
     const b64 = acc?.value?.data?.[0];
     if (b64) canopyDepth = canopyFromAccount(Buffer.from(b64, 'base64'));
   } catch (_) {}
@@ -132,4 +138,4 @@ async function getCnftContext(id) {
   };
 }
 
-module.exports = { getAddress, getBlockhash, broadcast, simulate, getNfts, getCnftContext, RPC };
+module.exports = { getAddress, getBlockhash, broadcast, simulate, getNfts, getCnftContext, rpcUrl, get RPC() { return rpcUrl(); } };

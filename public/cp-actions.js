@@ -54,6 +54,11 @@
   };
 
   let ACCOUNT = 0, FROM = null, FROM_TYPE = 'nativeSegwit', WALLET_ASSETS = null, LAST_PARAMS = {};
+  // EXT: a connected external wallet ({address, name, signPsbt, pushPsbt}) from wallet-connect. When set,
+  // composed CP PSBTs are signed + broadcast by IT (not the local seed). Cleared on every local entry.
+  let EXT = null;
+  const btcTypeOf = (a) => (/^bc1p/i.test(a) ? 'taproot' : /^bc1q/i.test(a) ? 'nativeSegwit' : /^3/.test(a) ? 'nestedSegwit' : /^1/.test(a) ? 'legacy' : 'nativeSegwit');
+  const b64hex = (b) => { const bin = atob(b); let h = ''; for (let i = 0; i < bin.length; i++) h += (bin.charCodeAt(i) & 0xff).toString(16).padStart(2, '0'); return h; };
   const RE_BTC_ADDR = /^(bc1[a-z0-9]{8,87}|[13][a-km-zA-HJ-NP-Z1-9]{25,39})$/;
 
   // ── Custom miner-fee rate for CP composes (Counterparty accepts sat_per_vbyte, incl. sub-sat). ──
@@ -166,7 +171,7 @@
   function close() { const m = $('#cpmodal'); if (m) m.hidden = true; if (window.DappDashboard && window.DappDashboard.returnToHub) window.DappDashboard.returnToHub(); }
 
   function open(account, fromAddress) {
-    ACCOUNT = account; FROM = fromAddress;
+    EXT = null; ACCOUNT = account; FROM = fromAddress;
     const b = acctBtc();
     FROM_TYPE = b ? (Object.keys(b).find((t) => b[t].address === fromAddress) || 'nativeSegwit') : 'nativeSegwit';
     renderHub();
@@ -322,6 +327,7 @@
   // Deep-link: jump straight to one action form with fields pre-filled (asset-preview shortcuts).
   async function quick(account, fromAddress, key, prefill) {
     if (!ACTIONS[key]) return;
+    EXT = null;
     ACCOUNT = account; FROM = fromAddress;
     const b = acctBtc(); FROM_TYPE = b ? (Object.keys(b).find((t) => b[t].address === fromAddress) || 'nativeSegwit') : 'nativeSegwit';
     await openForm(key); // async: build the form (fetches fee presets) before prefilling
@@ -475,17 +481,19 @@
     $('#cpBack2').onclick = () => openForm(key);
     if ($('#cpXclose')) $('#cpXclose').onclick = close;
     $('#cpExport').onclick = () => { modal(`<h3 class="m-title">Unsigned PSBT</h3><p class="fine">For hardware / co-signing.</p><textarea class="m-in" rows="5" readonly>${c.psbt}</textarea><div class="wbtns"><button class="primary" id="cpCopyP">Copy</button><button class="ghost" id="cpx2">Done</button></div>`); $('#cpCopyP').onclick = (e) => { navigator.clipboard.writeText(c.psbt); e.target.textContent = 'copied ✓'; }; $('#cpx2').onclick = close; };
+    // Broadcast is irreversible — collapse the actions to a single Done that closes.
+    const collapse = () => { const bb = $('#cpBack2'), eb = $('#cpExport'), sb = $('#cpSign'); if (bb) bb.remove(); if (eb) eb.remove(); if (sb) { sb.textContent = 'Done'; sb.onclick = close; } };
     $('#cpSign').onclick = async () => {
-      const s = $('#cpbStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Signing locally & broadcasting…';
+      const s = $('#cpbStatus');
+      // Connected external wallet (UniSat/OKX/Wonder): verify + hand off to it (same path as the DEX/panels).
+      if (EXT) { await signBroadcast(c, s, 'Broadcast', collapse); return; }
+      s.hidden = false; s.className = 'statusline load'; s.textContent = 'Signing locally & broadcasting…';
       try {
         const signed = await cpSign(c);
         const r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then((x) => x.json());
         if (r.error) throw new Error(r.detail || r.error);
         s.className = 'statusline load'; s.innerHTML = `Broadcast ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(r.txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(r.txid).slice(0, 18))}…</a> · Counterparty will confirm separately.`;
-        // Broadcast is irreversible — collapse the actions to a single Done that closes.
-        const bb = $('#cpBack2'), eb = $('#cpExport'), sb = $('#cpSign');
-        if (bb) bb.remove(); if (eb) eb.remove();
-        if (sb) { sb.textContent = 'Done'; sb.onclick = close; }
+        collapse();
       } catch (err) { s.className = 'statusline err'; s.textContent = 'Failed: ' + (err.message || 'sign/broadcast error'); }
     };
   }
@@ -518,15 +526,38 @@
 
   // Sign a composed CP PSBT locally and broadcast (same audited engine as everything else).
   async function signBroadcast(c, statusEl, label, onDone) {
-    statusEl.hidden = false; statusEl.className = 'statusline load'; statusEl.textContent = 'Signing locally & broadcasting…';
+    statusEl.hidden = false; statusEl.className = 'statusline load';
     try {
+      // Connected external wallet path: verify the composed tx (same safety as local), then it signs + broadcasts.
+      if (EXT) {
+        verifyOutputs(c); verifyRecipient(c);
+        statusEl.textContent = 'Waiting for approval in ' + (EXT.name || 'your wallet') + '…';
+        const hex = /^[0-9a-fA-F]+$/.test(c.psbt) ? c.psbt : b64hex(c.psbt);
+        const signed = await EXT.signPsbt(hex, { autoFinalized: true });
+        statusEl.textContent = 'Broadcasting…';
+        let id;
+        if (signed && typeof signed === 'object' && signed.txhex) {
+          // Wonder Wallet returns the finalized raw tx {txhex,txid} → broadcast via our server (one prompt).
+          const r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then((x) => x.json());
+          if (r.error) throw new Error(r.detail || r.error);
+          id = r.txid || signed.txid;
+        } else {
+          const signedStr = typeof signed === 'string' ? signed : (signed && (signed.psbt || signed.hex)) || hex;
+          const txid = await EXT.pushPsbt(signedStr);
+          id = typeof txid === 'string' ? txid : (txid && (txid.txid || txid.result)) || String(txid);
+        }
+        statusEl.className = 'statusline load';
+        statusEl.innerHTML = `${label || 'Broadcast'} ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(id)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(id).slice(0, 18))}…</a> · Counterparty confirms separately.`;
+        if (onDone) onDone(); return;
+      }
+      statusEl.textContent = 'Signing locally & broadcasting…';
       const signed = await cpSign(c);
       const r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then((x) => x.json());
       if (r.error) throw new Error(r.detail || r.error);
       statusEl.className = 'statusline load';
       statusEl.innerHTML = `${label || 'Broadcast'} ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(r.txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(r.txid).slice(0, 18))}…</a> · Counterparty confirms separately.`;
       if (onDone) onDone();
-    } catch (err) { statusEl.className = 'statusline err'; statusEl.textContent = 'Failed: ' + (err.message || 'sign/broadcast error'); }
+    } catch (err) { statusEl.className = 'statusline err'; statusEl.textContent = 'Failed: ' + (/reject|cancel|4001|denied/i.test(err.message || '') ? 'you declined in ' + (EXT && EXT.name || 'your wallet') : (err.message || 'sign/broadcast error')); }
   }
   // Generic confirm screen (used by the panels): fee grid + Export PSBT + Sign & broadcast.
   function confirmScreen(title, c, extra, label, backFn) {
@@ -540,7 +571,10 @@
   }
 
   // ── DEX (Counterparty order book) ────────────────────────────────────────
-  function dex(account, fromAddress) { ACCOUNT = account; FROM = fromAddress; dexShell('new'); }
+  function dex(account, fromAddress) { EXT = null; ACCOUNT = account; FROM = fromAddress; dexShell('new'); }
+  // Counterparty DEX for a CONNECTED external wallet (UniSat/OKX/Wonder): same book/place/cancel UI,
+  // composed server-side, signed + broadcast by the connected wallet. `conn` = { address, name, signPsbt, pushPsbt }.
+  function dexConnected(conn) { EXT = conn; ACCOUNT = 0; FROM = conn.address; FROM_TYPE = btcTypeOf(conn.address); dexShell('new'); }
   function dexShell(tab) {
     modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Counterparty DEX</h3>
       <div class="cp-addr">Native, trustless on-chain order book · from ${esc(FROM)}</div></div><button class="mini" id="dxX">${exitLabel()}</button></div>
@@ -654,7 +688,7 @@
       { k: 'quantity', l: 'Quantity', t: 'number', scale: true }, { k: 'divisible', l: 'Divisible', t: 'check' }, { k: 'description', l: 'Description', opt: true } ] },
   };
   let ISS_MODE = 'create';
-  function issuanceSuite(account, fromAddress) { ACCOUNT = account; FROM = fromAddress; ISS_MODE = 'create'; OWNED = null; issShell(); }
+  function issuanceSuite(account, fromAddress) { EXT = null; ACCOUNT = account; FROM = fromAddress; ISS_MODE = 'create'; OWNED = null; issShell(); }
   function issShell() {
     const m = ISS[ISS_MODE];
     const fields = m.fields.map((f) => {
@@ -752,7 +786,7 @@
 
   // ── Attach / Detach (CP assets UTXOs) ──────────────────────────────────
   let AD_PREFILL = null;
-  function attachDetach(account, fromAddress, prefill) { ACCOUNT = account; FROM = fromAddress; AD_PREFILL = prefill || null; adShell('attach'); }
+  function attachDetach(account, fromAddress, prefill) { EXT = null; ACCOUNT = account; FROM = fromAddress; AD_PREFILL = prefill || null; adShell('attach'); }
   function adShell(tab) {
     modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Attach / Detach</h3>
       <div class="cp-addr">Bind Counterparty assets to a specific UTXO, or release them back · ${esc(FROM)}</div></div><button class="mini" id="adX">${exitLabel()}</button></div>
@@ -827,5 +861,20 @@
     } catch (err) { s.className = 'statusline err'; s.textContent = err.message || 'Compose failed.'; }
   }
 
-  window.CpActions = { open, quick, dex, issuanceSuite, attachDetach };
+  // ── Connected external wallet (UniSat / OKX / Wonder) — the SAME full Counterparty toolset, but the
+  //    composed PSBT is signed + broadcast by the connected wallet (EXT). `conn` = { address, name, signPsbt, pushPsbt }.
+  function openConnected(conn) { EXT = conn; ACCOUNT = 0; FROM = conn.address; FROM_TYPE = btcTypeOf(conn.address); WALLET_ASSETS = null; renderHub(); }
+  async function quickConnected(conn, key, prefill) {
+    if (!ACTIONS[key]) return;
+    EXT = conn; ACCOUNT = 0; FROM = conn.address; FROM_TYPE = btcTypeOf(conn.address); WALLET_ASSETS = null;
+    await openForm(key);
+    if (prefill) Object.entries(prefill).forEach(([k, v]) => {
+      const el = $('#cpCard').querySelector(`[data-k="${k}"]`);
+      if (el) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); }
+    });
+  }
+  function issuanceSuiteConnected(conn) { EXT = conn; ACCOUNT = 0; FROM = conn.address; FROM_TYPE = btcTypeOf(conn.address); ISS_MODE = 'create'; OWNED = null; issShell(); }
+  function attachDetachConnected(conn, prefill) { EXT = conn; ACCOUNT = 0; FROM = conn.address; FROM_TYPE = btcTypeOf(conn.address); AD_PREFILL = prefill || null; adShell('attach'); }
+
+  window.CpActions = { open, quick, dex, dexConnected, issuanceSuite, attachDetach, openConnected, quickConnected, issuanceSuiteConnected, attachDetachConnected };
 })();

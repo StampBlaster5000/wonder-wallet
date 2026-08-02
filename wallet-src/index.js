@@ -44,9 +44,9 @@ function ethAddress(privKey) {
   for (let i = 0; i < addr.length; i++) out += parseInt(h[i], 16) >= 8 ? addr[i].toUpperCase() : addr[i];
   return out;
 }
-function toWIF(privKey) {
+function toWIF(privKey, network = 'mainnet') {
   const payload = new Uint8Array(34);
-  payload[0] = 0x80; payload.set(privKey, 1); payload[33] = 0x01; // mainnet, compressed
+  payload[0] = network === 'testnet' ? 0xEF : 0x80; payload.set(privKey, 1); payload[33] = 0x01; // version + compressed flag
   return b58check.encode(payload);
 }
 function fromWIF(wif) {
@@ -89,12 +89,22 @@ function solDerive(seed, path) {
 }
 function solAddress(priv) { return base58.encode(ed25519.getPublicKey(priv)); }
 
+// ── Network selection ────────────────────────────────────────────────────────
+// Testnet is strictly additive: mainnet is the default everywhere and its output
+// is byte-identical to before. Testnet uses BIP-44 coin type 1' (a DIFFERENT set
+// of derived keys — testnet addresses can NEVER collide with mainnet) plus the
+// testnet address encoding (tb1…/m…/2…). ETH & SOL reuse the SAME key on their
+// testnets (Sepolia / devnet) — only the network endpoint changes — so their
+// address is identical across networks by design.
+const btcNet = (network) => (network === 'testnet' ? btc.TEST_NETWORK : btc.NETWORK);
+
 // ── Bitcoin address (all four types) from an HD node ─────────────────────────
-function btcFromPub(pub, type) {
-  if (type === 'legacy') return btc.p2pkh(pub).address;
-  if (type === 'nativeSegwit') return btc.p2wpkh(pub).address;
-  if (type === 'nestedSegwit') return btc.p2sh(btc.p2wpkh(pub)).address;
-  if (type === 'taproot') return btc.p2tr(pub.slice(1)).address; // x-only internal key (BIP86)
+function btcFromPub(pub, type, network = 'mainnet') {
+  const net = btcNet(network);
+  if (type === 'legacy') return btc.p2pkh(pub, net).address;
+  if (type === 'nativeSegwit') return btc.p2wpkh(pub, net).address;
+  if (type === 'nestedSegwit') return btc.p2sh(btc.p2wpkh(pub, net), net).address;
+  if (type === 'taproot') return btc.p2tr(pub.slice(1), undefined, net).address; // x-only internal key (BIP86)
   throw new Error('unknown btc type');
 }
 const BTC_PATHS = {
@@ -103,33 +113,42 @@ const BTC_PATHS = {
   taproot: (a, i) => `m/86'/0'/${a}'/0/${i}`,
   nestedSegwit: (a, i) => `m/49'/0'/${a}'/0/${i}`,
 };
+// Testnet paths — BIP-44 coin type 1' (standard for all Bitcoin testnets/signet).
+const BTC_PATHS_TESTNET = {
+  nativeSegwit: (a, i) => `m/84'/1'/${a}'/0/${i}`,
+  legacy: (a, i) => `m/44'/1'/${a}'/0/${i}`,
+  taproot: (a, i) => `m/86'/1'/${a}'/0/${i}`,
+  nestedSegwit: (a, i) => `m/49'/1'/${a}'/0/${i}`,
+};
+const btcPaths = (network) => (network === 'testnet' ? BTC_PATHS_TESTNET : BTC_PATHS);
 
 /** Derive display addresses (NO secrets) for one account index across all chains. */
-function deriveAccounts(mnemonic, passphrase = '', account = 0, index = 0) {
+function deriveAccounts(mnemonic, passphrase = '', account = 0, index = 0, network = 'mainnet') {
   const seed = mnemonicToSeedSync(mnemonic, passphrase);
   const root = HDKey.fromMasterSeed(seed);
   const bitcoin = {};
-  for (const [type, mk] of Object.entries(BTC_PATHS)) {
+  for (const [type, mk] of Object.entries(btcPaths(network))) {
     const path = mk(account, index);
-    bitcoin[type] = { address: btcFromPub(root.derive(path).publicKey, type), path };
+    bitcoin[type] = { address: btcFromPub(root.derive(path).publicKey, type, network), path };
   }
+  // ETH & SOL: same key on their testnets — only the network endpoint changes.
   const ethPath = `m/44'/60'/${account}'/0/${index}`;
   const ethNode = root.derive(ethPath);
   const ethereum = { address: ethAddress(ethNode.privateKey), path: ethPath };
   const solPath = `m/44'/501'/${account}'/0'`;
   const solana = { address: solAddress(solDerive(seed, solPath)), path: solPath };
   seed.fill(0);
-  return { account, index, bitcoin, ethereum, solana };
+  return { account, index, network, bitcoin, ethereum, solana };
 }
 
 /** Reveal secrets for one account (password-gated by the caller). */
-function deriveSecrets(mnemonic, passphrase = '', account = 0, index = 0) {
+function deriveSecrets(mnemonic, passphrase = '', account = 0, index = 0, network = 'mainnet') {
   const seed = mnemonicToSeedSync(mnemonic, passphrase);
   const root = HDKey.fromMasterSeed(seed);
-  const out = { bitcoin: {}, ethereum: null, solana: null };
-  for (const [type, mk] of Object.entries(BTC_PATHS)) {
+  const out = { bitcoin: {}, ethereum: null, solana: null, network };
+  for (const [type, mk] of Object.entries(btcPaths(network))) {
     const node = root.derive(mk(account, index));
-    out.bitcoin[type] = { address: btcFromPub(node.publicKey, type), wif: toWIF(node.privateKey), path: mk(account, index) };
+    out.bitcoin[type] = { address: btcFromPub(node.publicKey, type, network), wif: toWIF(node.privateKey, network), path: mk(account, index) };
   }
   const e = root.derive(`m/44'/60'/${account}'/0/${index}`);
   out.ethereum = { address: ethAddress(e.privateKey), privateKey: '0x' + hex.encode(e.privateKey) };
@@ -201,11 +220,12 @@ function selectUtxos(utxos, targetSats, feeRate, sendMax, type = 'nativeSegwit')
 }
 
 // btc-signer payment object for an address type (carries script + redeemScript/tapInternalKey).
-function btcPayment(pub, type) {
-  if (type === 'legacy') return btc.p2pkh(pub);
-  if (type === 'nestedSegwit') return btc.p2sh(btc.p2wpkh(pub));
-  if (type === 'taproot') return btc.p2tr(pub.slice(1)); // x-only internal key
-  return btc.p2wpkh(pub);
+function btcPayment(pub, type, network = 'mainnet') {
+  const net = btcNet(network);
+  if (type === 'legacy') return btc.p2pkh(pub, net);
+  if (type === 'nestedSegwit') return btc.p2sh(btc.p2wpkh(pub, net), net);
+  if (type === 'taproot') return btc.p2tr(pub.slice(1), undefined, net); // x-only internal key
+  return btc.p2wpkh(pub, net);
 }
 // Add an input with the correct witness/redeem/tapKey/nonWitness fields for its address type.
 // Legacy (P2PKH) is non-segwit → requires the FULL previous transaction (nonWitnessUtxo).
@@ -214,6 +234,7 @@ function addTypedInput(tx, u, type, p, sequence, prevTxs) {
   if (type === 'legacy') {
     const ph = prevTxs && prevTxs[u.txid];
     if (!ph) throw new Error('missing_prevtx:' + u.txid);
+    verifyLegacyPrevout(ph, u.txid, u.vout, u.value); // local verification: prevtx hashes + value match the claim
     tx.addInput({ ...base, nonWitnessUtxo: hex.decode(ph) });
   } else if (type === 'nestedSegwit') {
     tx.addInput({ ...base, witnessUtxo: { script: p.script, amount: BigInt(u.value) }, redeemScript: p.redeemScript });
@@ -228,24 +249,28 @@ function addTypedInput(tx, u, type, p, sequence, prevTxs) {
  * Build (and optionally sign) a P2WPKH send. Returns signed txhex OR an
  * unsigned PSBT (base64) for hardware/co-signing. RBF on by default.
  */
-function buildSend({ mnemonic, passphrase = '', account = 0, index = 0, type = 'nativeSegwit', wif = null, utxos, recipient, amountSats, feeRate, rbf = true, sendMax = false, sign = true, prevTxs = {} }) {
-  if (!BTC_PATHS[type]) throw new Error('send_type_unsupported');
+function buildSend({ mnemonic, passphrase = '', account = 0, index = 0, type = 'nativeSegwit', wif = null, utxos, recipient, amountSats, feeRate, rbf = true, sendMax = false, sign = true, prevTxs = {}, network = 'mainnet' }) {
+  const paths = btcPaths(network);
+  if (!paths[type]) throw new Error('send_type_unsupported');
+  const net = btcNet(network);
   let seed = null, node;
   if (wif) { node = importedNode(wif); } // imported key signs its own address (any of the 4 types)
-  else { seed = mnemonicToSeedSync(mnemonic, passphrase); node = HDKey.fromMasterSeed(seed).derive(BTC_PATHS[type](account, index)); }
-  const p = btcPayment(node.publicKey, type);
+  else { seed = mnemonicToSeedSync(mnemonic, passphrase); node = HDKey.fromMasterSeed(seed).derive(paths[type](account, index)); }
+  const p = btcPayment(node.publicKey, type, network);
   const fromAddress = p.address;
   const sel = selectUtxos(utxos, amountSats, feeRate, sendMax, type);
   const seq = rbf ? 0xfffffffd : 0xffffffff;
   const tx = new btc.Transaction({});
   for (const u of sel.selected) addTypedInput(tx, u, type, p, seq, prevTxs);
   const outAmount = sendMax ? sel.amount : amountSats;
-  tx.addOutputAddress(recipient, BigInt(outAmount)); // throws on invalid recipient
+  tx.addOutputAddress(recipient, BigInt(outAmount), net); // throws on invalid recipient
   let change = sel.change;
-  if (!sendMax && change >= 294) tx.addOutputAddress(fromAddress, BigInt(change)); // change back to the same source type
+  if (!sendMax && change >= 294) tx.addOutputAddress(fromAddress, BigInt(change), net); // change back to the same source type
   else change = 0; // dust change rolls into the fee
 
   const result = { fromAddress, recipient, amountSats: outAmount, change, fee: sel.totalIn - outAmount - change, inputs: sel.selected.map((u) => ({ utxo: `${u.txid}:${u.vout}`, value: u.value })), totalIn: sel.totalIn };
+  // local verification: re-read what we built before signing (or exporting the PSBT)
+  verifyBuiltOutputs(tx, { recipient, outAmount, fromAddress, change, totalIn: sel.totalIn, feeRate, expectVsize: estimateVsize(sel.selected.length, change ? 2 : 1, type), network });
   if (sign) {
     tx.sign(node.privateKey); tx.finalize();
     result.txhex = hex.encode(tx.extract());
@@ -257,6 +282,30 @@ function buildSend({ mnemonic, passphrase = '', account = 0, index = 0, type = '
   }
   if (seed) seed.fill(0);
   return result;
+}
+
+// Build an UNSIGNED BTC send PSBT from a PUBLIC KEY only (no private key) — for connected external
+// wallets (UniSat/OKX/Wonder) on the web Terminal: we compose here, the connected wallet signs. Same
+// selection + change + local-verification as buildSend; keyless → the caller supplies pubkey + utxos.
+function buildUnsignedSend({ pubkey, type = 'nativeSegwit', utxos, recipient, amountSats, feeRate, rbf = true, sendMax = false, prevTxs = {}, network = 'mainnet' }) {
+  const paths = btcPaths(network);
+  if (!paths[type]) throw new Error('send_type_unsupported');
+  const net = btcNet(network);
+  const pub = pubkey instanceof Uint8Array ? pubkey : hex.decode(String(pubkey).replace(/^0x/, ''));
+  const p = btcPayment(pub, type, network);
+  const fromAddress = p.address;
+  const sel = selectUtxos(utxos, amountSats, feeRate, sendMax, type);
+  const seq = rbf ? 0xfffffffd : 0xffffffff;
+  const tx = new btc.Transaction({});
+  for (const u of sel.selected) addTypedInput(tx, u, type, p, seq, prevTxs);
+  const outAmount = sendMax ? sel.amount : amountSats;
+  tx.addOutputAddress(recipient, BigInt(outAmount), net); // throws on invalid recipient
+  let change = sel.change;
+  if (!sendMax && change >= 294) tx.addOutputAddress(fromAddress, BigInt(change), net);
+  else change = 0;
+  const expectVsize = estimateVsize(sel.selected.length, change ? 2 : 1, type);
+  verifyBuiltOutputs(tx, { recipient, outAmount, fromAddress, change, totalIn: sel.totalIn, feeRate, expectVsize, network });
+  return { psbt: base64.encode(tx.toPSBT(0)), fromAddress, recipient, amountSats: outAmount, change, fee: sel.totalIn - outAmount - change, vsize: expectVsize, inputs: sel.selected.map((u) => ({ utxo: `${u.txid}:${u.vout}`, value: u.value })), totalIn: sel.totalIn };
 }
 
 // ── Hardware (Ledger) BTC send ───────────────────────────────────────────────
@@ -325,6 +374,7 @@ function signRawCp(psbtB64, inputsValues, lockScripts, node, type, prevTxs = {})
       const dtxid = hex.encode(inp.txid); // btc-signer stores/returns txid in display order
       const ph = prevTxs[dtxid];
       if (!ph) throw new Error('missing_prevtx:' + dtxid);
+      verifyLegacyPrevout(ph, dtxid, inp.index, inputsValues && inputsValues[i]); // local verification vs the CP-claimed input value
       tx.updateInput(i, { nonWitnessUtxo: hex.decode(ph) });
     } else if (type === 'nestedSegwit') {
       tx.updateInput(i, { witnessUtxo: { script: hex.decode(lockScripts[i]), amount: BigInt(inputsValues[i]) }, redeemScript: p.redeemScript });
@@ -350,6 +400,45 @@ function addrHash(address) {
     const h = o.hash || o.pubkey || o.pubKey || o.data || null;
     return h ? hex.encode(h) : null;
   } catch (_) { return null; }
+}
+
+// ── Local transaction verification (defence-in-depth, per XCP Wallet v0.5.2) ──
+// Our read layer is a stateless proxy to public APIs (mempool / CP / stampchain). Before we
+// SIGN we independently re-verify what we're about to sign, so a compromised or spoofing proxy
+// cannot trick the signer into over-paying fees or spending the wrong coins.
+
+// LEGACY (P2PKH) sighash does NOT commit to input amounts → a lying proxy could understate/inflate
+// a legacy input's value. Require the FULL previous tx and cross-check it (a) hashes to the claimed
+// txid and (b) its output[vout] value equals the claimed value. (SegWit amounts are BIP143-committed.)
+function verifyLegacyPrevout(prevHex, txid, vout, claimedValue) {
+  let ptx;
+  try { ptx = btc.Transaction.fromRaw(hex.decode(String(prevHex).replace(/^0x/, '')), { allowUnknownOutputs: true, allowLegacyWitnessUtxo: true }); }
+  catch (_) { throw new Error('prevtx_undecodable:' + txid); }
+  if (ptx.id !== txid) throw new Error('prevtx_mismatch:' + txid); // proxy handed the wrong previous transaction
+  let o; try { o = ptx.getOutput(vout); } catch (_) { o = null; }
+  if (!o || o.amount == null) throw new Error('prevout_missing:' + txid + ':' + vout);
+  if (claimedValue != null && o.amount !== BigInt(claimedValue)) throw new Error('prevout_value_mismatch:' + txid + ':' + vout);
+  return o.amount;
+}
+
+// Independently re-read the outputs of a tx we just built and confirm it pays ONLY the intended
+// recipient + our own change address, with a non-negative, sane fee — so a tampered UTXO set or a
+// logic slip can't slip in a surprise output or an absurd fee before we sign.
+function verifyBuiltOutputs(tx, { recipient, outAmount, fromAddress, change, totalIn, feeRate, expectVsize, network = 'mainnet' }) {
+  let sawRecipient = false, sawChange = false, sumOut = 0n;
+  for (let i = 0; i < tx.outputsLength; i++) {
+    const o = tx.getOutput(i); sumOut += o.amount;
+    let a = null; try { a = btc.Address(btcNet(network)).encode(btc.OutScript.decode(o.script)); } catch (_) {}
+    if (!sawRecipient && a === recipient && o.amount === BigInt(outAmount)) sawRecipient = true;
+    else if (!sawChange && a === fromAddress && o.amount === BigInt(change)) sawChange = true;
+    else throw new Error('verify_unexpected_output:' + (a || 'unknown'));
+  }
+  if (!sawRecipient) throw new Error('verify_recipient_missing');
+  if (change > 0 && !sawChange) throw new Error('verify_change_missing');
+  const fee = totalIn - Number(sumOut);
+  if (fee < 0) throw new Error('verify_negative_fee');
+  const ceiling = Math.max((feeRate || 1) * (expectVsize || 200) * 10, 50000); // generous: only catches gross anomalies, never normal sends
+  if (fee > ceiling) throw new Error('verify_fee_too_high:' + fee);
 }
 
 // Decode a composed tx/PSBT's OUTPUTS so the client can verify a server-composed transaction
@@ -380,17 +469,111 @@ function psbtInputs(psbtHexOrB64) {
   return out;
 }
 
+// A PSBT input's nonWitnessUtxo can be RAW bytes (freshly attached) OR an already-decoded tx object
+// (after fromPSBT round-trips it) — return the referenced prevout {script, amount} for either form.
+function nwOut(nw, index) {
+  if (!nw) return null;
+  try {
+    if (nw instanceof Uint8Array) { const ptx = btc.Transaction.fromRaw(nw, { allowUnknownOutputs: true, allowLegacyWitnessUtxo: true }); return ptx.getOutput(index); }
+    if (nw.outputs && nw.outputs[index]) return nw.outputs[index];
+  } catch (_) {}
+  return null;
+}
+
+// Full decode of a PSBT for the dApp-provider Sign dialog (clear-signing): each input's prevout
+// address + value + requested sighash, plus the outputs. Keyless + pure (like decodeTxOutputs) — the
+// approval UI adds "mine?" (address match) and asset tags (coin-control) on top before summarizing.
+function describePsbt(psbtHexOrB64) {
+  const s = String(psbtHexOrB64).replace(/^0x/, '');
+  const bytes = /^[0-9a-fA-F]+$/.test(s) ? hex.decode(s) : base64.decode(s);
+  const tx = btc.Transaction.fromPSBT(bytes, { allowUnknownOutputs: true, allowUnknownInputs: true });
+  const inputs = [];
+  for (let i = 0; i < tx.inputsLength; i++) {
+    const inp = tx.getInput(i);
+    let script = null, amount = null;
+    if (inp.witnessUtxo) { script = inp.witnessUtxo.script; amount = inp.witnessUtxo.amount; }
+    else { const o = nwOut(inp.nonWitnessUtxo, inp.index); if (o) { script = o.script; amount = o.amount; } }
+    let address = null;
+    if (script) { try { address = btc.Address().encode(btc.OutScript.decode(script)); } catch (_) {} }
+    inputs.push({ txid: hex.encode(inp.txid), index: inp.index, address: address, value: amount != null ? Number(amount) : null, sighashType: inp.sighashType != null ? Number(inp.sighashType) : null });
+  }
+  return { inputs: inputs, outputs: decodeTxOutputs(psbtHexOrB64) };
+}
+
+// Sign a dApp-provided PSBT (provider `ww_signPsbt`). Signs ONLY the inputs that belong to us (or the
+// explicit opts.toSignInputs indices), enforces the sighash allowlist (DEFAULT/ALL/ALL|ANYONECANPAY/
+// SINGLE|ANYONECANPAY — reject NONE / bare SINGLE), and returns the PARTIALLY-signed PSBT (the site
+// finalizes/combines) or a finalized tx if opts.autoFinalized. Keyless-relative (caller supplies the
+// key), so it unit-tests without a session. Legacy inputs still require + cross-check the full prev-tx.
+function signProviderPsbt(psbtHexOrB64, opts, mnemonic, passphrase = '', account = 0, index = 0, type = 'nativeSegwit', prevTxs = {}, wif = null, network = 'mainnet') {
+  opts = opts || {};
+  const paths = btcPaths(network);
+  // `types`: the address types we're allowed to sign for. Default = the single connected type; the
+  // paired Legacy+SegWit capability passes e.g. ['nativeSegwit','legacy'] so ONE pass can sign inputs
+  // across the same-index pair (Counterparty marketplace / atomic-swap flow), opt-in + consented.
+  const types = (Array.isArray(opts.types) && opts.types.length) ? opts.types : [type];
+  for (const t of types) if (!paths[t]) throw new Error('provider_sign_type_unsupported:' + t);
+  const SAFE = [0x00, 0x01, 0x81, 0x83];
+  let seed = null;
+  const wipe = () => { if (seed) seed.fill(0); };
+  try {
+    // One signer per allowed type (an imported WIF is a single address type).
+    let signers;
+    if (wif) { const n = importedNode(wif); signers = [{ t: type, node: n, p: btcPayment(n.publicKey, type, network) }]; }
+    else { seed = mnemonicToSeedSync(mnemonic, passphrase); const root = HDKey.fromMasterSeed(seed); signers = types.map((t) => { const n = root.derive(paths[t](account, index)); return { t: t, node: n, p: btcPayment(n.publicKey, t, network) }; }); }
+    const signerFor = (addr) => signers.find((sg) => sg.p.address === addr) || null;
+
+    const s = String(psbtHexOrB64).replace(/^0x/, '');
+    const bytes = /^[0-9a-fA-F]+$/.test(s) ? hex.decode(s) : base64.decode(s);
+    const tx = btc.Transaction.fromPSBT(bytes, { allowUnknownOutputs: true, allowUnknownInputs: true });
+
+    const inAddr = (inp) => {
+      let script = inp.witnessUtxo && inp.witnessUtxo.script;
+      if (!script) { const o = nwOut(inp.nonWitnessUtxo, inp.index); if (o) script = o.script; }
+      if (!script) return null; try { return btc.Address(btcNet(network)).encode(btc.OutScript.decode(script)); } catch (_) { return null; }
+    };
+
+    let indices;
+    if (Array.isArray(opts.toSignInputs) && opts.toSignInputs.length) {
+      indices = opts.toSignInputs.map((x) => (typeof x === 'number' ? x : x.index)).filter((i) => Number.isInteger(i) && i >= 0 && i < tx.inputsLength);
+    } else {
+      indices = []; for (let i = 0; i < tx.inputsLength; i++) if (signerFor(inAddr(tx.getInput(i)))) indices.push(i);
+    }
+    if (!indices.length) throw new Error('no_signable_inputs');
+
+    const chosen = {}; // input index -> signer
+    for (const i of indices) {
+      const inp = tx.getInput(i);
+      const sg = signerFor(inAddr(inp));
+      if (!sg) throw new Error('input_not_ours:' + i); // never sign an input none of our keys owns
+      chosen[i] = sg;
+      if (inp.sighashType != null && SAFE.indexOf(Number(inp.sighashType)) < 0) throw new Error('sighash_not_allowed:0x' + Number(inp.sighashType).toString(16));
+      if (sg.t === 'legacy') { const d = hex.encode(inp.txid), ph = prevTxs[d]; if (!ph) throw new Error('missing_prevtx:' + d); verifyLegacyPrevout(ph, d, inp.index, null); tx.updateInput(i, { nonWitnessUtxo: hex.decode(ph) }); }
+      else if (sg.t === 'nestedSegwit') tx.updateInput(i, { redeemScript: sg.p.redeemScript });
+      else if (sg.t === 'taproot') tx.updateInput(i, { tapInternalKey: sg.p.tapInternalKey });
+    }
+
+    for (const i of indices) tx.signIdx(chosen[i].node.privateKey, i, SAFE);
+
+    let result;
+    if (opts.autoFinalized) { tx.finalize(); result = { txhex: hex.encode(tx.extract()), txid: tx.id, signed: indices }; }
+    else { result = { psbt: base64.encode(tx.toPSBT(0)), signed: indices }; }
+    wipe();
+    return result;
+  } catch (e) { wipe(); throw e; }
+}
+
 /**
  * Sign a fully-formed PSBT whose inputs already carry witnessUtxo (stampchain
  * SRC-20 / Stamp-art mints). Segwit sources sign directly; legacy needs prevTxs.
  */
-function signStampPsbt(psbtHexOrB64, mnemonic, passphrase = '', account = 0, index = 0, type = 'nativeSegwit', prevTxs = {}, wif = null) {
-  if (!BTC_PATHS[type]) throw new Error('stamp_sign_type_unsupported');
+function signStampPsbt(psbtHexOrB64, mnemonic, passphrase = '', account = 0, index = 0, type = 'nativeSegwit', prevTxs = {}, wif = null, network = 'mainnet') {
+  if (!btcPaths(network)[type]) throw new Error('stamp_sign_type_unsupported');
   const s = String(psbtHexOrB64).replace(/^0x/, '');
   const bytes = /^[0-9a-fA-F]+$/.test(s) ? hex.decode(s) : base64.decode(s);
   let seed = null, node;
   if (wif) node = importedNode(wif);
-  else { seed = mnemonicToSeedSync(mnemonic, passphrase); node = HDKey.fromMasterSeed(seed).derive(BTC_PATHS[type](account, index)); }
+  else { seed = mnemonicToSeedSync(mnemonic, passphrase); node = HDKey.fromMasterSeed(seed).derive(btcPaths(network)[type](account, index)); }
   const tx = btc.Transaction.fromPSBT(bytes, { allowUnknownOutputs: true, allowUnknownInputs: true });
   if (type === 'legacy') {
     for (let i = 0; i < tx.inputsLength; i++) {
@@ -405,11 +588,11 @@ function signStampPsbt(psbtHexOrB64, mnemonic, passphrase = '', account = 0, ind
   return { txhex: hex.encode(tx.extract()), txid: tx.id, vsize: tx.vsize };
 }
 
-function signCpPsbt(psbtB64, inputsValues, lockScripts, mnemonic, passphrase = '', account = 0, index = 0, type = 'nativeSegwit', prevTxs = {}, wif = null) {
-  if (!BTC_PATHS[type]) throw new Error('cp_sign_type_unsupported');
+function signCpPsbt(psbtB64, inputsValues, lockScripts, mnemonic, passphrase = '', account = 0, index = 0, type = 'nativeSegwit', prevTxs = {}, wif = null, network = 'mainnet') {
+  if (!btcPaths(network)[type]) throw new Error('cp_sign_type_unsupported');
   let seed = null, node;
   if (wif) node = importedNode(wif);
-  else { seed = mnemonicToSeedSync(mnemonic, passphrase); node = HDKey.fromMasterSeed(seed).derive(BTC_PATHS[type](account, index)); }
+  else { seed = mnemonicToSeedSync(mnemonic, passphrase); node = HDKey.fromMasterSeed(seed).derive(btcPaths(network)[type](account, index)); }
   const r = signRawCp(psbtB64, inputsValues, lockScripts, node, type, prevTxs);
   if (seed) seed.fill(0);
   return r;
@@ -519,6 +702,68 @@ function signEvm({ mnemonic, passphrase = '', account = 0, index = 0, to, valueW
   return { raw, hash };
 }
 
+// ── EIP-712 typed-data (eth_signTypedData_v4) ────────────────────────────────
+// Standard EIP-712 hash: keccak256(0x1901 ‖ domainSeparator ‖ hashStruct(primaryType, message)).
+// Signed with the same secp256k1 key + r‖s‖v envelope as personal_sign. Pure — no keys here.
+function eip712Digest(td) {
+  const types = td.types || {};
+  function deps(primary, found) {
+    found = found || [];
+    if (found.indexOf(primary) >= 0 || !types[primary]) return found;
+    found.push(primary);
+    for (const f of types[primary]) { const base = f.type.replace(/\[.*$/, ''); deps(base, found); }
+    return found;
+  }
+  function encodeType(primary) {
+    const d = deps(primary).filter((x) => x !== primary).sort();
+    return [primary].concat(d).map((t) => t + '(' + (types[t] || []).map((f) => f.type + ' ' + f.name).join(',') + ')').join('');
+  }
+  const typeHash = (primary) => keccak_256(enc.encode(encodeType(primary)));
+  function encodeData(primary, data) {
+    const parts = [typeHash(primary)];
+    for (const f of types[primary]) parts.push(encodeValue(f.type, data ? data[f.name] : undefined));
+    return concatBytes(...parts);
+  }
+  const hashStruct = (primary, data) => keccak_256(encodeData(primary, data));
+  function encodeValue(type, value) {
+    if (types[type]) return keccak_256(encodeData(type, value || {})); // referenced struct
+    const arr = type.match(/^(.*)\[(\d*)\]$/);
+    if (arr) { const base = arr[1]; const items = (value || []).map((v) => encodeValue(base, v)); return keccak_256(items.length ? concatBytes(...items) : new Uint8Array(0)); }
+    if (type === 'string') return keccak_256(enc.encode(String(value == null ? '' : value)));
+    if (type === 'bytes') { const b = typeof value === 'string' ? hex.decode(value.replace(/^0x/, '')) : (value || new Uint8Array(0)); return keccak_256(b); }
+    return atomicWord(type, value);
+  }
+  function atomicWord(type, value) {
+    const w = new Uint8Array(32);
+    if (type === 'bool') { w[31] = value ? 1 : 0; return w; }
+    if (type === 'address') { const h = String(value || '').replace(/^0x/, '').padStart(40, '0'); w.set(hex.decode(h).slice(-20), 12); return w; }
+    if (/^bytes\d+$/.test(type)) { const b = hex.decode(String(value || '').replace(/^0x/, '')); w.set(b.slice(0, 32), 0); return w; } // left-aligned
+    if (/^u?int\d*$/.test(type)) { let v = BigInt(value == null ? 0 : value); if (v < 0n) v = (1n << 256n) + v; return hex.decode(v.toString(16).padStart(64, '0')); }
+    return keccak_256(enc.encode(String(value == null ? '' : value))); // unknown → treat as string
+  }
+  const domainSep = hashStruct('EIP712Domain', td.domain || {});
+  const structHash = hashStruct(td.primaryType, td.message || {});
+  return keccak_256(concatBytes(new Uint8Array([0x19, 0x01]), domainSep, structHash));
+}
+function signTypedDataWithKey(td, privKey) {
+  const digest = eip712Digest(td);
+  const sig = secp256k1.sign(digest, privKey, { lowS: true });
+  const r = sig.r.toString(16).padStart(64, '0');
+  const s = sig.s.toString(16).padStart(64, '0');
+  const v = (sig.recovery + 27).toString(16).padStart(2, '0');
+  return '0x' + r + s + v;
+}
+function ethSignTypedData(typedData, account = 0) {
+  const s = requireUnlocked();
+  const td = typeof typedData === 'string' ? JSON.parse(typedData) : typedData;
+  if (!td || !td.types || !td.primaryType) throw new Error('bad_typed_data');
+  const seed = mnemonicToSeedSync(s.mnemonic, s.passphrase);
+  const node = HDKey.fromMasterSeed(seed).derive(`m/44'/60'/${account}'/0/0`);
+  const sig = signTypedDataWithKey(td, node.privateKey);
+  seed.fill(0);
+  return sig;
+}
+
 // ── Solana transactions (Phase 7b) — hand-rolled minimal serializer ──────────
 const SYS_PROGRAM = new Uint8Array(32); // 11111111111111111111111111111111
 const COMPUTE_BUDGET = base58.decode('ComputeBudget111111111111111111111111111111');
@@ -564,6 +809,50 @@ function compileSolMessage(feePayer, instrs, blockhash) {
   return concatBytes(...parts);
 }
 function solSignTx(message, privKey) { const sig = ed25519.sign(message, privKey); return { tx: concatBytes(compactU16(1), sig, message), sig }; }
+
+// Solana shortvec (compact-u16) decoder → [value, bytesRead]. Mirror of compactU16 (encoder).
+function readCompactU16(bytes, offset = 0) {
+  let val = 0, shift = 0, i = offset;
+  for (;;) { const b = bytes[i]; i += 1; val |= (b & 0x7f) << shift; if ((b & 0x80) === 0) break; shift += 7; }
+  return [val, i - offset];
+}
+function bytesEq(a, b) { if (a.length !== b.length) return false; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; }
+
+// dApp-provider Solana signing (session-based). solSignMessage: ed25519 over arbitrary bytes.
+function solSignMessage(msgB64, account = 0) {
+  const s = requireUnlocked();
+  const seed = mnemonicToSeedSync(s.mnemonic, s.passphrase);
+  const priv = solDerive(seed, `m/44'/501'/${account}'/0'`);
+  const sig = ed25519.sign(base64.decode(msgB64), priv);
+  seed.fill(0);
+  return base64.encode(sig);
+}
+// solSignTransaction: sign the message of a serialized [sigCount][sigs...][message] tx and place our
+// signature in OUR required-signer slot (found by matching our pubkey) — never a slot that isn't ours.
+function solSignTransaction(txB64, account = 0) {
+  const s = requireUnlocked();
+  const seed = mnemonicToSeedSync(s.mnemonic, s.passphrase);
+  const priv = solDerive(seed, `m/44'/501'/${account}'/0'`);
+  const pub = ed25519.getPublicKey(priv);
+  const raw = base64.decode(txB64);
+  const [sigCount, hdr] = readCompactU16(raw, 0);
+  const sigsStart = hdr, message = raw.slice(sigsStart + sigCount * 64);
+  // Versioned (v0) tx: the message starts with a version byte (high bit set) before the 3-byte header.
+  // Skip it to locate the account keys. The signature covers the FULL message (version byte included).
+  const vOff = (message[0] & 0x80) ? 1 : 0;
+  const numReq = message[vOff];
+  const [, aoBytes] = readCompactU16(message, vOff + 3);
+  const keysStart = vOff + 3 + aoBytes;
+  let our = -1;
+  for (let i = 0; i < numReq; i++) if (bytesEq(message.slice(keysStart + i * 32, keysStart + (i + 1) * 32), pub)) { our = i; break; }
+  if (our < 0) { seed.fill(0); throw new Error('not_a_required_signer'); }
+  const sig = ed25519.sign(message, priv);
+  const sigs = [];
+  for (let i = 0; i < sigCount; i++) sigs.push(raw.slice(sigsStart + i * 64, sigsStart + (i + 1) * 64));
+  sigs[our] = sig;
+  seed.fill(0);
+  return base64.encode(concatBytes(compactU16(sigCount), ...sigs, message));
+}
 
 function computeBudgetIxs(units, microLamports) {
   return [
@@ -786,28 +1075,32 @@ function _importedWif(id) { const s = requireUnlocked(); const e = (s.imported |
 
 // Operations that require an unlocked session.
 function requireUnlocked() { if (!SESSION) throw new Error('locked'); armAutoLock(); return SESSION; }
-function accounts(account = 0, index = 0) { const s = requireUnlocked(); return deriveAccounts(s.mnemonic, s.passphrase, account, index); }
-async function secrets(password, account = 0, index = 0) {
+function accounts(account = 0, index = 0, network = 'mainnet') { const s = requireUnlocked(); return deriveAccounts(s.mnemonic, s.passphrase, account, index, network); }
+async function secrets(password, account = 0, index = 0, network = 'mainnet') {
   const s = requireUnlocked();
   const blob = await idb('get', 'vault');
   if (blob) await decryptVault(blob, password); // SECURITY (audit H2): re-auth — throws 'wrong_password' on bad pw
-  return deriveSecrets(s.mnemonic, s.passphrase, account, index);
+  return deriveSecrets(s.mnemonic, s.passphrase, account, index, network);
 }
 function send(opts) { const s = requireUnlocked(); const wif = opts && opts.importedId ? _importedWif(opts.importedId) : null; return buildSend({ mnemonic: s.mnemonic, passphrase: s.passphrase, ...opts, wif }); }
-function signMessage(message, account = 0, type = 'nativeSegwit') {
+// Session-based wrapper for the dApp provider's ww_signPsbt (the approval window calls this after the
+// user approves). Signs only our inputs, sighash-allowlisted (see signProviderPsbt). Requires unlock.
+function signProvider(opts) { const s = requireUnlocked(); const wif = opts && opts.importedId ? _importedWif(opts.importedId) : null; return signProviderPsbt(opts.psbt, opts, s.mnemonic, s.passphrase, opts.account || 0, opts.index || 0, opts.type || 'nativeSegwit', opts.prevTxs || {}, wif, opts.network || 'mainnet'); }
+function signMessage(message, account = 0, type = 'nativeSegwit', network = 'mainnet') {
   const s = requireUnlocked();
   const seed = mnemonicToSeedSync(s.mnemonic, s.passphrase);
-  const path = (BTC_PATHS[type] || BTC_PATHS.nativeSegwit)(account, 0);
+  const paths = btcPaths(network);
+  const path = (paths[type] || paths.nativeSegwit)(account, 0);
   const node = HDKey.fromMasterSeed(seed).derive(path);
   try {
-    const address = btcFromPub(node.publicKey, type);
+    const address = btcFromPub(node.publicKey, type, network);
     if (type === 'nativeSegwit') return { signature: bip322SignWithKey(message, node.privateKey), format: 'BIP-322', address };
     if (type === 'legacy') return { signature: bsmSignWithKey(message, node.privateKey, true), format: 'BSM', address };
     throw new Error('message_type_unsupported'); // taproot / nested: no standard verifiable scheme here
   } finally { seed.fill(0); }
 }
-function signCp(psbtB64, inputsValues, lockScripts, account = 0, type = 'nativeSegwit', prevTxs = {}, importedId = null) { const s = requireUnlocked(); const wif = importedId ? _importedWif(importedId) : null; return signCpPsbt(psbtB64, inputsValues, lockScripts, s.mnemonic, s.passphrase, account, 0, type, prevTxs, wif); }
-function signStamp(psbtHex, account = 0, type = 'nativeSegwit', prevTxs = {}, importedId = null) { const s = requireUnlocked(); const wif = importedId ? _importedWif(importedId) : null; return signStampPsbt(psbtHex, s.mnemonic, s.passphrase, account, 0, type, prevTxs, wif); }
+function signCp(psbtB64, inputsValues, lockScripts, account = 0, type = 'nativeSegwit', prevTxs = {}, importedId = null, network = 'mainnet') { const s = requireUnlocked(); const wif = importedId ? _importedWif(importedId) : null; return signCpPsbt(psbtB64, inputsValues, lockScripts, s.mnemonic, s.passphrase, account, 0, type, prevTxs, wif, network); }
+function signStamp(psbtHex, account = 0, type = 'nativeSegwit', prevTxs = {}, importedId = null, network = 'mainnet') { const s = requireUnlocked(); const wif = importedId ? _importedWif(importedId) : null; return signStampPsbt(psbtHex, s.mnemonic, s.passphrase, account, 0, type, prevTxs, wif, network); }
 function sendEvm(opts) { const s = requireUnlocked(); return signEvm({ mnemonic: s.mnemonic, passphrase: s.passphrase, ...opts }); }
 function ethPersonalSign(message, account = 0) { const s = requireUnlocked(); return personalSign(message, s.mnemonic, s.passphrase, account, 0); }
 function sendSol(opts) { const s = requireUnlocked(); return buildSolTransfer({ mnemonic: s.mnemonic, passphrase: s.passphrase, ...opts }); }
@@ -824,11 +1117,17 @@ async function revealSeed(password) {
 function selfTest() {
   const M = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
   const a = deriveAccounts(M, '', 0, 0);
+  const t = deriveAccounts(M, '', 0, 0, 'testnet');
   const checks = {
     eth: a.ethereum.address === '0x9858EfFD232B4033E47d90003D41EC34EcaEda94',
     bip84: a.bitcoin.nativeSegwit.address === 'bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu',
     bip49: a.bitcoin.nestedSegwit.address === '37VucYSaXLCAsxYyAPfbSi9eh4iEcbShgf',
     bip86: a.bitcoin.taproot.address === 'bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr',
+    // testnet: coin type 1' → a DIFFERENT key, tb1… encoding, never colliding with mainnet
+    tnetSegwit: t.bitcoin.nativeSegwit.address === 'tb1q6rz28mcfaxtmd6v789l9rrlrusdprr9pqcpvkl',
+    tnetTaproot: /^tb1p/.test(t.bitcoin.taproot.address),
+    tnetDistinct: t.bitcoin.nativeSegwit.address !== a.bitcoin.nativeSegwit.address,
+    tnetSameEvm: t.ethereum.address === a.ethereum.address, // ETH/SOL: same key across networks
   };
   checks.all = Object.values(checks).every(Boolean);
   return { checks, derived: a };
@@ -839,8 +1138,9 @@ const WonderCore = {
   fromWIF, hasVault, createVault, unlock, lock, isUnlocked, destroyVault,
   importKey, removeImportedKey, importedAccounts, importedAddresses,
   accounts, secrets, revealSeed, armAutoLock, selfTest,
-  send, signMessage, signMessageImported, signCp, signStamp, psbtInputs, decodeTxOutputs, addrHash, sendEvm, sendSol, sendSpl, sendCnft, ethPersonalSign, buildSend, signMessageBIP322, bip322SignWithKey, bsmSignWithKey, signCpPsbt, signStampPsbt, signEvm,
-  personalSign, personalSignWithKey, buildSolTransfer, buildSplTransfer, buildCnftTransfer, erc20TransferData, erc20ApproveData, estimateVsize, buildHwSend, finalizeHwSend, version: '0.9.0',
+  send, signMessage, signMessageImported, signCp, signStamp, psbtInputs, decodeTxOutputs, addrHash, sendEvm, sendSol, sendSpl, sendCnft, ethPersonalSign, buildSend, buildUnsignedSend, signMessageBIP322, bip322SignWithKey, bsmSignWithKey, signCpPsbt, signStampPsbt, signEvm,
+  personalSign, personalSignWithKey, buildSolTransfer, buildSplTransfer, buildCnftTransfer, erc20TransferData, erc20ApproveData, estimateVsize, buildHwSend, finalizeHwSend,
+  ethSignTypedData, eip712Digest, signTypedDataWithKey, btcNet, btcPaths, version: '0.10.0', // 0.10.0: network-aware (testnet coin type 1')
 };
 
 // SECURITY (audit H1/H3): expose only the minimal app API on `window` — NOT the raw-key
@@ -849,9 +1149,9 @@ const WonderCore = {
 const PUBLIC_API = {
   generateMnemonic, validateMnemonic, hasVault, createVault, unlock, lock, isUnlocked, destroyVault,
   importKey, removeImportedKey, importedAccounts, importedAddresses,
-  accounts, secrets, revealSeed, deriveCustom, deriveReceiveAddrs, send, signMessage, signMessageImported, signCp, signStamp, psbtInputs, decodeTxOutputs, addrHash, sendEvm, sendSol, sendSpl, sendCnft,
+  accounts, secrets, revealSeed, deriveCustom, deriveReceiveAddrs, send, signMessage, signMessageImported, signCp, signStamp, psbtInputs, decodeTxOutputs, describePsbt, signProviderPsbt, signProvider, buildUnsignedSend, addrHash, sendEvm, sendSol, sendSpl, sendCnft, solSignMessage, solSignTransaction,
   buildHwSend, finalizeHwSend, // hardware (Ledger) BTC send — keyless: builds an annotated PSBT, finalizes with device sigs
-  ethPersonalSign, erc20TransferData, erc20ApproveData, selfTest,
+  ethPersonalSign, ethSignTypedData, erc20TransferData, erc20ApproveData, selfTest,
   resumeSession, getSessionSecret, onLockChange, armAutoLock, // cross-surface session (extension)
   version: WonderCore.version,
 };

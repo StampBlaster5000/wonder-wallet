@@ -3,168 +3,180 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Wonder Wallet — self-custodial BTC · ETH · SOL for collectors</title>
-  <meta name="description" content="The first modern, asset-aware, self-custodial wallet that makes the full Counterparty / Stamps / SRC-20 stack usable — with native Emblem Vault bridging across Ethereum and Solana." />
+  <title>Wonder Wallet — the self-custodial BTC · ETH · SOL wallet that works on every dApp</title>
+  <meta name="description" content="One self-custodial wallet for Bitcoin, Ethereum & Solana — Counterparty / Stamps / SRC-20 native, with a universal dApp connector that works on OpenSea, Jupiter and every site. Add to Chrome free." />
 
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="Wonder Wallet — Beta live" />
-  <meta property="og:description" content="Now in open beta: the self-custodial BTC · ETH · SOL wallet built for collectors — Counterparty / Stamps / SRC-20 first-class, asset-aware UTXO control, native Emblem Vault bridging. Download the Chrome extension." />
-  <meta property="og:url" content="https://build-1dadb019a5802eb5fee63753.emblem.build/pub/bitcoin_wallet/wonder-wallet/" />
-  <meta property="og:image" content="https://build-1dadb019a5802eb5fee63753.emblem.build/pub/bitcoin_wallet/wonder-wallet/og.png" />
+  <meta property="og:title" content="Wonder Wallet — one wallet for BTC · ETH · SOL, on every dApp" />
+  <meta property="og:description" content="Self-custodial Bitcoin / Ethereum / Solana wallet, Counterparty · Stamps · SRC-20 native, with a universal dApp connector (OpenSea, Jupiter & any site). Add to Chrome — free." />
+  <meta property="og:url" content="https://wonder-wallet.com/" />
+  <meta property="og:image" content="https://wonder-wallet.com/og.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Wonder Wallet — Beta live" />
-  <meta name="twitter:description" content="Now in open beta: the self-custodial BTC · ETH · SOL wallet for collectors — Counterparty / Stamps / SRC-20 first-class, asset-aware UTXO control, native Emblem Vault bridging. Download the Chrome extension." />
-  <meta name="twitter:image" content="https://build-1dadb019a5802eb5fee63753.emblem.build/pub/bitcoin_wallet/wonder-wallet/og.png" />
+  <meta name="twitter:title" content="Wonder Wallet — one wallet for BTC · ETH · SOL, on every dApp" />
+  <meta name="twitter:description" content="Self-custodial BTC / ETH / SOL wallet, Counterparty · Stamps · SRC-20 native, with a universal dApp connector (OpenSea, Jupiter & any site). Add to Chrome — free." />
+  <meta name="twitter:image" content="https://wonder-wallet.com/og.png" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="home.css" />
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
+  <link rel="apple-touch-icon" href="favicon-180.png" />
 </head>
 <body>
   <div class="aurora"></div>
-  <div class="gridfield" aria-hidden="true"></div>
+  <div class="gridfield"></div>
 
+  <!-- ───────────── TOPBAR ───────────── -->
   <header class="topbar">
-    <div class="brand">
-      <span class="seal" aria-hidden="true">
-        <svg viewBox="0 0 48 48" width="34" height="34">
-          <defs>
-            <radialGradient id="g" cx="50%" cy="35%" r="70%">
-              <stop offset="0%" stop-color="#F4D58D" /><stop offset="55%" stop-color="#E0B453" /><stop offset="100%" stop-color="#9a6f1f" />
-            </radialGradient>
-          </defs>
-          <circle cx="24" cy="24" r="22" fill="url(#g)" />
-          <circle cx="24" cy="24" r="22" fill="none" stroke="#000" stroke-opacity="0.18" stroke-width="1" />
-          <path d="M12 17 L17.5 32 L24 21 L30.5 32 L36 17" fill="none" stroke="#3a2606" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" />
-        </svg>
-      </span>
-      <div class="wordmark">
-        <span class="name">Wonder Wallet</span>
-        <span class="attribution">Secured by Emblem Vault</span>
+    <div class="in">
+      <div class="brand">
+        <span class="seal" aria-hidden="true">
+          <svg viewBox="0 0 48 48"><defs><radialGradient id="g" cx="50%" cy="34%" r="70%"><stop offset="0%" stop-color="#F4D58D"/><stop offset="55%" stop-color="#E0B453"/><stop offset="100%" stop-color="#9a6f1f"/></radialGradient></defs><circle cx="24" cy="24" r="22" fill="url(#g)"/><path d="M12 17 L17.5 32 L24 21 L30.5 32 L36 17" fill="none" stroke="#3a2606" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/></svg>
+        </span>
+        <div class="wordmark"><span class="name">Wonder Wallet</span><span class="sub">Secured by Emblem Vault</span></div>
       </div>
-    </div>
-    <div class="meta">
-      <a class="nav-social" href="https://github.com/StampBlaster5000/wonder-wallet" target="_blank" rel="noopener" title="GitHub — source code" aria-label="GitHub"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.5v-1.7c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.4-2.3 1.1-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.2 1.2a11 11 0 0 1 5.8 0c2.2-1.5 3.2-1.2 3.2-1.2.6 1.6.2 2.8.1 3.1.7.8 1.1 1.8 1.1 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.6.8.5 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg></a>
-      <a class="nav-social" href="https://t.me/TryWonderWallet" target="_blank" rel="noopener" title="Telegram community" aria-label="Telegram"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M21.9 4.27 18.7 19.4c-.24 1.07-.87 1.33-1.76.83l-4.9-3.6-2.36 2.27c-.26.26-.48.48-.98.48l.35-4.98 9.06-8.19c.4-.35-.08-.55-.6-.2L6.31 13.06l-4.83-1.51c-1.05-.33-1.07-1.05.22-1.55l18.9-7.29c.87-.32 1.63.2 1.3 1.56z"/></svg></a>
-      <button class="nav-login" id="loginBtn" title="Open the Wonder Terminal (hardware-wallet &amp; dashboard access)">Log in</button>
-      <button class="nav-dl" id="downloadBtn">Download</button>
-      <span class="badge" id="phaseBadge">Beta</span>
-      <span class="ver" id="verTag">v0.31.0</span>
+      <nav class="nav">
+        <a class="icon" href="https://github.com/StampBlaster5000/wonder-wallet" target="_blank" rel="noopener" title="GitHub" aria-label="GitHub"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.5v-1.7c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.4-2.3 1.1-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.2 1.2a11 11 0 0 1 5.8 0c2.2-1.5 3.2-1.2 3.2-1.2.6 1.6.2 2.8.1 3.1.7.8 1.1 1.8 1.1 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.6.8.5 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg></a>
+        <a class="icon" href="https://t.me/TryWonderWallet" target="_blank" rel="noopener" title="Telegram" aria-label="Telegram"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M21.9 4.27 18.7 19.4c-.24 1.07-.87 1.33-1.76.83l-4.9-3.6-2.36 2.27c-.26.26-.48.48-.98.48l.35-4.98 9.06-8.19c.4-.35-.08-.55-.6-.2L6.31 13.06l-4.83-1.51c-1.05-.33-1.07-1.05.22-1.55l18.9-7.29c.87-.32 1.63.2 1.3 1.56z"/></svg></a>
+        <a class="ghost hide-sm" href="developers.html">Developers</a>
+        <a class="ghost" href="app.html">Open Terminal</a>
+      </nav>
     </div>
   </header>
 
-  <main class="wrap">
-    <!-- ─────────────── HERO ─────────────── -->
-    <section class="hero2">
-      <div class="hero2-copy">
-        <div class="kicker"><span class="kdot"></span>Bitcoin · Ethereum · Solana — from one seed</div>
-        <h1>The collector's <em>command&nbsp;deck</em> for&nbsp;Bitcoin.</h1>
-        <p class="lede">A fully self-custodial wallet that makes the entire <b>Counterparty · Bitcoin&nbsp;Stamps · SRC-20</b> stack usable — asset-aware UTXO control, a native on-chain DEX, the full issuance suite, and Emblem&nbsp;Vault bridging to Ethereum &amp; Solana. Your keys, your art, your data — all local.</p>
-        <div class="hero2-cta">
-          <button class="cta-gold lg" id="heroOpen">Open the wallet →</button>
-          <button class="cta-ghost lg" id="heroDownload">Download for Chrome <span class="beta-tag">Beta live</span></button>
+  <main>
+    <!-- ───────────── HERO ───────────── -->
+    <section class="hero"><div class="wrap in">
+      <div class="hero-copy">
+        <span class="eyebrow"><span class="kdot"></span>Bitcoin · Ethereum · Solana — one seed</span>
+        <h1>One wallet for it all.<br><span class="grad">On every&nbsp;dApp.</span></h1>
+        <p class="lede">Wonder Wallet is a fully <b>self-custodial</b> wallet for Bitcoin, Ethereum &amp; Solana — with the entire <b>Counterparty · Stamps · SRC-20</b> stack built in and a universal connector that shows up automatically on <b>OpenSea, Jupiter</b> and any site you visit. Your keys, your art, your data — all local.</p>
+        <div class="cta-row">
+          <a class="btn btn-gold" href="https://chromewebstore.google.com/detail/wonder-wallet/jbdjhkopmpiihcnemgacddimdopbnnin" target="_blank" rel="noopener">
+            <svg viewBox="0 0 48 48" width="22" height="22" aria-hidden="true"><circle cx="24" cy="24" r="10" fill="#fff"/><path fill="#EA4335" d="M24 14h18.8A24 24 0 0 0 3.4 12l8.9 15.4A10 10 0 0 1 24 14z"/><path fill="#4285F4" d="M34 24a10 10 0 0 1-14.3 9l-8.9 15.4A24 24 0 0 0 44.6 33H33.9a9.9 9.9 0 0 1 .1-9z"/><path fill="#34A853" d="M12.3 27.4 3.4 12A24 24 0 0 0 24 48l8.9-15.4A10 10 0 0 1 12.3 27.4z"/><circle cx="24" cy="24" r="8.5" fill="none" stroke="#1a73e8" stroke-width="0"/></svg>
+            Add to Chrome — Free <span class="free">Free</span>
+          </a>
+          <a class="btn btn-ghost" href="app.html">Open the Terminal →</a>
         </div>
-        <div class="sync" id="syncBadges">
-          <span class="syncpill load">syncing…</span>
+        <div class="browsers">
+          <span class="lbl">Works on</span>
+          <div class="bset">
+            <span class="bchip"><svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="9" fill="#4285F4"/><path fill="#EA4335" d="M24 15h17A20 20 0 0 0 6 13l7 12a11 11 0 0 1 11-10z"/><path fill="#FBBC05" d="M33 24a9 9 0 0 1-13 8L13 44A20 20 0 0 0 42 31H32z"/><path fill="#34A853" d="M13 25 6 13A20 20 0 0 0 24 44l7-12a11 11 0 0 1-18-7z"/></svg>Chrome</span>
+            <span class="bchip"><svg viewBox="0 0 24 24" fill="#fb542b"><path d="M12 2 5 4l-1 5 2 8 6 5 6-5 2-8-1-5-7-2z"/></svg>Brave</span>
+            <span class="bchip"><svg viewBox="0 0 24 24" fill="#3bd0ff"><circle cx="12" cy="12" r="10"/></svg>Edge</span>
+            <span class="bchip"><svg viewBox="0 0 24 24" fill="#ff1b2d"><ellipse cx="12" cy="12" rx="7" ry="10"/></svg>Opera</span>
+            <span class="bchip"><svg viewBox="0 0 24 24" fill="#fc6d5f"><circle cx="12" cy="12" r="9"/></svg>Arc</span>
+          </div>
+        </div>
+        <div class="sync" id="syncBadges"><span class="syncpill load">syncing…</span></div>
+      </div>
+      <div class="hero-art" aria-label="Bitcoin Stamps &amp; Rare Pepe collectibles">
+        <div class="glow"></div>
+        <figure class="card c1"><img src="shots/kevin.png" alt="Kevin — OG Bitcoin Stamp #4258" loading="eager"/><figcaption class="cap">Kevin · OG Stamp #4258</figcaption></figure>
+        <figure class="card c2"><img src="shots/stamp-green.png" alt="Nakamoto Card — Rare Pepe" loading="lazy"/><figcaption class="cap">Nakamoto · Rare Pepe</figcaption></figure>
+        <figure class="card c3"><img src="shots/pixelscene.png" alt="Bitcoin Stamp pixel art" loading="lazy"/><figcaption class="cap">Bitcoin Stamp</figcaption></figure>
+        <figure class="card c4"><img src="shots/zombiepepe.png" alt="Zombie Pepe stamp" loading="lazy"/><figcaption class="cap">Stamp · Pepe</figcaption></figure>
+      </div>
+    </div></section>
+
+    <!-- ───────────── PROOF STRIP ───────────── -->
+    <section class="proof"><div class="wrap in">
+      <span class="lbl">Connects to the apps you already use</span>
+      <div class="names">
+        <span class="nm">OpenSea</span><span class="nm">Jupiter</span><span class="nm">Magic&nbsp;Eden</span>
+        <span class="nm">Counterparty</span><span class="nm">Stampchain</span><span class="nm">Emblem&nbsp;Vault</span>
+      </div>
+    </div></section>
+
+    <!-- ───────────── CHAINS ───────────── -->
+    <section class="block"><div class="wrap">
+      <div class="chains">
+        <div class="chain"><span class="ic btc"><svg viewBox="0 0 32 32" width="22" height="22" fill="currentColor"><path d="M21 14c1.5-.8 2-2.3 1.6-4-.5-2.2-2.4-3-5-3.2V3h-2.4v3.6h-1.9V3H11v3.8H6.5v2.6h1.7c.9 0 1.2.5 1.2 1v9.2c0 .5-.3.8-.8.8H6.2L6 23H11v3.8h2.4V23h1.9v3.8H17V23c4-.2 6.6-1.2 7-4.7.3-2.2-.8-3.5-2-4.3zM13.4 9.3c1.3 0 4.6-.4 4.6 1.6s-3.3 1.5-4.6 1.5zm0 11v-3.5c1.6 0 5.4-.4 5.4 1.7s-3.8 1.8-5.4 1.8z"/></svg></span><div><b>Bitcoin</b><small>Native SegWit · Taproot · Counterparty · Stamps · SRC-20</small></div></div>
+        <div class="chain"><span class="ic eth"><svg viewBox="0 0 32 32" width="18" height="18" fill="currentColor"><path d="M16 3l-8 13 8 4.5L24 16 16 3zM8 17.6L16 29l8-11.4-8 4.6-8-4.6z"/></svg></span><div><b>Ethereum</b><small>EIP-1559 · ERC-20 · EIP-6963 · Emblem Vault</small></div></div>
+        <div class="chain"><span class="ic sol"><svg viewBox="0 0 32 32" width="18" height="18" fill="currentColor"><path d="M7 9h17l-4 4H3l4-4zm0 7h17l-4 4H3l4-4zm-4 7h17l4-4H7l-4 4z"/></svg></span><div><b>Solana</b><small>SOL · SPL · cNFTs · Wallet Standard</small></div></div>
+      </div>
+    </div></section>
+
+    <!-- ───────────── UNIVERSAL CONNECT (highlight) ───────────── -->
+    <section class="block" style="padding-top:0"><div class="wrap">
+      <div class="hi">
+        <div>
+          <span class="eyebrow">Universal dApp connector</span>
+          <h3>Connect to any dApp — across three chains.</h3>
+          <p>Wonder Wallet announces itself with the modern wallet standards (EIP-6963 for Ethereum, the Wallet Standard for Solana, and a UniSat-shaped Bitcoin API), so it appears in the wallet list <b>automatically</b> — no site integration required. Every connection and every signature is approved by you, in the wallet. Keys never leave your device.</p>
+          <div class="apps"><span>OpenSea</span><span>Jupiter</span><span>Magic Eden</span><span>stampchain.io</span><span>horizon.market</span><span>+ any site</span></div>
+        </div>
+        <div class="hi-visual">
+          <div class="v"><img src="store/05-multichain.png" alt="Multi-chain portfolio" loading="lazy"/></div>
+          <div class="v"><img src="store/02-collectibles.png" alt="Collectibles" loading="lazy"/></div>
+          <div class="v"><img src="shots/dex.png" alt="Counterparty DEX" loading="lazy"/></div>
+          <div class="v"><img src="store/03-asset-aware.png" alt="Asset-aware coin control" loading="lazy"/></div>
         </div>
       </div>
-      <div class="hero2-art" aria-label="Bitcoin Stamps &amp; Rare Pepe art">
-        <figure class="art a1"><img src="shots/stamp-green.png" alt="Nakamoto Card — Rare Pepe" loading="lazy"/><figcaption>Nakamoto Card · Rare Pepe</figcaption></figure>
-        <figure class="art a2"><img src="shots/pixelscene.png" alt="Bitcoin Stamp pixel art" loading="lazy"/><figcaption>Bitcoin Stamp</figcaption></figure>
-        <figure class="art a3"><img src="shots/zombiepepe.png" alt="Zombie Pepe stamp" loading="lazy"/><figcaption>Stamp · Pepe</figcaption></figure>
-        <figure class="art a4"><img src="shots/kevin.png" alt="Kevin — the original Bitcoin Stamp #4258" loading="lazy"/><figcaption>Kevin · OG Stamp #4258</figcaption></figure>
-      </div>
-    </section>
+    </div></section>
 
-    <!-- ─────────────── CHAIN STRIP ─────────────── -->
-    <section class="chainstrip">
-      <div class="cs"><span class="cs-ic btc"><svg viewBox="0 0 32 32" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M21 14c1.5-.8 2-2.3 1.6-4-.5-2.2-2.4-3-5-3.2V3h-2.4v3.6h-1.9V3H11v3.8H6.5v2.6h1.7c.9 0 1.2.5 1.2 1v9.2c0 .5-.3.8-.8.8H6.2L6 23H11v3.8h2.4V23h1.9v3.8H17V23c4-.2 6.6-1.2 7-4.7.3-2.2-.8-3.5-2-4.3zM13.4 9.3c1.3 0 4.6-.4 4.6 1.6s-3.3 1.5-4.6 1.5zm0 11v-3.5c1.6 0 5.4-.4 5.4 1.7s-3.8 1.8-5.4 1.8z"/></svg></span><div><b>Bitcoin</b><small>P2WPKH · Taproot · Counterparty · Stamps · SRC-20</small></div></div>
-      <div class="cs"><span class="cs-ic eth"><svg viewBox="0 0 32 32" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M16 3l-8 13 8 4.5L24 16 16 3zM8 17.6L16 29l8-11.4-8 4.6-8-4.6z"/></svg></span><div><b>Ethereum</b><small>EIP-1559 · ERC-20 · Emblem Vault</small></div></div>
-      <div class="cs"><span class="cs-ic sol"><svg viewBox="0 0 32 32" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M7 9h17l-4 4H3l4-4zm0 7h17l-4 4H3l4-4zm-4 7h17l4-4H7l-4 4z"/></svg></span><div><b>Solana</b><small>SOL · SPL · cNFTs · Emblem</small></div></div>
-    </section>
-
-    <!-- ─────────────── FEATURE SHOWCASE ─────────────── -->
-    <section class="showcase">
-      <div class="sc-head">
-        <h2>Power tools, built in.</h2>
-        <p class="fine">Everything the Counterparty / Stamps power-user has wanted in one wallet — no menu sprawl, no custodial middlemen.</p>
-      </div>
+    <!-- ───────────── POWER TOOLS ───────────── -->
+    <section class="block" style="padding-top:0"><div class="wrap">
+      <div class="shead"><h2>Power tools, built in.</h2><p>Everything the Counterparty / Stamps power-user has wanted — in one self-custodial wallet, no custodial middlemen.</p></div>
       <div class="shots">
-        <figure class="shot"><img src="shots/dex.png" alt="Counterparty DEX" loading="lazy"/>
-          <figcaption><b>Native DEX</b> — trustless on-chain order book. Place, browse &amp; cancel orders across every pair.</figcaption></figure>
-        <figure class="shot"><img src="shots/issuance.png" alt="Issuance suite" loading="lazy"/>
-          <figcaption><b>Issuance suite</b> — create, issue-more, lock, transfer, re-describe &amp; mint subassets, with live name validation.</figcaption></figure>
-        <figure class="shot"><img src="shots/vaults.png" alt="Emblem Vault bridge" loading="lazy"/>
-          <figcaption><b>Emblem bridge</b> — wrap Bitcoin/Counterparty assets into vault NFTs on Ethereum &amp; Solana, redeem any time.</figcaption></figure>
+        <figure class="shot"><img src="shots/dex.png" alt="Counterparty DEX" loading="lazy"/><div class="cap"><b>Native DEX</b> — trustless on-chain order book. Place, browse &amp; cancel orders across every pair.</div></figure>
+        <figure class="shot"><img src="shots/issuance.png" alt="Issuance suite" loading="lazy"/><div class="cap"><b>Issuance suite</b> — create, issue-more, lock, transfer, re-describe &amp; mint subassets, with live name checks.</div></figure>
+        <figure class="shot"><img src="shots/vaults.png" alt="Emblem Vault bridge" loading="lazy"/><div class="cap"><b>Emblem bridge</b> — wrap Bitcoin/Counterparty assets into vault NFTs on Ethereum &amp; Solana, redeem any time.</div></figure>
       </div>
-      <div class="feat-grid">
-        <div class="feat"><span class="fic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span><b>Asset-aware UTXO control</b><small>Coin-control that never spends a Stamp, inscription or asset-bearing output — union of Counterparty + Ordinals indexers.</small></div>
+      <div class="fgrid">
+        <div class="feat"><span class="fic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span><b>Asset-aware UTXO control</b><small>Coin-control that never spends a Stamp, inscription or asset-bearing output.</small></div>
         <div class="feat"><span class="fic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="6.5" rx="7" ry="3"/><path d="M5 6.5v11c0 1.7 3.1 3 7 3s7-1.3 7-3v-11"/><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/></svg></span><b>SRC-20 &amp; Stamp minting</b><small>Deploy/mint SRC-20 with live ticker checks, mint Bitcoin Stamp art on-chain, run Fairminters.</small></div>
-        <div class="feat"><span class="fic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg></span><b>Hardware &amp; local-only</b><small>Ledger via WebHID, Argon2id-encrypted vault in your browser. No server holds your data — ever.</small></div>
-        <div class="feat"><span class="fic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v10m0 0l-4-4m4 4l4-4M5 19h14"/></svg></span><b>Your data, portable</b><small>Watch-list, labels &amp; settings live in your browser; export a keyless backup any time. Seed restores funds.</small></div>
+        <div class="feat"><span class="fic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg></span><b>Hardware &amp; local-only</b><small>Ledger via WebHID, Argon2id-encrypted vault in your browser. No server holds your data.</small></div>
+        <div class="feat"><span class="fic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v10m0 0l-4-4m4 4l4-4M5 19h14"/></svg></span><b>Your data, portable</b><small>Watch-list, labels &amp; settings live in your browser; export a keyless backup any time.</small></div>
       </div>
-    </section>
+    </div></section>
 
-    <!-- ─────────────── SECURITY ─────────────── -->
-    <section class="card">
-      <div class="card-h"><h2>Security architecture</h2><span class="tag">local-first · self-custodial</span></div>
-      <div class="pipe">
-        <div class="node">Your browser<small>keys · settings · vault</small></div>
-        <div class="arrow">→</div>
-        <div class="node accent">Stateless reader<small>proxy · cache · validation</small></div>
-        <div class="arrow">→</div>
-        <div class="node">Open data sources<small>mempool · CP Core v2 · stampchain · RPC</small></div>
+    <!-- ───────────── SECURITY ───────────── -->
+    <section class="block" style="padding-top:0"><div class="wrap">
+      <div class="seccard">
+        <div class="shead" style="text-align:left;margin:0 0 6px;max-width:none"><h2 style="font-size:26px">Security architecture</h2></div>
+        <div class="pipe">
+          <div class="node">Your browser<small>keys · settings · Argon2id vault</small></div>
+          <div class="arr">→</div>
+          <div class="node accent">Stateless reader<small>proxy · cache · validation</small></div>
+          <div class="arr">→</div>
+          <div class="node">Open data sources<small>mempool · CP Core · stampchain · RPC</small></div>
+        </div>
+        <p class="fine">Keys are generated &amp; Argon2id-encrypted <b>in your browser</b> and never sent anywhere. The reader holds <b>zero</b> user data — it only forwards public blockchain reads. Every dApp connection and signature is <b>approved by you</b> in the wallet. Open source, no remote code, no data collection.</p>
       </div>
-      <p class="fine">Keys are generated &amp; Argon2id-encrypted in your browser and never sent anywhere. The reader holds <b>zero</b> user data — it only forwards public blockchain reads. In the <b>browser extension</b> it disappears entirely: the wallet reads the chains directly. Your seed phrase backs up funds; a keyless settings file backs up the rest.</p>
-    </section>
+    </div></section>
 
-    <!-- ─────────────── CHAINS & DERIVATION ─────────────── -->
-    <section class="card">
-      <div class="card-h"><h2>Chains &amp; derivation</h2><span class="tag">one seed → three chains</span></div>
-      <div id="chains" class="chains"></div>
-      <div class="card-h sub"><h3>Bitcoin address types</h3></div>
-      <div id="btcTypes" class="btctypes"></div>
-    </section>
-
-    <!-- ─────────────── DOWNLOAD CTA ─────────────── -->
-    <section class="dlband">
-      <div>
-        <h2>Take it self-custodial. <span class="beta-tag">Beta live</span></h2>
-        <p class="fine">The Wonder Wallet browser extension (Chrome · Brave · Edge) is now in <b>open beta</b> — isolated storage, strict CSP, no remote code, and local keys. Grab the build, load it unpacked, and kick the tires with a fresh test seed.</p>
+    <!-- ───────────── DOWNLOAD BAND ───────────── -->
+    <section class="wrap"><div class="dlband">
+      <span class="eyebrow"><span class="kdot"></span>Free · Open source · Self-custodial</span>
+      <h2 style="margin-top:14px">Take it self-custodial.</h2>
+      <p>Add Wonder Wallet to your browser in one click — <b>Chrome, Brave, Edge, Opera &amp; Arc</b>. Create a wallet or restore your seed, and you're collecting across three chains in under a minute.</p>
+      <div class="cta-row">
+        <a class="btn btn-gold" href="https://chromewebstore.google.com/detail/wonder-wallet/jbdjhkopmpiihcnemgacddimdopbnnin" target="_blank" rel="noopener">
+          <svg viewBox="0 0 48 48" width="22" height="22" aria-hidden="true"><circle cx="24" cy="24" r="10" fill="#fff"/><path fill="#EA4335" d="M24 14h18.8A24 24 0 0 0 3.4 12l8.9 15.4A10 10 0 0 1 24 14z"/><path fill="#4285F4" d="M34 24a10 10 0 0 1-14.3 9l-8.9 15.4A24 24 0 0 0 44.6 33H33.9a9.9 9.9 0 0 1 .1-9z"/><path fill="#34A853" d="M12.3 27.4 3.4 12A24 24 0 0 0 24 48l8.9-15.4A10 10 0 0 1 12.3 27.4z"/></svg>
+          Add to Chrome — Free
+        </a>
+        <a class="btn btn-ghost" href="app.html">Open the Terminal →</a>
       </div>
-      <button class="cta-gold lg" id="dlbandBtn">Download the beta ⬇</button>
-    </section>
+      <p class="microcopy">Prefer the bleeding edge? <a href="#" id="betaBtn">Get the latest beta build</a> (load unpacked).</p>
+    </div></section>
   </main>
 
   <div id="modal" class="modal" hidden><div class="modal-card" id="modalCard"></div></div>
 
-  <script src="wallet-core.js"></script>
-
-  <footer class="foot">
+  <footer class="foot"><div class="in">
     <span>Wonder Wallet · independent community wallet</span><span class="dot">·</span>
     <span>Bridge powered by Emblem Vault · Built on Emblem&nbsp;Build</span><span class="dot">·</span>
-    <span><a href="https://github.com/StampBlaster5000/wonder-wallet" class="foot-link" target="_blank" rel="noopener">GitHub</a></span><span class="dot">·</span>
-    <span><a href="https://t.me/TryWonderWallet" class="foot-link" target="_blank" rel="noopener">Telegram</a></span><span class="dot">·</span>
-    <span><a href="./privacy.html" class="foot-link">Privacy Policy</a></span>
-  </footer>
+    <a href="https://github.com/StampBlaster5000/wonder-wallet" target="_blank" rel="noopener">GitHub</a><span class="dot">·</span>
+    <a href="https://t.me/TryWonderWallet" target="_blank" rel="noopener">Telegram</a><span class="dot">·</span>
+    <a href="developers.html">Developers</a><span class="dot">·</span>
+    <a href="privacy.html">Privacy</a>
+  </div></footer>
 
-  <script src="app.js"></script>
-  <script src="coin-control.js"></script>
-  <script src="cp-actions.js"></script>
-  <script src="evm.js"></script>
-  <script src="sol.js"></script>
-  <script src="emblem.js"></script>
-  <script src="hardware-ui.js"></script>
-  <script src="minting.js"></script>
-  <script src="dapps.js"></script>
-  <script src="src101.js"></script>
-  <script src="backup.js"></script>
   <script src="status.js"></script>
-  <script src="qrcode.js"></script>
-  <script src="wallet-ui.js"></script>
-  <script src="topbar.js"></script>
 </body>
 </html>

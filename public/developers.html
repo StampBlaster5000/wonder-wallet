@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Wonder Wallet — Developers</title>
+<meta name="description" content="Integrate Wonder Wallet into your dApp: window.wonderWallet (Bitcoin / Stamps / Counterparty), EIP-6963 (Ethereum), and Wallet Standard (Solana)." />
+<meta property="og:title" content="Wonder Wallet — Developer docs" />
+<meta property="og:description" content="Add Wonder Wallet to your dApp: Bitcoin (window.wonderWallet), Ethereum (EIP-6963), Solana (Wallet Standard)." />
+<meta property="og:image" content="https://wonder-wallet.com/store/marquee-1400x560.png" />
+<meta property="og:url" content="https://wonder-wallet.com/developers.html" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Wonder Wallet — Developer docs" />
+<meta name="twitter:description" content="Integrate Wonder Wallet: Bitcoin, Ethereum, Solana." />
+<meta name="twitter:image" content="https://wonder-wallet.com/store/marquee-1400x560.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  *{box-sizing:border-box} body{margin:0;background:#0a0a0f;color:#ECE8E1;font-family:'Inter',system-ui,sans-serif;line-height:1.6}
+  .wrap{max-width:820px;margin:0 auto;padding:56px 22px 90px}
+  .brand{display:flex;align-items:center;gap:12px;margin-bottom:30px}
+  .seal{width:40px;height:40px;border-radius:50%;background:radial-gradient(circle at 50% 34%,#F4D58D,#E0B453 55%,#9a6f1f)}
+  .wm{font-family:'Fraunces',serif;font-weight:600;font-size:20px;background:linear-gradient(180deg,#fff,#F4D58D);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  h1{font-family:'Fraunces',serif;font-weight:600;font-size:38px;line-height:1.1;margin:0 0 10px}
+  h1 em{font-style:normal;color:#E0B453}
+  h2{font-family:'Fraunces',serif;font-weight:600;font-size:24px;margin:38px 0 10px;color:#fff}
+  h3{font-size:15px;color:#E0B453;margin:22px 0 6px;letter-spacing:.02em}
+  p,li{color:#c9c4d0} a{color:#E0B453}
+  code{font-family:'JetBrains Mono',monospace;font-size:.92em;background:#17131f;padding:1px 6px;border-radius:5px;color:#f0d59a}
+  pre{background:#13131c;border:1px solid #22222e;border-radius:12px;padding:16px;overflow:auto;font-family:'JetBrains Mono',monospace;font-size:13px;line-height:1.55;color:#ECE8E1}
+  .lede{font-size:18px;color:#b6b1bf;max-width:620px}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0 6px}
+  .chip{font-size:12.5px;font-weight:600;color:#E0B453;border:1px solid rgba(224,180,83,.4);border-radius:999px;padding:5px 13px}
+  .note{background:#17131f;border:1px solid #2a2436;border-radius:12px;padding:14px 16px;font-size:14px;margin:18px 0}
+  .foot{margin-top:50px;padding-top:20px;border-top:1px solid #22222e;color:#8b8597;font-size:13px}
+</style>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
+  <link rel="apple-touch-icon" href="favicon-180.png" />
+</head>
+<body>
+<div class="wrap">
+  <div class="brand"><span class="seal"></span><span class="wm">Wonder Wallet</span></div>
+  <h1>Integrate <em>Wonder Wallet</em></h1>
+  <p class="lede">A self-custodial browser wallet for <b>Bitcoin, Ethereum &amp; Solana</b> — with a standards-based dApp provider that works on <b>any website</b>. Add “Connect Wonder Wallet” in a few lines, or get it for free through the wallet standards.</p>
+  <div class="chips"><span class="chip">Bitcoin · Stamps · SRC-20 · Counterparty</span><span class="chip">Ethereum · EIP-6963</span><span class="chip">Solana · Wallet Standard</span><span class="chip">Available on every site</span></div>
+
+  <div class="note">🌐 <b>Wonder Wallet injects on every website</b> (v0.50+) — like MetaMask/Phantom — so your dApp can offer it with no allowlisting. Every connection and every signature is approved by the user in the extension; keys never leave their device.</div>
+  <div class="note">⚡ <b>Ethereum &amp; Solana need zero code from you.</b> Wonder Wallet announces itself via <b>EIP-6963</b> and the <b>Wallet Standard</b>, so it appears automatically in any dApp using a modern connect kit (RainbowKit, wagmi, viem, web3modal, <code>@solana/wallet-adapter</code>). The Bitcoin API below is the part worth wiring up.</div>
+
+  <h2>Bitcoin — <code>window.wonderWallet</code></h2>
+  <p>An EIP-1193-style provider (mirrors the UniSat/OKX shape, so it’s familiar). Detect it, connect, then request signatures — every signature is approved by the user in the extension.</p>
+  <h3>Detect & connect</h3>
+<pre>function onWonderWallet(cb){
+  if (window.wonderWallet) return cb(window.wonderWallet);
+  window.addEventListener('wonder-wallet#initialized', () =&gt; cb(window.wonderWallet), { once:true });
+}
+
+onWonderWallet(async (ww) =&gt; {
+  // Returns { accounts:[address], proof:{ address, message, signature, scheme:'BIP-322' } }
+  const { accounts, proof } = await ww.requestAccounts();
+  // proof = Sign-In With Bitcoin: verify server-side (see below) for one-round-trip auth.
+});</pre>
+
+  <h3>Methods</h3>
+<pre>await ww.getAccounts();                 // [] until connected
+await ww.getPublicKey();                // hex
+await ww.getBalances();                 // { confirmed, unconfirmed, total } (sats)
+await ww.signMessage('hello');          // BIP-322 signature
+await ww.signPsbt(psbtHex, {            // sign ONLY the user's inputs
+  toSignInputs:[{ index:0 }],           // optional; defaults to all of the user's inputs
+  autoFinalized:false,                  // false → returns signed PSBT; true → finalized tx hex
+});
+await ww.broadcastTransaction(txHex);   // { txid }
+await ww.disconnect();
+ww.on('accountsChanged', a =&gt; {});
+ww.on('disconnect', () =&gt; {});</pre>
+
+  <h3>Verify the Sign-In proof (server-side)</h3>
+  <p>At connect, the wallet auto-signs a message it generated: <code>Domain</code>, <code>Nonce</code>, <code>Issued At</code>. Verify (1) the <code>Domain</code> is your origin, (2) <code>Issued At</code> is within 5 minutes, and (3) the BIP-322 signature is valid for the returned address. One round trip, no second prompt.</p>
+
+  <h2>Ethereum — EIP-1193 / EIP-6963</h2>
+  <p>With <b>wagmi / RainbowKit / viem / web3modal</b> you do <b>nothing</b> — Wonder Wallet shows up in the wallet list. To wire it by hand, listen for the EIP-6963 announcement:</p>
+<pre>window.addEventListener('eip6963:announceProvider', (e) =&gt; {
+  if (e.detail.info.rdns === 'com.wonderwallet') {
+    const provider = e.detail.provider;        // standard EIP-1193
+    provider.request({ method:'eth_requestAccounts' });
+  }
+});
+window.dispatchEvent(new Event('eip6963:requestProvider'));</pre>
+  <h3>Supported methods</h3>
+<pre>await p.request({ method:'eth_requestAccounts' });   // [address] — prompts to connect
+await p.request({ method:'eth_accounts' });          // [] until connected
+await p.request({ method:'eth_chainId' });           // '0x1'
+await p.request({ method:'personal_sign', params:[msgHex, address] });
+await p.request({ method:'eth_signTypedData_v4', params:[address, typedDataJSON] });  // EIP-712
+await p.request({ method:'eth_sendTransaction', params:[{ to, value, data }] });      // signs, broadcasts → tx hash
+p.on('accountsChanged', a =&gt; {});
+p.on('chainChanged', c =&gt; {});</pre>
+
+  <h2>Solana — Wallet Standard</h2>
+  <p>Use <code>@solana/wallet-adapter</code> (or any Wallet-Standard kit) and “Wonder Wallet” appears in the wallet list automatically — no code needed. Supported features:</p>
+<pre>standard:connect / standard:disconnect / standard:events
+solana:signMessage            // sign arbitrary bytes
+solana:signTransaction        // sign, returns the signed tx
+solana:signAndSendTransaction // sign + submit → signature</pre>
+
+  <div class="note">🔐 <b>The user is always in control.</b> Connecting is per-origin and revocable (Advanced → Connected sites). Every signature shows a full clear-signing breakdown — amounts, fee, and a warning if a transaction would spend a Stamp/SRC-20/Counterparty-bearing UTXO. Keys never leave the user’s device.</div>
+
+  <p style="margin-top:26px">Questions or want to be listed as a supported dApp? Open an issue on <a href="https://github.com/StampBlaster5000/wonder-wallet">GitHub</a> or say hi in the <a href="https://t.me/TryWonderWallet">Telegram</a>.</p>
+
+  <div class="foot">Wonder Wallet · self-custodial · <a href="./">wonder-wallet.com</a> · <a href="./privacy.html">Privacy</a></div>
+</div>
+</body>
+</html>

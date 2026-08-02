@@ -9,12 +9,14 @@ const { rpc, pool, cacheGet, cacheSet, fetchJson } = require('./http');
 
 // NFT gallery via Alchemy NFT API (enabled when ALCHEMY_KEY is set). Tolerate any env casing.
 const ALCHEMY_KEY = process.env.ALCHEMY_KEY || (function () { const k = Object.keys(process.env).find((x) => x.toLowerCase() === 'alchemy_key'); return k ? process.env[k] : null; })();
-const ALCHEMY_NET = { ethereum: 'eth-mainnet', base: 'base-mainnet', arbitrum: 'arb-mainnet' };
+const ALCHEMY_NET = { ethereum: 'eth-mainnet', base: 'base-mainnet', arbitrum: 'arb-mainnet', sepolia: 'eth-sepolia' };
 
 const NETWORKS = {
   ethereum: { name: 'Ethereum', chainId: 1, rpc: process.env.ETH_RPC || 'https://eth.drpc.org', explorer: 'https://etherscan.io' },
   base: { name: 'Base', chainId: 8453, rpc: process.env.BASE_RPC || 'https://base.drpc.org', explorer: 'https://basescan.org' },
   arbitrum: { name: 'Arbitrum', chainId: 42161, rpc: process.env.ARB_RPC || 'https://arbitrum.drpc.org', explorer: 'https://arbiscan.io' },
+  // Testnet Mode → Sepolia (chainId 11155111). Keyless public RPC; same address as mainnet.
+  sepolia: { name: 'Sepolia', chainId: 11155111, rpc: process.env.SEPOLIA_RPC || 'https://sepolia.drpc.org', explorer: 'https://sepolia.etherscan.io', testnet: true },
 };
 const net = (n) => NETWORKS[n] || NETWORKS.ethereum;
 
@@ -107,4 +109,11 @@ async function getNfts(address, network = 'ethereum') {
   } catch (_) { return { items: [], enabled: true }; }
 }
 
-module.exports = { getAddress, prepareTx, broadcast, getNfts, NETWORKS, net };
+// Generic JSON-RPC passthrough so Wonder Wallet can act as a full EIP-1193 provider for dApps
+// (eth_call, eth_getBalance, eth_blockNumber, eth_estimateGas, eth_getLogs, …). Read/relay only —
+// signing never happens here. The provider background allowlists which methods reach this.
+async function rpcCall(method, params, network = 'ethereum') {
+  return rpc(net(network).rpc, method, Array.isArray(params) ? params : (params == null ? [] : [params]));
+}
+
+module.exports = { getAddress, prepareTx, broadcast, getNfts, rpcCall, NETWORKS, net };

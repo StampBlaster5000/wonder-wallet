@@ -22,10 +22,11 @@ const prices = require('./sources/prices');
 const scan = require('./sources/scan');
 const activity = require('./sources/activity');
 const emblem = require('./sources/emblem');
+const netctx = require('./sources/netctx');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const VERSION = '0.31.0';
+const VERSION = '0.32.0';
 const PHASE = 'Beta';
 
 // Stateless proxy — Wonder Wallet holds NO user data server-side. All user state
@@ -36,6 +37,24 @@ app.disable('x-powered-by');
 // express-rate-limit can read the real client IP from X-Forwarded-For without throwing.
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '512kb' })); // larger to carry base64 stamp-art on mint
+
+// Per-request network context (mainnet | testnet). The client picks the network via
+// `?network=testnet` or the `x-ww-network` header; the BTC/Counterparty/Solana data
+// sources read it to route to the right upstream (testnet4 node / mempool testnet4 /
+// devnet). EVM selects its network by name (ethereum/sepolia/…) per-route, independently.
+app.use((req, res, next) => {
+  netctx.runWith(req.query.network || req.get('x-ww-network') || 'mainnet', next);
+});
+
+// Data (JSON) API responses must never be cached by the browser/CDN — they're per-address, per-network
+// and change constantly; a stale/cross-network cached body is exactly the "balances don't populate" bug.
+// Image routes are exempt (heavy, immutable art — safe + valuable to cache).
+app.use((req, res, next) => {
+  if (req.path.indexOf('/api/') === 0 && !/^\/api\/(img|stamp\/[^/]+\/content|cp\/assetimg)/.test(req.path)) {
+    res.setHeader('Cache-Control', 'no-store');
+  }
+  next();
+});
 
 // ── Security headers (Phase 10 hardened). NOTE: script-src has NO 'unsafe-inline' — all
 // scripts are external files; this neutralizes the injected-event-handler XSS class. ──
@@ -68,9 +87,14 @@ const RE = {
   // Counterparty asset: BTC/XCP, a named asset (incl. subasset PARENT.child), or numeric A<int>.
   cpasset: /^(BTC|XCP|[A-Z]{1,12}(\.[a-zA-Z0-9.\-_@!]{1,24})?|A\d{17,20})$/,
   txid: /^[0-9a-fA-F]{64}$/,
+  // Bitcoin testnet/testnet4/signet: bech32 tb1…, legacy m/n…, nested-segwit 2….
+  bitcoinTestnet: /^(tb1[a-z0-9]{8,87}|[mn2][a-km-zA-HJ-NP-Z1-9]{25,39})$/,
 };
+// Network-aware Bitcoin address check: under a testnet request-context, accept testnet
+// address formats (mainnet forms still pass too, for lenient reads); mainnet otherwise.
+const okBtc = (a) => (netctx.isTestnet() ? (RE.bitcoinTestnet.test(a) || RE.bitcoin.test(a)) : RE.bitcoin.test(a));
 function detectChain(v) {
-  if (RE.bitcoin.test(v)) return 'bitcoin';
+  if (RE.bitcoin.test(v) || RE.bitcoinTestnet.test(v)) return 'bitcoin';
   if (RE.ethereum.test(v)) return 'ethereum';
   if (RE.solana.test(v)) return 'solana';
   return null;
@@ -302,7 +326,7 @@ app.get('/api/btc/tx/:txid/info', wrap(async (req, res) => {
 
 app.get('/api/btc/:address', wrap(async (req, res) => {
   const address = String(req.params.address);
-  if (!RE.bitcoin.test(address)) { const e = new Error('invalid'); e.status = 400; throw e; }
+  if (!okBtc(address)) { const e = new Error('invalid'); e.status = 400; throw e; }
   const data = await btc.getAddress(address);
   // Fast path: no asset scan yet → honest "unknown".
   const utxos = core.classifyUtxos(data.utxos, { assetScanReady: false });
@@ -311,7 +335,7 @@ app.get('/api/btc/:address', wrap(async (req, res) => {
 
 app.get('/api/btc/:address/scan', wrap(async (req, res) => {
   const address = String(req.params.address);
-  if (!RE.bitcoin.test(address)) { const e = new Error('invalid'); e.status = 400; throw e; }
+  if (!okBtc(address)) { const e = new Error('invalid'); e.status = 400; throw e; }
   const data = await btc.getAddress(address);
   const scanned = await scan.scanAddress(address, data.utxos);
   res.json({ address, balanceSats: data.balanceSats, txCount: data.txCount, utxos: scanned, source: 'counterparty + ordinals' });
@@ -319,7 +343,7 @@ app.get('/api/btc/:address/scan', wrap(async (req, res) => {
 
 app.get('/api/btc/:address/assets', wrap(async (req, res) => {
   const address = String(req.params.address);
-  if (!RE.bitcoin.test(address)) { const e = new Error('invalid'); e.status = 400; throw e; }
+  if (!okBtc(address)) { const e = new Error('invalid'); e.status = 400; throw e; }
   const [counterparty, st] = await Promise.all([
     cp.getAddressAssets(address).catch(() => []),
     stamps.getBalance(address).catch(() => ({ stamps: [], src20: [] })),
@@ -330,7 +354,7 @@ app.get('/api/btc/:address/assets', wrap(async (req, res) => {
 // Unified activity / transaction history (Counterparty + BTC + SRC-20, classified, with confirm state).
 app.get('/api/activity/:address', wrap(async (req, res) => {
   const address = String(req.params.address);
-  if (!RE.bitcoin.test(address)) { const e = new Error('invalid'); e.status = 400; throw e; }
+  if (!okBtc(address)) { const e = new Error('invalid'); e.status = 400; throw e; }
   res.json(await activity.getActivity(address));
 }));
 
@@ -347,7 +371,7 @@ app.post('/api/btc/broadcast', limitMoney, wrap(async (req, res) => {
 // ── Coin control: full per-UTXO detail (category + carries + confirmations + labels/freezes) ──
 app.get('/api/btc/:address/coincontrol', wrap(async (req, res) => {
   const address = String(req.params.address);
-  if (!RE.bitcoin.test(address)) { const e = new Error('invalid'); e.status = 400; throw e; }
+  if (!okBtc(address)) { const e = new Error('invalid'); e.status = 400; throw e; }
 
   const [data, tip] = await Promise.all([btc.getAddress(address), btc.getTipHeight().catch(() => null)]);
   const { perUtxo, ordRes, floor } = await scan.classify(data.utxos);
@@ -464,13 +488,13 @@ app.get('/api/cp/assetimg/:asset', limitMedia, wrap(async (req, res) => {
 // Address-held CP assets (populates the Destroy-tab asset picker + balance hint).
 app.get('/api/cp/holdings/:address', wrap(async (req, res) => {
   const a = String(req.params.address);
-  if (!RE.bitcoin.test(a)) { const e = new Error('invalid'); e.status = 400; throw e; }
+  if (!okBtc(a)) { const e = new Error('invalid'); e.status = 400; throw e; }
   try { res.json({ holdings: await cp.getHoldings(a) }); } catch (_) { res.json({ holdings: [] }); }
 }));
 // Assets an address OWNS (issuance-suite pickers: issue-more / lock / transfer / describe / subasset).
 app.get('/api/cp/owned/:address', wrap(async (req, res) => {
   const a = String(req.params.address);
-  if (!RE.bitcoin.test(a)) { const e = new Error('invalid'); e.status = 400; throw e; }
+  if (!okBtc(a)) { const e = new Error('invalid'); e.status = 400; throw e; }
   try { res.json({ owned: await cp.getOwnedAssets(a) }); } catch (_) { res.json({ owned: [] }); }
 }));
 // Asset-name availability + ownership (Create validation; issuance-suite ownership guards).
@@ -490,7 +514,7 @@ app.post('/api/cp/compose/:type', limitMoney, wrap(async (req, res) => {
   const type = String(req.params.type);
   if (!CP_TYPES.has(type)) { const e = new Error('bad_type'); e.status = 400; throw e; }
   const source = String(req.body.source || '');
-  if (!RE.bitcoin.test(source)) { const e = new Error('bad_source'); e.status = 400; throw e; }
+  if (!okBtc(source)) { const e = new Error('bad_source'); e.status = 400; throw e; }
   // Counterparty's `destroy` requires a `tag` param to be PRESENT (empty value is valid), but qstr
   // drops empty strings — so force an empty `tag=` when the user didn't supply one. Otherwise the
   // node rejects the compose with "Missing required parameter: tag".
@@ -511,7 +535,7 @@ app.post('/api/cp/estimate/:type', limitMoney, wrap(async (req, res) => {
   const type = String(req.params.type);
   if (!CP_TYPES.has(type)) { const e = new Error('bad_type'); e.status = 400; throw e; }
   const source = String(req.body.source || '');
-  if (!RE.bitcoin.test(source)) { const e = new Error('bad_source'); e.status = 400; throw e; }
+  if (!okBtc(source)) { const e = new Error('bad_source'); e.status = 400; throw e; }
   try {
     const r = await fetch(`${cp.BASE}/addresses/${source}/compose/${type}/estimatexcpfees?${qstr(req.body.params)}`, { headers: { Accept: 'application/json' } });
     const j = await r.json();
@@ -522,7 +546,7 @@ app.post('/api/cp/estimate/:type', limitMoney, wrap(async (req, res) => {
 // CP mempool status (pending Counterparty txs for an address).
 app.get('/api/cp/mempool/:address', wrap(async (req, res) => {
   const a = String(req.params.address);
-  if (!RE.bitcoin.test(a)) { const e = new Error('invalid'); e.status = 400; throw e; }
+  if (!okBtc(a)) { const e = new Error('invalid'); e.status = 400; throw e; }
   try {
     const j = await (await fetch(`${cp.BASE}/addresses/${a}/mempool?limit=20`, { headers: { Accept: 'application/json' } })).json();
     res.json({ pending: Array.isArray(j.result) ? j.result : [] });
@@ -560,7 +584,7 @@ app.get('/api/cp/assetbook/:asset', wrap(async (req, res) => {
 // triggers one dispense of `giveQty` of the asset.
 app.get('/api/cp/dispensers/:address', wrap(async (req, res) => {
   const a = String(req.params.address);
-  if (!RE.bitcoin.test(a)) { const e = new Error('invalid'); e.status = 400; throw e; }
+  if (!okBtc(a)) { const e = new Error('invalid'); e.status = 400; throw e; }
   try {
     const j = await (await fetch(`${cp.BASE}/addresses/${a}/dispensers?status=open&limit=20&verbose=true`, { headers: { Accept: 'application/json' } })).json();
     const dispensers = (Array.isArray(j.result) ? j.result : []).filter((x) => Number(x.status) === 0 && Number(x.satoshirate) > 0).map((x) => ({
@@ -575,7 +599,7 @@ app.get('/api/cp/dispensers/:address', wrap(async (req, res) => {
 // An address's own open orders (so it can cancel them).
 app.get('/api/cp/myorders/:address', wrap(async (req, res) => {
   const a = String(req.params.address);
-  if (!RE.bitcoin.test(a)) { const e = new Error('invalid'); e.status = 400; throw e; }
+  if (!okBtc(a)) { const e = new Error('invalid'); e.status = 400; throw e; }
   try {
     const j = await (await fetch(`${cp.BASE}/addresses/${a}/orders?status=open&limit=50&verbose=true`, { headers: { Accept: 'application/json' } })).json();
     res.json({ orders: (Array.isArray(j.result) ? j.result : []).map(slimOrder) });
@@ -586,7 +610,7 @@ app.get('/api/cp/myorders/:address', wrap(async (req, res) => {
 // Detachable balances: the address's asset balances that currently sit on a UTXO.
 app.get('/api/cp/attached/:address', wrap(async (req, res) => {
   const a = String(req.params.address);
-  if (!RE.bitcoin.test(a)) { const e = new Error('invalid'); e.status = 400; throw e; }
+  if (!okBtc(a)) { const e = new Error('invalid'); e.status = 400; throw e; }
   try {
     const j = await (await fetch(`${cp.BASE}/addresses/${a}/balances?limit=500&verbose=true`, { headers: { Accept: 'application/json' } })).json();
     const attached = (Array.isArray(j.result) ? j.result : []).filter((b) => b.utxo).map((b) => ({
@@ -601,7 +625,7 @@ app.post('/api/cp/detach', limitMoney, wrap(async (req, res) => {
   const utxo = String(req.body.utxo || '');
   if (!/^[0-9a-fA-F]{64}:\d+$/.test(utxo)) { const e = new Error('bad_utxo'); e.status = 400; throw e; }
   const dest = req.body.destination ? String(req.body.destination) : '';
-  if (dest && !RE.bitcoin.test(dest)) { const e = new Error('bad_destination'); e.status = 400; throw e; }
+  if (dest && !okBtc(dest)) { const e = new Error('bad_destination'); e.status = 400; throw e; }
   const fr = parseFloat(req.body.sat_per_vbyte); // custom miner-fee rate (float; sub-sat allowed)
   const q = qstr({ destination: dest || undefined, sat_per_vbyte: fr > 0 ? fr : undefined });
   const url = `${cp.BASE}/utxos/${utxo}/compose/detach?${q}&verbose=true&allow_unconfirmed_inputs=true`;
@@ -625,7 +649,10 @@ app.get('/api/stamp/:id/content', limitMedia, wrap(async (req, res) => {
 // SRC-20 deploy / mint / transfer (stampchain returns an unsigned PSBT hex).
 app.post('/api/stamps/src20/create', limitMoney, wrap(async (req, res) => {
   const source = String(req.body.source || '');
-  if (!RE.bitcoin.test(source)) { const e = new Error('bad_source'); e.status = 400; throw e; }
+  if (!okBtc(source)) { const e = new Error('bad_source'); e.status = 400; throw e; }
+  // Testnet: no reliable public SRC-20 indexer → DRY RUN. Construct + price the inscription
+  // locally and return NO broadcastable hex, so the flow can be tested at zero risk.
+  if (netctx.isTestnet()) return res.json(stamps.src20DryRun(req.body.params || {}, (req.body.params || {}).satsPerVB));
   const body = { ...(req.body.params || {}), sourceAddress: source, changeAddress: source };
   const r = await stamps.src20Create(body);
   if (r.error) return res.status(400).json({ error: 'compose_failed', detail: safeErr(r.error) });
@@ -640,14 +667,14 @@ app.get('/api/stamps/src20/tick/:tick', limitProxy, wrap(async (req, res) => {
 // The address's SRC-20 holdings (populates the Transfer-tab token dropdown).
 app.get('/api/stamps/src20/holdings/:address', wrap(async (req, res) => {
   const a = String(req.params.address);
-  if (!RE.bitcoin.test(a)) { const e = new Error('invalid'); e.status = 400; throw e; }
+  if (!okBtc(a)) { const e = new Error('invalid'); e.status = 400; throw e; }
   try { const b = await stamps.getBalance(a); res.json({ src20: b.src20 || [] }); }
   catch (_) { res.json({ src20: [] }); }
 }));
 // Bitcoin Stamp art mint (OLGA).
 app.post('/api/stamps/olga/mint', limitMoney, wrap(async (req, res) => {
   const source = String(req.body.source || '');
-  if (!RE.bitcoin.test(source)) { const e = new Error('bad_source'); e.status = 400; throw e; }
+  if (!okBtc(source)) { const e = new Error('bad_source'); e.status = 400; throw e; }
   const body = { ...(req.body.params || {}), sourceWallet: source };
   const r = await stamps.olgaMint(body);
   if (r.error) return res.status(400).json({ error: 'compose_failed', detail: safeErr(r.error) });
@@ -669,7 +696,7 @@ app.get('/api/src101/resolve/:name', limitProxy, wrap(async (req, res) => {
 // An address's `.btc` names + its primary (reverse) name — drives the Names group + identity chip.
 app.get('/api/src101/names/:address', limitProxy, wrap(async (req, res) => {
   const a = String(req.params.address);
-  if (!RE.bitcoin.test(a)) { const e = new Error('invalid'); e.status = 400; throw e; }
+  if (!okBtc(a)) { const e = new Error('invalid'); e.status = 400; throw e; }
   try {
     const names = await stamps.getSrc101Names(a);
     const primary = names.find((n) => n.primary && !n.expired) || names.find((n) => !n.expired) || null;
@@ -681,7 +708,7 @@ app.get('/api/src101/names/:address', limitProxy, wrap(async (req, res) => {
 app.post('/api/src101/create', limitMoney, wrap(async (req, res) => {
   const source = String(req.body.source || '');
   const dryRun = req.body.dryRun === true;
-  if (!dryRun && !RE.bitcoin.test(source)) { const e = new Error('bad_source'); e.status = 400; throw e; }
+  if (!dryRun && !okBtc(source)) { const e = new Error('bad_source'); e.status = 400; throw e; }
   const body = { ...(req.body.params || {}), ...(dryRun ? { dryRun: true } : { sourceAddress: source, changeAddress: source }) };
   const r = await stamps.src101Create(body);
   if (r.error) return res.status(400).json({ error: 'compose_failed', detail: safeErr(r.error) });
@@ -693,11 +720,14 @@ app.post('/api/src101/create', limitMoney, wrap(async (req, res) => {
 }));
 
 // ── Ethereum / Solana ──
+// EVM network resolver: an explicit valid network name always wins (a dApp can pin its
+// chain); otherwise, under a testnet request-context default to Sepolia, else Ethereum.
+const evmNet = (name) => (eth.NETWORKS[name] ? String(name) : (netctx.isTestnet() ? 'sepolia' : 'ethereum'));
+
 app.get('/api/eth/:address', wrap(async (req, res) => {
   const a = String(req.params.address);
   if (!RE.ethereum.test(a)) { const e = new Error('invalid'); e.status = 400; throw e; }
-  const network = String(req.query.network || 'eth' + 'ereum');
-  res.json(await eth.getAddress(a, eth.NETWORKS[network] ? network : 'ethereum'));
+  res.json(await eth.getAddress(a, evmNet(req.query.network)));
 }));
 
 // Prepare an EIP-1559 tx (nonce/gas/fees) — client signs the result.
@@ -706,7 +736,7 @@ app.post('/api/eth/prepare', limitMoney, wrap(async (req, res) => {
   if (!RE.ethereum.test(String(from || '')) || !RE.ethereum.test(String(to || ''))) { const e = new Error('bad_addr'); e.status = 400; throw e; }
   if (data != null && data !== '' && !/^0x[0-9a-fA-F]{0,8192}$/.test(String(data))) { const e = new Error('bad_data'); e.status = 400; throw e; }
   if (valueWei != null && valueWei !== '' && !/^0x[0-9a-fA-F]{0,64}$/.test(String(valueWei))) { const e = new Error('bad_value'); e.status = 400; throw e; }
-  res.json(await eth.prepareTx({ from, to, valueWei: valueWei || '0x0', data: data || '0x', network: eth.NETWORKS[network] ? network : 'ethereum' }));
+  res.json(await eth.prepareTx({ from, to, valueWei: valueWei || '0x0', data: data || '0x', network: evmNet(network) }));
 }));
 
 // Relay a signed EVM tx.
@@ -714,16 +744,31 @@ app.post('/api/eth/broadcast', limitMoney, wrap(async (req, res) => {
   const raw = String(req.body.raw || '');
   if (!/^0x[0-9a-fA-F]{20,4096}$/.test(raw)) { const e = new Error('bad_tx'); e.status = 400; throw e; }
   try {
-    const txhash = await eth.broadcast(raw, eth.NETWORKS[req.body.network] ? req.body.network : 'ethereum');
+    const txhash = await eth.broadcast(raw, evmNet(req.body.network));
     res.json({ ok: true, txhash });
   } catch (e) { res.status(502).json({ error: 'broadcast_rejected', detail: safeErr(e.rpc?.message || e.message) }); }
+}));
+// Generic EVM JSON-RPC passthrough — lets the dApp provider proxy read methods (eth_call,
+// eth_getBalance, eth_blockNumber, eth_estimateGas, eth_getLogs, …) to a node so Wonder Wallet is a
+// full EIP-1193 provider on any site. ALLOWLISTED read/relay methods only; no wallet keys involved.
+const ETH_RPC_ALLOW = new Set([
+  'eth_call', 'eth_getbalance', 'eth_blocknumber', 'eth_gasprice', 'eth_estimategas', 'eth_maxpriorityfeepergas',
+  'eth_feehistory', 'eth_gettransactioncount', 'eth_getblockbynumber', 'eth_getblockbyhash', 'eth_getcode',
+  'eth_getstorageat', 'eth_getlogs', 'eth_gettransactionreceipt', 'eth_gettransactionbyhash', 'eth_chainid',
+  'eth_getproof', 'eth_sendrawtransaction', 'net_version', 'net_listening', 'web3_clientversion',
+]);
+app.post('/api/eth/rpc', limitMoney, wrap(async (req, res) => {
+  const method = String(req.body.method || '');
+  if (!ETH_RPC_ALLOW.has(method.toLowerCase())) { const e = new Error('method_not_allowed'); e.status = 400; throw e; }
+  const network = evmNet(req.body.network);
+  try { res.json({ result: await eth.rpcCall(method, req.body.params, network) }); }
+  catch (e) { res.status(502).json({ error: 'rpc_failed', detail: safeErr(e.rpc?.message || e.message) }); }
 }));
 // ERC-721/1155 gallery (Alchemy NFT API; enabled: false when no ALCHEMY_KEY).
 app.get('/api/eth/:address/nfts', wrap(async (req, res) => {
   const a = String(req.params.address);
   if (!RE.ethereum.test(a)) { const e = new Error('invalid'); e.status = 400; throw e; }
-  const network = eth.NETWORKS[req.query.network] ? String(req.query.network) : 'ethereum';
-  res.json(await eth.getNfts(a, network));
+  res.json(await eth.getNfts(a, evmNet(req.query.network)));
 }));
 // Same-origin image proxy (NFT art) — SSRF-safe (audit #2): https only, no private
 // IPs, redirects re-validated per hop, image content-type only, size-capped.
@@ -763,7 +808,7 @@ app.get('/api/sol/:address', wrap(async (req, res) => {
 app.get('/api/emblem/curated', wrap(async (req, res) => res.json(await emblem.getCurated())));
 app.get('/api/emblem/vaults/:address', wrap(async (req, res) => {
   const a = String(req.params.address);
-  if (!RE.ethereum.test(a) && !RE.bitcoin.test(a) && !RE.solana.test(a)) { const e = new Error('invalid'); e.status = 400; throw e; }
+  if (!RE.ethereum.test(a) && !okBtc(a) && !RE.solana.test(a)) { const e = new Error('invalid'); e.status = 400; throw e; }
   res.json({ vaults: await emblem.getVaults(a, String(req.query.type || 'created')) });
 }));
 app.get('/api/emblem/balance/:tokenId', wrap(async (req, res) => res.json({ balances: await emblem.getBalance(String(req.params.tokenId).replace(/[^0-9]/g, '')) })));

@@ -9,6 +9,7 @@
   const short = (a) => (a.length > 16 ? a.slice(0, 8) + '…' + a.slice(-6) : a);
   const fmt = (n, d = 6) => Number(n).toLocaleString('en-US', { maximumFractionDigits: d });
 
+  const DEFNET = () => (((window.WWNet && window.WWNet.isTestnet()) || (window.WWNetMode && window.WWNetMode.isTestnet())) ? 'sepolia' : 'ethereum');
   let ACCOUNT = 0, ADDR = null, NETWORK = 'ethereum', DATA = null;
 
   function toBaseUnits(amountStr, decimals) {
@@ -26,7 +27,7 @@
   function close() { const m = $('#evmodal'); if (m) m.hidden = true; }
 
   async function open(account, ethAddress, network) {
-    ACCOUNT = account; ADDR = ethAddress; NETWORK = network || NETWORK;
+    ACCOUNT = account; ADDR = ethAddress; NETWORK = network || DEFNET();
     modal(`<h3 class="m-title">Ethereum / EVM</h3><div class="statusline load">Loading ${NETWORK}…</div>`);
     try {
       DATA = await fetch(`api/eth/${ethAddress}?network=${NETWORK}`).then((r) => r.json());

@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<!-- Wonder Wallet dApp provider — approval window (Connect / Sign). Phase 12 (v0.48).
+     STAGED: opened by the background via chrome.windows.create('provider/approval.html?id=…');
+     not reachable until the manifest is wired at v0.48 (post-approval). -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wonder Wallet — Request</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../popup.css" />
+  <link rel="stylesheet" href="approval.css" />
+</head>
+<body>
+  <div id="app"><div class="empty">Loading request…</div></div>
+  <script src="../wallet-core.js"></script>
+  <script src="protocol.js"></script>
+  <script src="tx-summary.js"></script>
+  <script src="proof.js"></script>
+  <script src="approval.js"></script>
+</body>
+</html>

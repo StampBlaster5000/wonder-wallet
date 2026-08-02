@@ -5,6 +5,50 @@
 (function () {
   var C = window.WonderCore;
   var app = document.getElementById('app');
+  // ── Testnet Mode (global toggle) ──────────────────────────────────────────────
+  // testnet derives coin-type-1' BTC addresses (tb1…), routes reads to testnet4/Sepolia/
+  // devnet (via the shim's x-ww-network header), maps EVM to Sepolia, and hides fiat.
+  var NET = function () { return (window.WWNetMode && window.WWNetMode.isTestnet()) ? 'testnet' : 'mainnet'; };
+  var isTN = function () { return NET() === 'testnet'; };
+  var ethNet = function () { return isTN() ? 'sepolia' : 'ethereum'; };
+  // Auto-thread the active network into WonderCore send/sign calls (opts-object + positional).
+  (function patchCore() {
+    if (!C || C.__wwNetPatched) return;
+    ['send', 'buildUnsignedSend'].forEach(function (fn) {
+      if (typeof C[fn] !== 'function') return;
+      var o = C[fn].bind(C);
+      C[fn] = function (opts) { opts = opts || {}; if (opts.network == null) opts.network = NET(); return o(opts); };
+    });
+    [['signCp', 7], ['signStamp', 5], ['signMessage', 3]].forEach(function (p) {
+      var fn = p[0], idx = p[1]; if (typeof C[fn] !== 'function') return;
+      var o = C[fn].bind(C);
+      C[fn] = function () { var a = [].slice.call(arguments); while (a.length < idx) a.push(undefined); if (a[idx] == null) a[idx] = NET(); return o.apply(null, a); };
+    });
+    if (typeof C.signProvider === 'function') { var sp = C.signProvider.bind(C); C.signProvider = function (opts) { opts = opts || {}; if (opts.network == null) opts.network = NET(); return sp(opts); }; }
+    C.__wwNetPatched = true;
+  })();
+  // Persistent orange TESTNET banner (lives outside #app so it survives re-renders).
+  function paintTestnetBanner() {
+    var testnet = isTN();
+    if (!document.getElementById('ww-tn-style')) {
+      var st = document.createElement('style'); st.id = 'ww-tn-style';
+      st.textContent = '#wwTnBanner{display:none;align-items:center;justify-content:center;gap:6px;padding:5px 10px;'
+        + 'font:700 10px/1.3 system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#1a1206;cursor:pointer;'
+        + 'background:repeating-linear-gradient(45deg,#F4B740,#F4B740 12px,#E0A020 12px,#E0A020 24px);border-bottom:1px solid rgba(0,0,0,.25)}'
+        + 'body.ww-testnet #wwTnBanner{display:flex}';
+      document.head.appendChild(st);
+    }
+    document.body.classList.toggle('ww-testnet', testnet);
+    var b = document.getElementById('wwTnBanner');
+    if (!b) {
+      b = document.createElement('div'); b.id = 'wwTnBanner';
+      b.title = 'Testnet Mode — click for network settings';
+      b.innerHTML = '⚠ Testnet — no value';
+      b.onclick = function () { advNetwork(); };
+      if (document.body.firstChild) document.body.insertBefore(b, document.body.firstChild); else document.body.appendChild(b);
+    }
+  }
+  try { paintTestnetBanner(); } catch (e) {}
   // Wallet-wide safety: no numeric field (quantity, amount, fee, price…) may go below its floor.
   // The native spinner's down-arrow and pasted/typed negatives are both clamped (floor = min attr, else 0).
   document.addEventListener('input', function (e) {
@@ -19,7 +63,7 @@
   var short = function (a) { a = String(a || ''); return a.length > 16 ? a.slice(0, 7) + '…' + a.slice(-6) : a; };
   var fmt = function (x, d) { var n = Number(x); return isFinite(n) ? n.toLocaleString('en-US', { maximumFractionDigits: d }) : '0'; };
   // " · ≈ $X" USD tag for a sats amount on the signing/confirm screens (blank until the BTC price is known).
-  function usdSuffix(sats) { var p = (PRICES && PRICES.bitcoin) || 0; if (!p || !sats) return ''; return ' · ≈ $' + ((sats / 1e8) * p).toLocaleString('en-US', { maximumFractionDigits: 2 }); }
+  function usdSuffix(sats) { if (isTN()) return ''; var p = (PRICES && PRICES.bitcoin) || 0; if (!p || !sats) return ''; return ' · ≈ $' + ((sats / 1e8) * p).toLocaleString('en-US', { maximumFractionDigits: 2 }); }
   // Absolute proxy URL for images set via JS (the shim only rewrites fetch() + DOM <img src="api/…">,
   // NOT Image().src or a src assigned before insertion — so a relative "api/…" would hit chrome-extension:// and 404).
   function proxied(path) { return (window.WW_PROXY ? window.WW_PROXY + '/' : '') + path; }
@@ -86,6 +130,7 @@
   // Native Ledger (WebHID) — connected addresses live in-memory; a read-only view needs the device only
   // once (getAddresses), everything after is proxy reads. All rendered in the popup's own UI (NOT the Terminal).
   var HW = null, hwBt = 'nativeSegwit', hwViewAddr = null, hwViewIndex = null, hwAgg = false;
+  var hwScanCache = null; // { bt, results:[{address,index,sum}] } — last address scan, reused by the account dropdown
   var _resName = null; // SRC-101 .btc resolution state for the send field
   var RE_DOTBTC = /^[a-z0-9][a-z0-9._-]{0,62}\.btc$/i;
   // Resolve a .btc name → address at submit time (throws if unregistered); pass-through for addresses.
@@ -258,7 +303,7 @@
   function curBtcType() { return acctKind === 'imported' ? impBtcType(impId) : acctBtcType(curAccount); }
   function curBtcAddress() {
     if (acctKind === 'imported') { var im = currentImported(); return im ? (im.bitcoin[impBtcType(impId)] || im.bitcoin.nativeSegwit).address : null; }
-    try { return C.accounts(curAccount, 0).bitcoin[acctBtcType(curAccount)].address; } catch (e) { return null; }
+    try { return C.accounts(curAccount, 0, NET()).bitcoin[acctBtcType(curAccount)].address; } catch (e) { return null; }
   }
   // Remember the last-used account so it's waiting on reopen.
   function saveLast() { lsSet('ww:lastacct', acctKind === 'hardware' ? 'hw' : acctKind === 'watch' ? 'watch:' + watchId : acctKind === 'imported' ? 'imp:' + impId : 'hd:' + curAccount); lsSet('ww:lastchain', chain); }
@@ -277,7 +322,7 @@
     if (acctKind === 'hardware') return hwAddr();
     if (acctKind === 'watch') { var w = watchList().filter(function (x) { return x.id === watchId; })[0]; return w ? w.address : null; }
     if (acctKind === 'imported') { var im = currentImported(); if (!im) return null; var t = impBtcType(impId); return (im.bitcoin[t] || im.bitcoin.nativeSegwit).address; }
-    var acc; try { acc = C.accounts(curAccount, 0); } catch (e) { return null; }
+    var acc; try { acc = C.accounts(curAccount, 0, NET()); } catch (e) { return null; }
     return chain === 'btc' ? acc.bitcoin[acctBtcType(curAccount)].address : chain === 'eth' ? acc.ethereum.address : acc.solana.address;
   }
 
@@ -420,19 +465,16 @@
       '<div class="p-head"><button class="chain-btn" id="chainBtn" title="Switch blockchain"><span class="cs-ic ' + chain + '">' + c.ic + '</span><span class="chev">▾</span></button>'
       + '<div class="p-brand-mid"><div class="p-name">🔐 Ledger</div><div class="p-sub">' + esc(sub) + '</div></div>'
       + '<div class="p-icons"><button class="p-ibtn" id="bRefresh" title="Refresh">' + HW_REFRESH + '</button>'
-      + '<button class="p-ibtn" id="bTerm" title="Wonder Terminal">' + TERM_ICON + '</button>'
       + (IN_PANEL ? '' : '<button class="p-ibtn" id="bPanel" title="Dock as side panel">' + PANEL_ICON + '</button>')
       + '<button class="p-ibtn" id="bHwSettings" title="Settings — appearance, auto-lock, Ledger">' + GEAR_SVG + '</button>'
       + '<button class="p-ibtn" id="bLock" title="Lock wallet">' + LOCK_SVG + '</button></div></div>'
-      + '<div class="acct-bar">' + accountSelectHtml() + '<button class="p-ibtn acct-x" id="hwUnpair" title="Unpair this Ledger">×</button></div>'
+      + '<div class="acct-bar"><button class="acct-sel" id="hwAcctBtn" title="Addresses, portfolio & wallets" style="flex:1;display:flex;align-items:center;justify-content:space-between;text-align:left;cursor:pointer"><span>🔐 Ledger' + esc(hwAgg && chain === 'btc' ? ' · Portfolio' : chain === 'btc' ? ' · 0/' + (hwViewIndex != null ? hwViewIndex : 0) : '') + '</span><span class="chev">▾</span></button><button class="p-ibtn acct-x" id="hwUnpair" title="Unpair this Ledger">×</button></div>'
       + '<div class="total"><div class="amt-wrap"><div class="amt" id="nativeVal">…</div><button class="priv-eye' + (PRIVACY ? ' on' : '') + '" id="bPrivacy" title="Privacy view">' + (PRIVACY ? EYE_OFF_SVG : EYE_SVG) + '</button></div><div class="lbl" id="nativeLbl">Ledger · read-only</div></div>'
       + '<div class="addr-row"><div class="addr-chip" data-copy="' + esc(addr || '') + '" title="Copy address">' + (hwAgg && chain === 'btc' ? '⊕ all addresses' : esc(short(addr || '—'))) + '</div>'
       + (chain === 'btc' ? '<button class="btctype-chip" id="btcTypeBtn" title="Bitcoin address type">' + esc(BTC_LABEL[hwBt]) + ' ▾</button>' : '')
       + (hwViewAddr ? '<button class="btctype-chip" id="hwMain" title="Back to main address">← main</button>' : '') + '</div>'
       + '<div class="util-row">'
       + (chain === 'btc' ? '<button class="cc-launch" id="bActivity" title="Transaction history">⧗ Activity</button>' : '')
-      + (canScan ? '<button class="cc-launch" id="bScan" title="Browse receiving addresses">⧉ Addresses</button>' : '')
-      + (canScan ? '<button class="cc-launch' + (hwAgg ? ' on' : '') + '" id="bAgg" title="Combine all addresses into one portfolio">⊕ Portfolio</button>' : '')
       + '</div>'
       + '<div class="asset-tabs"><button class="atab ' + (tab === 'tokens' ? 'on' : '') + '" data-tab="tokens">Tokens</button><button class="atab ' + (tab === 'collectibles' ? 'on' : '') + '" data-tab="collectibles">Collectibles</button></div>'
       + '<div id="assetBody"><div class="empty">Loading ' + esc(c.name) + ' assets…</div></div>'
@@ -442,14 +484,12 @@
       + '<div class="foot-strip"><span class="foot-lock">🔐 keys stay on your Ledger</span><span class="pill"><span class="pdot"></span>' + ((chain === 'btc' && hwBt === 'nativeSegwit' && HW.mfp) ? 'sign on device' : 'read-only view') + '</span>' + (VER ? '<span class="foot-ver">v' + esc(VER) + '</span>' : '') + '</div></div>';
     document.getElementById('chainBtn').onclick = hwChainMenu;
     document.getElementById('bRefresh').onclick = function () { var b = document.getElementById('assetBody'); if (b) b.innerHTML = '<div class="empty">Refreshing…</div>'; hwLoad(); };
-    wireAccountSelect(); // the account dropdown lets a seed-wallet user switch between HD accounts and the Ledger
+    document.getElementById('hwAcctBtn').onclick = hwAcctMenu; // Ledger address / portfolio / seed-wallet switcher
     var up = document.getElementById('hwUnpair'); if (up) up.onclick = hwUnpair;
     saveLast();
     var pv = document.getElementById('bPrivacy'); if (pv) pv.onclick = togglePrivacy;
     var bt = document.getElementById('btcTypeBtn'); if (bt) bt.onclick = hwBtcTypeMenu;
     var mn = document.getElementById('hwMain'); if (mn) mn.onclick = function () { hwViewAddr = null; hwViewIndex = null; hwRenderMain(); };
-    var sc = document.getElementById('bScan'); if (sc) sc.onclick = hwScan;
-    var ag = document.getElementById('bAgg'); if (ag) ag.onclick = function () { hwAgg = !hwAgg; hwViewAddr = null; hwViewIndex = null; hwRenderMain(); };
     var ac = document.getElementById('bActivity'); if (ac) ac.onclick = function () { renderActivity(hwAddr()); };
     var pn = document.getElementById('bPanel'); if (pn) pn.onclick = openSidePanel;
     var stg = document.getElementById('bHwSettings'); if (stg) stg.onclick = hwSettingsMenu;
@@ -470,6 +510,43 @@
     overlay('<div class="menu">' + types.map(function (t) { return '<button class="menu-opt' + (t[0] === hwBt ? ' on' : '') + '" data-t="' + t[0] + '"><b>' + esc(t[1].split(' · ')[0]) + '</b> <span class="fine">' + esc(t[1].split(' · ')[1] || '') + '</span></button>'; }).join('') + '</div>');
     app.querySelectorAll('[data-t]').forEach(function (b) { b.onclick = function () { hwBt = b.dataset.t; hwViewAddr = null; hwViewIndex = null; hwAgg = false; closeOv(); hwRenderMain(); }; });
   }
+  // The Ledger-view account dropdown. In Ledger-only mode it replaces the seed HD accounts (which are
+  // meaningless here) with the device's OWN addresses + portfolio; if a seed vault also exists, one
+  // "Switch to seed wallet" line returns to it (we never flood this list with the seed's Account 0-3).
+  async function hwAcctMenu() {
+    var canScan = !!(chain === 'btc' && HW.bitcoin[hwBt] && HW.bitcoin[hwBt].acct);
+    var mainAddr = (HW.bitcoin[hwBt] || {}).address || null;
+    var onMain = !hwAgg && (hwViewIndex == null || hwViewIndex === 0);
+    var funded = (hwScanCache && hwScanCache.bt === hwBt && chain === 'btc')
+      ? hwScanCache.results.filter(function (r) { return r.sum.has && r.index !== 0; }) : [];
+    var html = '<div class="menu"><div class="menu-hd">🔐 Ledger · ' + esc(CH[chain].name) + '</div>';
+    if (canScan) html += '<button class="menu-opt' + (hwAgg ? ' on' : '') + '" data-a="agg"><span>⊕ Portfolio · all addresses<br><span class="fine">combined balances &amp; assets</span></span></button>';
+    if (chain === 'btc') {
+      html += '<div class="menu-hd">Addresses</div>';
+      html += '<button class="menu-opt' + (onMain ? ' on' : '') + '" data-a="idx" data-i="0" data-addr="' + esc(mainAddr || '') + '"><span>0/0 · ' + esc(short(mainAddr || '—')) + '<br><span class="fine">main receiving address</span></span></button>';
+      funded.forEach(function (r) {
+        var meta = (r.sum.btc > 0 ? fmt(r.sum.btc, 8) + ' BTC' : '—') + (r.sum.tokens ? ' · ' + r.sum.tokens + ' token' + (r.sum.tokens === 1 ? '' : 's') : '') + (r.sum.coll ? ' · ' + r.sum.coll + ' collectible' + (r.sum.coll === 1 ? '' : 's') : '');
+        html += '<button class="menu-opt' + (!hwAgg && hwViewIndex === r.index ? ' on' : '') + '" data-a="idx" data-i="' + r.index + '" data-addr="' + esc(r.address) + '"><span>0/' + r.index + ' · ' + esc(short(r.address)) + '<br><span class="fine">' + esc(meta) + '</span></span></button>';
+      });
+      if (canScan) html += '<button class="menu-opt" data-a="scan"><span>⧉ Browse / scan all addresses…' + (funded.length ? '' : '<br><span class="fine">find balances across the first 20</span>') + '</span></button>';
+    }
+    var hasSeed = false; try { hasSeed = await C.hasVault(); } catch (e) {}
+    if (hasSeed) html += '<div class="menu-hd">Seed wallet</div><button class="menu-opt" data-a="seed"><span>↩ Switch to seed wallet</span></button>';
+    html += '</div>';
+    overlay(html);
+    app.querySelectorAll('#pop-ov [data-a]').forEach(function (b) {
+      b.onclick = function () {
+        var a = b.dataset.a;
+        if (a === 'agg') { hwAgg = true; hwViewAddr = null; hwViewIndex = null; closeOv(); hwRenderMain(); }
+        else if (a === 'idx') { var i = +b.dataset.i; hwAgg = false; if (i === 0) { hwViewAddr = null; hwViewIndex = null; } else { hwViewAddr = b.dataset.addr; hwViewIndex = i; } closeOv(); hwRenderMain(); }
+        else if (a === 'scan') { closeOv(); hwScan(); }
+        else if (a === 'seed') { closeOv(); hwSwitchToSeed(); }
+      };
+    });
+  }
+  // Leave the Ledger view for the seed wallet WITHOUT unpairing the Ledger (it stays available under
+  // the seed dropdown's "Hardware" group). render() lands on the seed dashboard, or the unlock screen if locked.
+  function hwSwitchToSeed() { acctKind = 'hd'; chain = 'btc'; hwViewAddr = null; hwViewIndex = null; hwAgg = false; render(); }
   async function hwLoad() {
     var addr = hwAddr();
     if (chain !== 'btc' || !hwAgg) return loadAssets(addr); // single address (btc/eth/sol) via the normal loader
@@ -522,6 +599,7 @@
       }));
     }
     results.sort(function (a, b) { return a.index - b.index; });
+    hwScanCache = { bt: hwBt, results: results }; // remember for the account dropdown (avoids re-scanning on open)
     var rows = results.map(function (r) { return '<button class="acct-line" data-view="' + esc(r.address) + '" data-i="' + r.index + '" style="width:100%;text-align:left;cursor:pointer;' + (r.sum.has ? 'border-color:var(--gold2)' : '') + '"><span class="acct-lab">0/' + r.index + ' · ' + esc(short(r.address)) + '<br><span class="fine">' + (r.sum.btc > 0 ? fmt(r.sum.btc, 8) + ' BTC' : '—') + (r.sum.tokens ? ' · ' + r.sum.tokens + ' token' + (r.sum.tokens === 1 ? '' : 's') : '') + (r.sum.coll ? ' · ' + r.sum.coll + ' collectible' + (r.sum.coll === 1 ? '' : 's') : '') + '</span></span><span>' + (r.sum.has ? '● ' : '') + '→</span></button>'; }).join('');
     var bodyEl = document.getElementById('hsBody');
     if (bodyEl) bodyEl.innerHTML = results.some(function (r) { return r.sum.has; }) ? rows : '<div class="fine" style="padding:4px">No balances or assets on the first 20 addresses (index 0–19).</div>' + rows;
@@ -764,7 +842,6 @@
       '<div class="p-head"><button class="chain-btn" id="chainBtn" title="Switch blockchain"><span class="cs-ic ' + chain + '">' + c.ic + '</span><span class="chev">▾</span></button>'
       + '<div class="p-brand-mid"><div class="p-name">Wonder Wallet</div><div class="p-sub">' + esc(c.name) + '</div></div>'
       + '<div class="p-icons"><button class="p-ibtn" id="bRefresh" title="Refresh assets"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 10-2.3 5.7M20 4v5h-5"/></svg></button>'
-      + '<button class="p-ibtn" id="bTerm" title="Wonder Terminal">' + TERM_ICON + '</button>'
       + (IN_PANEL ? '' : '<button class="p-ibtn" id="bPanel" title="Dock as side panel">' + PANEL_ICON + '</button>')
       + (acctKind !== 'watch' ? '<button class="p-ibtn" id="bAdv" title="Advanced — all addresses, sign message, hardware, custom derivation, reveal seed, export keys">' + GEAR_SVG + '</button>' : '')
       + '<button class="p-ibtn" id="bLock" title="Lock">' + LOCK_SVG + '</button></div></div>'
@@ -910,7 +987,7 @@
       var im = currentImported(); if (!im) return;
       addrs = im.bitcoin; curType = impBtcType(impId); setType = function (t) { setImpBtcType(impId, t); }; title = 'Bitcoin address type · imported';
     } else {
-      var acc; try { acc = C.accounts(curAccount, 0); } catch (e) { return; }
+      var acc; try { acc = C.accounts(curAccount, 0, NET()); } catch (e) { return; }
       addrs = acc.bitcoin; curType = acctBtcType(curAccount); setType = function (t) { setAcctBtcType(curAccount, t); }; title = 'Bitcoin address type · Account ' + curAccount;
     }
     overlay('<div class="menu"><div class="menu-hd">' + title + '</div>'
@@ -1090,7 +1167,7 @@
     var cl = document.getElementById('sdClose'); if (cl) cl.onclick = closeOv;
     pop.querySelectorAll('.sd-tool').forEach(function (b) { b.onclick = function () {
       if (b.dataset.op === 'vault') {
-        if (window.EmblemBridge) { var a; try { a = C.accounts(curAccount, 0); } catch (e) { return; } closeOv(); window.EmblemBridge.vaultAsset(curAccount, a.ethereum.address, a.bitcoin.nativeSegwit.address, s.cpid, { label: '#' + s.stamp }); }
+        if (window.EmblemBridge) { var a; try { a = C.accounts(curAccount, 0, NET()); } catch (e) { return; } closeOv(); window.EmblemBridge.vaultAsset(curAccount, a.ethereum.address, a.bitcoin.nativeSegwit.address, s.cpid, { label: '#' + s.stamp }); }
         else openTerminal('#vault=' + encodeURIComponent(s.cpid || '') + '&s=' + encodeURIComponent(s.stamp));
         return;
       }
@@ -1158,7 +1235,7 @@
     document.getElementById('sdClose').onclick = closeOv;
     pop.querySelectorAll('.sd-tool').forEach(function (b) { b.onclick = function () {
       if (b.dataset.op === 'vault') {
-        if (window.EmblemBridge) { var a; try { a = C.accounts(curAccount, 0); } catch (e) { return; } closeOv(); window.EmblemBridge.vaultAsset(curAccount, a.ethereum.address, a.bitcoin.nativeSegwit.address, s.cpid, { label: s.name }); }
+        if (window.EmblemBridge) { var a; try { a = C.accounts(curAccount, 0, NET()); } catch (e) { return; } closeOv(); window.EmblemBridge.vaultAsset(curAccount, a.ethereum.address, a.bitcoin.nativeSegwit.address, s.cpid, { label: s.name }); }
         else openTerminal('#vault=' + encodeURIComponent(s.cpid || ''));
         return;
       }
@@ -1193,7 +1270,7 @@
   function erc1155Data(from, to, id, amt) { return '0xf242432a' + _p32(from) + _p32(to) + _h32(id) + _h32(amt) + _h32(160) + _h32(0); }
   async function renderNftSend(n) {
     stopCd();
-    var acc; try { acc = C.accounts(curAccount, 0); } catch (e) { return render(); }
+    var acc; try { acc = C.accounts(curAccount, 0, NET()); } catch (e) { return render(); }
     var isEth = !!n.contract;
     app.innerHTML = '<div class="p-head"><button class="p-ibtn" id="bBack" title="Back">←</button><div class="p-brand-mid"><div class="p-name">Send NFT</div><div class="p-sub">' + esc(String(n.title || '').slice(0, 22)) + '</div></div><div class="p-icons"></div></div>'
       + '<div class="send-form">'
@@ -1211,7 +1288,7 @@
           if (!RE_EVM.test(to)) throw new Error('Enter a valid 0x recipient.');
           var from = acc.ethereum.address;
           var data = n.tokenType === 'ERC1155' ? erc1155Data(from, to, n.tokenId, 1) : erc721Data(from, to, n.tokenId);
-          var prep = await fetch('api/eth/prepare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: from, to: n.contract, valueWei: '0x0', data: data, network: 'ethereum' }) }).then(function (r) { return r.json(); });
+          var prep = await fetch('api/eth/prepare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: from, to: n.contract, valueWei: '0x0', data: data, network: ethNet() }) }).then(function (r) { return r.json(); });
           if (prep.error) throw new Error(prep.detail || prep.error);
           var signed = C.sendEvm({ account: curAccount, to: n.contract, valueWei: '0x0', data: data, nonce: prep.nonce, chainId: prep.chainId, maxFeePerGas: prep.maxFeePerGas, maxPriorityFeePerGas: prep.maxPriorityFeePerGas, gasLimit: prep.gasLimit });
           var gasEth = Number(BigInt(prep.gasLimit) * BigInt(prep.maxFeePerGas)) / 1e18;
@@ -1248,7 +1325,7 @@
       var s = document.getElementById('nfcStatus'); s.className = 'p-hint'; s.textContent = 'Broadcasting…';
       try {
         var r, id;
-        if (x.kind === 'eth') { r = await fetch('api/eth/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raw: x.signed.raw, network: 'ethereum' }) }).then(function (z) { return z.json(); }); id = r.txhash; }
+        if (x.kind === 'eth') { r = await fetch('api/eth/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raw: x.signed.raw, network: ethNet() }) }).then(function (z) { return z.json(); }); id = r.txhash; }
         else { r = await fetch('api/sol/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txBase64: x.signed.txBase64 }) }).then(function (z) { return z.json(); }); id = r.signature; }
         if (r.error) throw new Error(r.detail || r.error);
         s.className = 'p-hint'; s.innerHTML = '<span style="color:var(--green)">Sent ✓ — ' + esc(String(id).slice(0, 20)) + '…</span>';
@@ -1466,15 +1543,17 @@
     // Bind an asset to a UTXO (attach) / release it back to the address (detach). Custom two-tab flow,
     // not a generic form — detach is UTXO-sourced and needs an attached-UTXO scan.
     attach: { label: 'Attach / Detach', ic: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007 0l2-2a5 5 0 00-7-7l-1 1"/><path d="M14 11a5 5 0 00-7 0l-2 2a5 5 0 007 7l1-1"/></svg>', custom: true },
+    // SRC-20 deploy / mint — reuses the popup's proven src20/create → signStamp → broadcast path (same as transfer).
+    src20: { label: 'SRC-20 deploy / mint', ic: MINT_IC, custom: true, src20: true },
   };
-  var CP_ORDER = ['send', 'sweep', 'mpma', 'dispenser', 'dispense', 'dividend', 'destroy', 'issuance', 'fairminter', 'fairmint', 'attach'];
+  var CP_ORDER = ['send', 'sweep', 'mpma', 'dispenser', 'dispense', 'dividend', 'destroy', 'issuance', 'fairminter', 'fairmint', 'attach', 'src20'];
   var CPH = { src: null, type: 'nativeSegwit', fee: null, last: {} };
   var CP_HUB_FEES = null;
 
   function cpImpAddr() { var im = currentImported(); if (!im) return null; var t = impBtcType(impId); return (im.bitcoin[t] || im.bitcoin.nativeSegwit).address; }
   function cpSources() {
     if (acctKind === 'imported') { var a = cpImpAddr(); return a ? [{ type: impBtcType(impId), address: a, label: BTC_LABEL[impBtcType(impId)] || 'Imported' }] : []; }
-    var acc; try { acc = C.accounts(curAccount, 0); } catch (e) { return []; }
+    var acc; try { acc = C.accounts(curAccount, 0, NET()); } catch (e) { return []; }
     return ['nativeSegwit', 'legacy', 'taproot', 'nestedSegwit'].map(function (t) { return acc.bitcoin[t] ? { type: t, address: acc.bitcoin[t].address, label: BTC_LABEL[t] || t } : null; }).filter(Boolean);
   }
   // Advanced Tools — the consolidated power-tool window: the Emblem Vault bridge (HD accounts) plus
@@ -1507,7 +1586,7 @@
       var sel = document.getElementById('cphSrc');
       sel.onchange = function () { CPH.src = sel.value; CPH.type = sel.options[sel.selectedIndex].getAttribute('data-t'); var ad = document.querySelector('.cph-addr'); if (ad) { ad.textContent = CPH.src; ad.setAttribute('data-copy', CPH.src); } cphMempool(); };
       var ad0 = document.querySelector('.cph-addr'); if (ad0) ad0.onclick = function () { copy(CPH.src, ad0); };
-      document.querySelectorAll('.cp-act').forEach(function (b) { b.onclick = function () { var a = CP_ACTIONS[b.dataset.k]; if (a && a.custom) cpAttachDetach('attach'); else cpForm(b.dataset.k); }; });
+      document.querySelectorAll('.cp-act').forEach(function (b) { b.onclick = function () { var a = CP_ACTIONS[b.dataset.k]; if (a && a.src20) { closeOv(); src20CreateChoose(); } else if (a && a.custom) cpAttachDetach('attach'); else cpForm(b.dataset.k); }; });
       cphMempool();
     }
   }
@@ -1823,6 +1902,9 @@
         + '<button class="adv-opt danger" data-adv="secrets"><b>Export private keys</b><span>Export raw keys for this account</span></button>')
       + '<button class="adv-opt" data-adv="autolock"><b>Auto-lock timer</b><span>Change or turn off the idle lock</span></button>'
       + '<button class="adv-opt" data-adv="theme"><b>Appearance</b><span>Dark or light wallet skin</span></button>'
+      + '<button class="adv-opt" data-adv="network"><b>Network</b><span>Currently on <b>' + (isTN() ? 'Testnet' : 'Mainnet') + '</b> · switch for testing</span></button>'
+      + '<button class="adv-opt" data-adv="sites"><b>Connected sites</b><span>dApps allowed to connect to this wallet</span></button>'
+      + '<button class="adv-opt" data-adv="terminal"><b>Wonder Terminal</b><span>Open the full wallet view in a window</span></button>'
       + '</div><button class="btn ghost" id="advClose">Close</button></div>');
     document.getElementById('advX').onclick = closeOv; document.getElementById('advClose').onclick = closeOv;
     document.querySelectorAll('[data-adv]').forEach(function (b) { b.onclick = function () {
@@ -1835,7 +1917,46 @@
       else if (a === 'secrets') advExportKeys();
       else if (a === 'autolock') advAutoLock();
       else if (a === 'theme') advTheme();
+      else if (a === 'network') advNetwork();
+      else if (a === 'sites') { overlay('<div id="wwcsMount"></div>'); if (self.WWConnectedSites) self.WWConnectedSites.render(document.getElementById('wwcsMount'), advancedMenu); else { closeOv(); } }
+      else if (a === 'terminal') { closeOv(); openTerminal(); }
     }; });
+  }
+  // Global network toggle — Mainnet ↔ Testnet. Switching re-derives testnet addresses (coin type 1')
+  // and routes reads to testnet4 / Sepolia / devnet. Keys are the same seed; only the network changes.
+  function advNetwork() {
+    var cur = NET();
+    var opt = function (m, name, sub) {
+      return '<button class="adv-opt' + (cur === m ? ' on' : '') + '" data-nm="' + m + '"><b>' + name + (cur === m ? ' ✓' : '') + '</b><span>' + sub + '</span></button>';
+    };
+    overlay('<div class="stamp-detail"><div class="st-head"><button class="p-ibtn" id="nmBack" title="Back">←</button><div class="st-htitle">Network</div></div>'
+      + '<div class="p-hint">Switch the whole wallet to a test network to experiment with <b>no real value</b> at stake — Bitcoin testnet4, Counterparty testnet4, Ethereum Sepolia, and Solana devnet. Your addresses change on testnet (they can never collide with mainnet). Stamps &amp; SRC-20 gallery reads are mainnet-only; SRC-20 mints run as a safe <b>dry run</b> on testnet.</div>'
+      + '<div class="adv-menu">'
+      + opt('mainnet', 'Mainnet', 'The real Bitcoin / Ethereum / Solana networks')
+      + opt('testnet', 'Testnet', 'testnet4 · Sepolia · devnet — free test coins, no value')
+      + '</div>'
+      + (isTN() ? '<button class="btn" id="nmFaucet" style="margin-top:8px">🚰 Get test coins</button>' : '')
+      + '<button class="btn ghost" id="nmClose" style="margin-top:8px">Close</button></div>');
+    document.getElementById('nmBack').onclick = advancedMenu; document.getElementById('nmClose').onclick = closeOv;
+    var fb = document.getElementById('nmFaucet'); if (fb) fb.onclick = testnetFaucet;
+    document.querySelectorAll('[data-nm]').forEach(function (b) { b.onclick = function () {
+      if (window.WWNetMode) window.WWNetMode.set(b.dataset.nm);
+      paintTestnetBanner();
+      closeOv();
+      try { ASSETS = null; PRICES = null; } catch (e) {}
+      render();
+    }; });
+  }
+  // Testnet faucet links.
+  function testnetFaucet() {
+    var F = [['Bitcoin testnet4', 'https://mempool.space/testnet4/faucet', 'signet/testnet4 tBTC'],
+      ['Ethereum Sepolia', 'https://cloud.google.com/application/web3/faucet/ethereum/sepolia', 'Sepolia ETH'],
+      ['Solana devnet', 'https://faucet.solana.com/', 'devnet SOL']];
+    overlay('<div class="stamp-detail"><div class="st-head"><button class="p-ibtn" id="fcBack" title="Back">←</button><div class="st-htitle">🚰 Testnet faucets</div></div>'
+      + '<div class="p-hint">Get free test coins, then send them to your <b>testnet</b> address in this wallet.</div>'
+      + '<div class="adv-menu">' + F.map(function (f) { return '<a class="adv-opt" href="' + f[1] + '" target="_blank" rel="noopener"><b>' + esc(f[0]) + ' ↗</b><span>' + esc(f[2]) + '</span></a>'; }).join('') + '</div>'
+      + '<button class="btn ghost" id="fcClose" style="margin-top:8px">Close</button></div>');
+    document.getElementById('fcBack').onclick = advNetwork; document.getElementById('fcClose').onclick = closeOv;
   }
   function advAutoLock() {
     var cur = '5'; try { cur = localStorage.getItem('ww:idlemins') || '5'; } catch (e) {}
@@ -1863,7 +1984,7 @@
       var im = currentImported(); if (!im) return;
       [['BTC · Native SegWit', 'nativeSegwit'], ['BTC · Taproot', 'taproot'], ['BTC · Nested SegWit', 'nestedSegwit'], ['BTC · Legacy', 'legacy']].forEach(function (p) { if (im.bitcoin[p[1]]) rows.push([p[0], im.bitcoin[p[1]].address]); });
     } else {
-      var acc; try { acc = C.accounts(curAccount, 0); } catch (e) { return; }
+      var acc; try { acc = C.accounts(curAccount, 0, NET()); } catch (e) { return; }
       var b = acc.bitcoin;
       [['BTC · Native SegWit', 'nativeSegwit'], ['BTC · Taproot', 'taproot'], ['BTC · Nested SegWit', 'nestedSegwit'], ['BTC · Legacy', 'legacy']].forEach(function (p) { if (b[p[1]]) rows.push([p[0], b[p[1]].address]); });
       rows.push(['Ethereum', acc.ethereum.address]); rows.push(['Solana', acc.solana.address]);
@@ -1894,7 +2015,7 @@
       try {
         var t = typeSel.value, addr = '';
         if (isImp) { var im = currentImported(); addr = im && im.bitcoin[t] ? im.bitcoin[t].address : ''; }
-        else { var acc = C.accounts(curAccount, 0); addr = acc.bitcoin[t] ? acc.bitcoin[t].address : ''; }
+        else { var acc = C.accounts(curAccount, 0, NET()); addr = acc.bitcoin[t] ? acc.bitcoin[t].address : ''; }
         addrEl.textContent = addr ? ('address: ' + addr) : '';
       } catch (e) { addrEl.textContent = ''; }
     };
@@ -2252,7 +2373,7 @@
   function openEmblem() {
     if (!window.EmblemBridge) return;
     if (acctKind !== 'hd') { overlay('<div class="p-hint" style="padding:14px">Emblem vaulting needs an Ethereum account. Switch to one of your HD accounts — imported BTC-only keys and watch-only addresses can’t mint vault NFTs.</div>'); return; }
-    var acc; try { acc = C.accounts(curAccount, 0); } catch (e) { return; }
+    var acc; try { acc = C.accounts(curAccount, 0, NET()); } catch (e) { return; }
     window.EmblemBridge.open(curAccount, acc.ethereum.address, acc.bitcoin.nativeSegwit.address);
   }
 
@@ -2280,7 +2401,7 @@
     var isImp = acctKind === 'imported', useImpId = isImp ? impId : null;
     var acc, sendType, from;
     if (isImp) { var im = currentImported(); if (!im) return render(); sendType = impBtcType(impId); from = (im.bitcoin[sendType] || im.bitcoin.nativeSegwit).address; acc = { account: 0 }; }
-    else { try { acc = C.accounts(curAccount, 0); } catch (e) { return render(); } sendType = acctBtcType(curAccount); from = acc.bitcoin[sendType].address; }
+    else { try { acc = C.accounts(curAccount, 0, NET()); } catch (e) { return render(); } sendType = acctBtcType(curAccount); from = acc.bitcoin[sendType].address; }
     if (!PRICES.bitcoin) { try { PRICES = await fetch('api/prices').then(function (r) { return r.json(); }); } catch (e) {} }
     var fees = { fastestFee: 10, halfHourFee: 6, hourFee: 3 };
     try { fees = await fetch('api/btc/fees').then(function (r) { return r.json(); }); } catch (e) {}
@@ -2464,6 +2585,88 @@
       } catch (err) { s.className = 'p-err'; s.textContent = 'Failed: ' + (err.message || 'sign/broadcast error'); }
     };
   }
+  // SRC-20 deploy / mint (first-party, native in the popup). Same compose→signStamp→broadcast path as
+  // renderSrc20Send (transfer), so no new dependency and no broken-feature risk.
+  function src20CreateChoose() {
+    overlay('<div class="menu"><div class="menu-hd">SRC-20</div>'
+      + '<button class="menu-opt" data-op="deploy"><span>Deploy a new token<br><span class="fine">Register a ticker with a max supply &amp; per-mint limit</span></span></button>'
+      + '<button class="menu-opt" data-op="mint"><span>Mint an existing token<br><span class="fine">Mint from a ticker that\'s already deployed</span></span></button></div>');
+    app.querySelectorAll('#pop-ov [data-op]').forEach(function (b) { b.onclick = function () { closeOv(); renderSrc20Create(b.dataset.op); }; });
+  }
+  async function renderSrc20Create(op) {
+    stopCd();
+    if (!canSignBtc()) return renderMain();
+    var from = curBtcAddress(); if (!from) return render();
+    var fees = { fastestFee: 10, halfHourFee: 6, hourFee: 3 };
+    try { fees = await fetch('api/btc/fees').then(function (r) { return r.json(); }); } catch (e) {}
+    var feeRate = fees.halfHourFee || 6;
+    var fields = op === 'deploy'
+      ? '<label class="cpf"><span>Ticker <span id="s_tickchk" class="tickchk"></span></span><input id="s_tick" class="p-in" maxlength="5" spellcheck="false" autocomplete="off" placeholder="e.g. WNDR"/></label>'
+        + '<label class="cpf"><span>Max supply</span><input id="s_max" class="p-in" type="number" min="0" step="any"/></label>'
+        + '<label class="cpf"><span>Per-mint limit</span><input id="s_lim" class="p-in" type="number" min="0" step="any"/></label>'
+        + '<label class="cpf"><span>Decimals (0–18)</span><input id="s_dec" class="p-in" type="number" min="0" max="18" step="1" value="18"/></label>'
+      : '<label class="cpf"><span>Ticker</span><input id="s_tick" class="p-in" maxlength="5" spellcheck="false" autocomplete="off" placeholder="e.g. WNDR"/></label>'
+        + '<label class="cpf"><span>Amount to mint</span><input id="s_amt" class="p-in" type="number" min="0" step="any"/></label>';
+    app.innerHTML = '<div class="p-head"><button class="p-ibtn" id="bBack" title="Back">←</button><div class="p-brand-mid"><div class="p-name">' + (op === 'deploy' ? 'Deploy SRC-20' : 'Mint SRC-20') + '</div><div class="p-sub">SRC-20 · ' + esc(short(from)) + '</div></div><div class="p-icons"></div></div>'
+      + '<div class="send-form">' + fields + feeRowHtml(fees)
+      + '<div id="xStatus" class="p-err"></div><button class="btn" id="xReview">Review</button></div>';
+    document.getElementById('bBack').onclick = function () { renderMain(); };
+    wireFeeRow(function (r) { feeRate = r; });
+    document.getElementById('xReview').onclick = async function () {
+      var s = document.getElementById('xStatus'); s.className = 'p-hint'; s.textContent = 'Composing via stampchain…';
+      try {
+        var tick = (document.getElementById('s_tick').value || '').trim();
+        if (!(tick.length >= 1 && tick.length <= 5)) throw new Error('Ticker must be 1–5 characters.');
+        var params = { op: op, tick: tick, satsPerVB: feeRate }, summ;
+        if (op === 'deploy') {
+          var st = await fetch('api/stamps/src20/tick/' + encodeURIComponent(tick)).then(function (x) { return x.json(); });
+          if (st.deployed) throw new Error('Ticker "' + tick + '" is already registered — choose another.');
+          var max = parseFloat(document.getElementById('s_max').value), lim = parseFloat(document.getElementById('s_lim').value), dec = parseInt(document.getElementById('s_dec').value, 10);
+          if (!(max > 0)) throw new Error('Max supply must be greater than 0.');
+          if (!(lim > 0 && lim <= max)) throw new Error('Per-mint limit must be > 0 and ≤ max supply.');
+          if (!(Number.isInteger(dec) && dec >= 0 && dec <= 18)) throw new Error('Decimals must be a whole number 0–18.');
+          params.max = String(max); params.lim = String(lim); params.dec = dec;
+          summ = 'max ' + max + ' · ' + lim + '/mint · ' + dec + ' dec';
+        } else {
+          var amt = parseFloat(document.getElementById('s_amt').value);
+          if (!(amt > 0)) throw new Error('Amount must be greater than 0.');
+          var st2 = await fetch('api/stamps/src20/tick/' + encodeURIComponent(tick)).then(function (x) { return x.json(); });
+          if (!st2.deployed) throw new Error('Ticker "' + tick + '" isn\'t deployed yet — nothing to mint.');
+          if (st2.complete) throw new Error('"' + tick + '" is fully minted — no mints left.');
+          params.amt = String(amt); summ = 'mint ' + amt + ' ' + tick;
+        }
+        var r = await fetch('api/stamps/src20/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: from, params: params }) }).then(function (x) { return x.json(); });
+        if (r.error) throw new Error(r.detail || r.error);
+        renderSrc20CreatePreview(op, r, tick, summ);
+      } catch (err) { s.className = 'p-err'; s.textContent = /No spendable|compose_failed/i.test(err.message) ? 'Insufficient BTC on this address to compose.' : (err.message || 'Could not compose.'); }
+    };
+  }
+  function renderSrc20CreatePreview(op, r, tick, summ) {
+    var sat = function (n) { return Number(n).toLocaleString('en-US') + ' sats'; };
+    app.innerHTML = '<div class="p-head"><button class="p-ibtn" id="bBack" title="Back">←</button><div class="p-brand-mid"><div class="p-name">Confirm ' + (op === 'deploy' ? 'deploy' : 'mint') + '</div></div><div class="p-icons"></div></div>'
+      + '<div class="p-card" style="display:flex;flex-direction:column;gap:7px">'
+      + '<div class="sd-row"><span class="sd-k">' + (op === 'deploy' ? 'Deploy' : 'Mint') + '</span><span class="sd-v">' + esc(tick) + '</span></div>'
+      + '<div class="sd-row"><span class="sd-k">Details</span><span class="sd-v">' + esc(summ) + '</span></div>'
+      + '<div class="sd-row"><span class="sd-k">Miner fee</span><span class="sd-v">' + sat(r.fee) + usdSuffix(r.fee) + (r.vsize ? ' (' + r.vsize + ' vB)' : '') + '</span></div>'
+      + (r.change != null ? '<div class="sd-row"><span class="sd-k">Change</span><span class="sd-v">' + sat(r.change) + '</span></div>' : '') + '</div>'
+      + '<div class="disp-panel" style="display:block"><div class="disp-hit">Signed locally, then broadcast. This writes a permanent SRC-20 ' + (op === 'deploy' ? 'deployment' : 'mint') + ' to Bitcoin — it can\'t be undone.</div></div>'
+      + '<div id="xbStatus" class="p-err"></div>'
+      + '<div class="actions"><button class="btn ghost" id="xbBack">Back</button><button class="btn" id="xbSend">Sign &amp; broadcast</button></div>';
+    document.getElementById('bBack').onclick = function () { renderSrc20Create(op); };
+    document.getElementById('xbBack').onclick = function () { renderSrc20Create(op); };
+    document.getElementById('xbSend').onclick = async function () {
+      var s = document.getElementById('xbStatus'); s.className = 'p-hint'; s.textContent = 'Signing locally & broadcasting…';
+      try {
+        var stype = curBtcType(), prevTxs = {};
+        if (stype === 'legacy') { s.textContent = 'Fetching previous transactions…'; var uniq = [...new Set(C.psbtInputs(r.hex).map(function (x) { return x.txid; }))]; var got = await Promise.all(uniq.map(function (t) { return fetch('api/btc/tx/' + t + '/hex').then(function (z) { return z.ok ? z.text() : null; }).then(function (h) { return [t, h && h.trim()]; }).catch(function () { return [t, null]; }); })); got.forEach(function (p) { if (p[1]) prevTxs[p[0]] = p[1]; }); s.textContent = 'Signing locally & broadcasting…'; }
+        var signed = C.signStamp(r.hex, curAccount, stype, prevTxs, curImportedId());
+        var b = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then(function (x) { return x.json(); });
+        if (b.error) throw new Error(b.detail || b.error);
+        s.className = 'p-hint'; s.innerHTML = '<span style="color:var(--green)">Broadcast ✓ — ' + esc(String(b.txid).slice(0, 20)) + '…</span>';
+        setTimeout(renderMain, 1800);
+      } catch (err) { s.className = 'p-err'; s.textContent = 'Failed: ' + (err.message || 'sign/broadcast error'); }
+    };
+  }
 
   // ── inline Ethereum send (native + ERC-20) ──
   function toBaseUnits(amountStr, decimals) {
@@ -2482,10 +2685,10 @@
 
   async function renderEvmSend() {
     stopCd();
-    var acc; try { acc = C.accounts(curAccount, 0); } catch (e) { return render(); }
+    var acc; try { acc = C.accounts(curAccount, 0, NET()); } catch (e) { return render(); }
     var addr = acc.ethereum.address;
     sendShell('Send Ethereum', short(addr));
-    var data = {}; try { data = await fetch('api/eth/' + encodeURIComponent(addr) + '?network=ethereum').then(function (r) { return r.json(); }); } catch (e) {}
+    var data = {}; try { data = await fetch('api/eth/' + encodeURIComponent(addr) + '?network=' + ethNet() + '').then(function (r) { return r.json(); }); } catch (e) {}
     var netName = data.networkName || 'Ethereum', explorer = data.explorer || 'https://etherscan.io';
     var assets = [{ symbol: 'ETH', decimals: 18, native: true, amount: data.eth }].concat((data.tokens || []).map(function (t) { return { symbol: t.symbol, decimals: t.decimals, address: t.address, amount: t.amount }; }));
     var body = document.getElementById('sendBody'); if (!body) return;
@@ -2506,7 +2709,7 @@
         var txTo, valueWei, dataHex, human;
         if (a.native) { txTo = to; valueWei = toHexWei(toBaseUnits(amt, 18)); dataHex = '0x'; human = amt + ' ETH'; }
         else { txTo = a.address; valueWei = '0x0'; dataHex = C.erc20TransferData(to, toBaseUnits(amt, a.decimals)); human = amt + ' ' + a.symbol; }
-        var prep = await fetch('api/eth/prepare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: addr, to: txTo, valueWei: valueWei, data: dataHex, network: 'ethereum' }) }).then(function (r) { return r.json(); });
+        var prep = await fetch('api/eth/prepare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: addr, to: txTo, valueWei: valueWei, data: dataHex, network: ethNet() }) }).then(function (r) { return r.json(); });
         if (prep.error) throw new Error(prep.detail || prep.error);
         var signed = C.sendEvm({ account: curAccount, to: txTo, valueWei: valueWei, data: dataHex, nonce: prep.nonce, chainId: prep.chainId, maxFeePerGas: prep.maxFeePerGas, maxPriorityFeePerGas: prep.maxPriorityFeePerGas, gasLimit: prep.gasLimit });
         var gasEth = Number(BigInt(prep.gasLimit) * BigInt(prep.maxFeePerGas)) / 1e18;
@@ -2529,7 +2732,7 @@
     document.getElementById('evbGo').onclick = async function () {
       var s = document.getElementById('evbStatus'); s.className = 'p-hint'; s.textContent = 'Broadcasting…';
       try {
-        var r = await fetch('api/eth/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raw: x.signed.raw, network: 'ethereum' }) }).then(function (z) { return z.json(); });
+        var r = await fetch('api/eth/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raw: x.signed.raw, network: ethNet() }) }).then(function (z) { return z.json(); });
         if (r.error) throw new Error(r.detail || r.error);
         s.className = 'p-hint'; s.innerHTML = '<span style="color:var(--green)">Broadcast ✓ — ' + esc(String(r.txhash).slice(0, 20)) + '…</span>';
         setTimeout(renderMain, 2000);
@@ -2540,7 +2743,7 @@
   // ── inline Solana send (native + SPL) ──
   async function renderSolSend() {
     stopCd();
-    var acc; try { acc = C.accounts(curAccount, 0); } catch (e) { return render(); }
+    var acc; try { acc = C.accounts(curAccount, 0, NET()); } catch (e) { return render(); }
     var addr = acc.solana.address;
     sendShell('Send Solana', short(addr));
     var data = {}; try { data = await fetch('api/sol/' + encodeURIComponent(addr)).then(function (r) { return r.json(); }); } catch (e) {}

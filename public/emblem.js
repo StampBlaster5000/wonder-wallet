@@ -203,7 +203,7 @@
     // (not an attacker address) and has sane gas before we sign anything.
     if (expectTo && String(to).toLowerCase() !== expectTo.toLowerCase()) throw new Error('Aborted — transaction target is not the official Emblem contract. The compose response may have been tampered with.');
     statusEl.textContent = 'Preparing Ethereum transaction…';
-    const prep = await fetch('api/eth/prepare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: ETH, to, valueWei, data, network: 'ethereum' }) }).then((r) => r.json());
+    const prep = await fetch('api/eth/prepare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: ETH, to, valueWei, data, network: (window.WWNet ? window.WWNet.evm() : 'ethereum') }) }).then((r) => r.json());
     if (prep.error) throw new Error(prep.detail || prep.error);
     const gasLim = parseInt(prep.gasLimit, 16), maxFee = BigInt(prep.maxFeePerGas);
     if (!(gasLim > 0) || gasLim > 2000000 || maxFee > 3000000000000n) throw new Error('Aborted — abnormal gas parameters returned by the server.');
@@ -219,7 +219,7 @@
     $('#embBroadcast').onclick = async () => {
       statusEl.className = 'statusline load'; statusEl.textContent = 'Broadcasting…';
       try {
-        const r = await fetch('api/eth/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raw: signed.raw, network: 'ethereum' }) }).then((x) => x.json());
+        const r = await fetch('api/eth/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raw: signed.raw, network: (window.WWNet ? window.WWNet.evm() : 'ethereum') }) }).then((x) => x.json());
         if (r.error) throw new Error(r.detail || r.error);
         statusEl.className = 'statusline load'; statusEl.innerHTML = `Broadcast ✓ — <a href="https://etherscan.io/tx/${encodeURIComponent(r.txhash)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(r.txhash).slice(0, 18))}…</a>`;
         if (onDone) try { onDone(); } catch (_) {}

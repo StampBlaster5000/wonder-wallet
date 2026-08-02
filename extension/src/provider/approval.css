@@ -1,0 +1,72 @@
+/* Wonder Wallet dApp provider — approval dialog styles. Phase 12 (v0.48), STAGED.
+   Reuses popup.css theme variables (--bg/--surface/--text/--gold/--border …). */
+body { width: 380px; }
+.ap-wrap { padding: 16px 16px 18px; display: flex; flex-direction: column; gap: 11px; }
+.mono { font-family: var(--mono, 'JetBrains Mono', monospace); }
+
+.ap-origin { display: flex; align-items: center; gap: 9px; background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; }
+.ap-fav { width: 18px; height: 18px; border-radius: 4px; }
+.ap-host { font-weight: 600; font-size: 14px; color: var(--text); }
+.ap-secure { margin-left: auto; font-size: 10.5px; color: var(--muted); }
+
+.ap-title { font-family: 'Fraunces', serif; font-weight: 600; font-size: 20px; color: var(--text); }
+.ap-hint { font-size: 13px; color: var(--muted); line-height: 1.45; }
+.ap-fine { font-size: 11px; color: var(--muted); }
+.ap-can { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--text); line-height: 1.6; }
+
+.ap-sec { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-top: 4px; }
+.ap-kv { display: flex; justify-content: space-between; align-items: center; font-size: 13px; padding: 4px 0; color: var(--text); }
+.ap-kv.big { font-weight: 600; font-size: 14.5px; border-top: 1px dashed var(--border); padding-top: 8px; }
+.ap-kv > span:first-child { color: var(--muted); font-weight: 500; }
+
+.ap-row { display: flex; justify-content: space-between; gap: 10px; align-items: center; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-top: 5px; font-size: 12.5px; }
+.ap-row-l { color: var(--text); overflow: hidden; text-overflow: ellipsis; }
+.ap-row-v { font-weight: 600; white-space: nowrap; color: var(--text); }
+.ap-row.send { border-color: rgba(224,180,83,.35); }
+.ap-row.you { opacity: .85; }
+.ap-row.asset { border-color: #b4453a; background: rgba(180,69,58,.10); }
+
+.ap-msg { background: var(--surface2); border: 1px solid var(--border); border-radius: 9px; padding: 10px; font-size: 12px; line-height: 1.5; color: var(--text); max-height: 150px; overflow: auto; word-break: break-all; white-space: pre-wrap; }
+
+.ap-check { display: block; font-size: 11.5px; color: var(--text); background: var(--surface2); border: 1px solid var(--border); border-radius: 9px; padding: 9px 10px; line-height: 1.5; }
+.ap-check input { margin-right: 6px; }
+
+.ap-tag { display: inline-block; font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 999px; background: var(--surface2); border: 1px solid var(--border); color: var(--muted); }
+.ap-tag.bad { color: #e6a; border-color: #b4453a; background: rgba(180,69,58,.12); }
+
+.ap-warns { display: flex; flex-direction: column; gap: 6px; }
+.ap-warn { display: flex; gap: 7px; align-items: flex-start; font-size: 12px; line-height: 1.45; border-radius: 9px; padding: 9px 10px; }
+.ap-warn.danger { background: rgba(180,69,58,.14); border: 1px solid #b4453a; color: #f0b8b0; }
+.ap-warn.warn { background: rgba(224,180,83,.12); border: 1px solid rgba(224,180,83,.4); color: var(--gold, #E0B453); }
+.ap-warn.info { background: var(--surface2); border: 1px solid var(--border); color: var(--muted); }
+
+.ap-raw { font-size: 11.5px; color: var(--muted); }
+.ap-raw summary { cursor: pointer; padding: 4px 0; }
+
+.ap-foot { display: flex; gap: 9px; margin-top: 6px; }
+.ap-foot .btn { flex: 1; }
+.ap-danger { background: #b4453a !important; border-color: #b4453a !important; color: #fff !important; }
+.ap-ver { position: fixed; bottom: 5px; right: 8px; font-size: 10px; color: #6b6478; opacity: .75; pointer-events: none; font-family: 'JetBrains Mono', monospace; }
+.ap-in { width: 100%; box-sizing: border-box; margin: 4px 0 2px; padding: 10px 12px; border-radius: 9px; border: 1px solid #2a2436; background: #17131f; color: #ECE8E1; font-size: 14px; font-family: inherit; }
+.ap-in:focus { outline: none; border-color: #E0B453; }
+.ap-orb { display: flex; justify-content: center; margin: 16px 0 6px; }
+.ap-orb-core { width: 56px; height: 56px; border-radius: 50%; background: radial-gradient(circle at 50% 36%, #F4D58D, #E0B453 55%, #9a6f1f); animation: ap-pulse 1.6s ease-out infinite; }
+@keyframes ap-pulse {
+  0%   { box-shadow: 0 0 10px 2px rgba(224,180,83,.55), 0 0 0 0 rgba(224,180,83,.5); }
+  70%  { box-shadow: 0 0 22px 7px rgba(224,180,83,.35), 0 0 0 18px rgba(224,180,83,0); }
+  100% { box-shadow: 0 0 10px 2px rgba(224,180,83,.55), 0 0 0 0 rgba(224,180,83,0); }
+}
+/* Branded unlock header (UniSat-style) */
+.ap-brand { display: flex; align-items: center; justify-content: center; gap: 9px; margin: 16px 0 8px; }
+.ap-seal { width: 30px; height: 30px; border-radius: 50%; background: radial-gradient(circle at 50% 36%, #F4D58D, #E0B453 55%, #9a6f1f); box-shadow: 0 2px 10px rgba(224,180,83,.3); }
+.ap-brandname { font-family: 'Fraunces', Georgia, serif; font-weight: 600; font-size: 19px; background: linear-gradient(180deg,#fff,#F4D58D); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+/* Account picker (Select the account to use) */
+.ap-accts { display: flex; flex-direction: column; gap: 7px; margin: 8px 0 4px; max-height: 300px; overflow-y: auto; }
+.ap-acct { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 10px 12px; border-radius: 11px; border: 1px solid #2a2436; background: #17131f; color: #ECE8E1; cursor: pointer; font: inherit; }
+.ap-acct:hover { border-color: #4a3f5e; }
+.ap-acct.on { border-color: #E0B453; background: #201830; }
+.ap-acct-i { color: #E0B453; font-size: 15px; flex: 0 0 auto; }
+.ap-acct-m { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.ap-acct-m b { font-size: 13.5px; }
+.ap-acct-t { font-size: 11px; color: #8b8597; }
+.ap-acct-a { font-size: 11px; color: #b6b1bf; flex: 0 0 auto; }
