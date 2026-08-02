@@ -535,7 +535,7 @@
     if (hasSeed) html += '<div class="menu-hd">Seed wallet</div><button class="menu-opt" data-a="seed"><span>↩ Switch to seed wallet</span></button>';
     html += '</div>';
     overlay(html);
-    app.querySelectorAll('#pop-ov [data-a]').forEach(function (b) {
+    document.querySelectorAll('#pop-ov [data-a]').forEach(function (b) {
       b.onclick = function () {
         var a = b.dataset.a;
         if (a === 'agg') { hwAgg = true; hwViewAddr = null; hwViewIndex = null; closeOv(); hwRenderMain(); }
@@ -2618,7 +2618,7 @@
     overlay('<div class="menu"><div class="menu-hd">SRC-20</div>'
       + '<button class="menu-opt" data-op="deploy"><span>Deploy a new token<br><span class="fine">Register a ticker with a max supply &amp; per-mint limit</span></span></button>'
       + '<button class="menu-opt" data-op="mint"><span>Mint an existing token<br><span class="fine">Mint from a ticker that\'s already deployed</span></span></button></div>');
-    app.querySelectorAll('#pop-ov [data-op]').forEach(function (b) { b.onclick = function () { closeOv(); renderSrc20Create(b.dataset.op); }; });
+    document.querySelectorAll('#pop-ov [data-op]').forEach(function (b) { b.onclick = function () { closeOv(); renderSrc20Create(b.dataset.op); }; });
   }
   // Live SRC-20 ticker/namespace check as the user types, mirroring the web Terminal:
   //  deploy → ✓ available / ✗ taken   ·   mint → ✓ mintable (shows per-mint limit) / not-deployed / fully-minted
