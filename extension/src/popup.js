@@ -1628,7 +1628,7 @@
       var ph = f.combo ? ' placeholder="type or pick an asset you hold"' : '';
       return '<label class="stf"><span>' + f.l + nm + bal + '</span><input id="cpf_' + f.k + '" data-k="' + f.k + '" class="p-in" type="' + (f.t || 'text') + '"' + (f.t === 'number' ? ' step="any"' : '') + list + ph + ' spellcheck="false" autocomplete="off"/>' + datalist + nameBanner + dispPanel + rate + '</label>';
     }).join('');
-    overlay('<div class="stamp-detail"><div class="st-head"><button class="p-ibtn" id="cpfBack" title="Back">←</button><div class="st-htitle">' + esc(a.label) + '</div></div>'
+    overlay('<div class="stamp-detail"><div class="st-head"><button class="p-ibtn" id="cpfBack" title="Back">←</button><div class="st-htitle">' + esc(a.label) + '</div><button class="m-close-x" id="cpfX" title="Close" aria-label="Close">✕</button></div>'
       + '<div class="cph-from">from ' + esc(short(CPH.src)) + (needsHoldings ? ' · ' + holdings.length + ' asset' + (holdings.length === 1 ? '' : 's') + ' held' : '') + '</div>'
       + '<div class="send-form" style="gap:9px">' + fieldsHtml
       + (a.xcp ? '<div class="fine">This action consumes XCP — the XCP fee is shown on review.</div>' : '')
@@ -1636,6 +1636,7 @@
       + '<div id="cpfStatus" class="p-err"></div>'
       + '<button class="btn' + (a.danger ? ' danger' : '') + '" id="cpfReview">Review</button></div></div>');
     document.getElementById('cpfBack').onclick = cpHub;
+    var cpfX = document.getElementById('cpfX'); if (cpfX) cpfX.onclick = closeOv;
     document.getElementById('cpfReview').onclick = function () { cpReview(key); };
     var pop = document.querySelector('#pop-ov .pop-pop');
     wireFeeRow(function (r) { CPH.fee = r; }, pop);
@@ -1766,7 +1767,7 @@
     var xcp = function (n) { return n == null ? null : (n / 1e8).toLocaleString('en-US', { maximumFractionDigits: 8 }) + ' XCP'; };
     var vsz = (c.signed_tx_estimated_size && c.signed_tx_estimated_size.vsize) || null;
     var recip = dest ? checkCpRecipient(c.psbt, c.data, dest) : null;
-    pop.innerHTML = '<div class="stamp-detail"><div class="st-head"><button class="p-ibtn" id="cpcBack" title="Back">←</button><div class="st-htitle">Confirm · ' + esc(a.label) + '</div></div>'
+    pop.innerHTML = '<div class="stamp-detail"><div class="st-head"><button class="p-ibtn" id="cpcBack" title="Back">←</button><div class="st-htitle">Confirm · ' + esc(a.label) + '</div><button class="m-close-x" id="cpcX" title="Close" aria-label="Close">✕</button></div>'
       + '<div class="p-card" style="display:flex;flex-direction:column;gap:7px">'
       + ((key === 'issuance' && CPH.last && CPH.last.asset) ? '<div class="sd-row"><span class="sd-k">Name</span><span class="sd-v" style="font-family:var(--mono)">' + esc(CPH.last.asset) + '</span></div>' : '')
       + '<div class="sd-row"><span class="sd-k">Action</span><span class="sd-v">' + esc(a.label) + '</span></div>'
@@ -1781,6 +1782,7 @@
       + '<div id="cpcStatus" class="p-err"></div>'
       + '<div class="actions"><button class="btn ghost" id="cpcBack2">Back</button><button class="btn' + (a.danger ? ' danger' : '') + '" id="cpcGo">Sign &amp; broadcast</button></div></div>';
     document.getElementById('cpcBack').onclick = function () { cpForm(key); };
+    var cpcX = document.getElementById('cpcX'); if (cpcX) cpcX.onclick = closeOv;
     document.getElementById('cpcBack2').onclick = function () { cpForm(key); };
     document.getElementById('cpcGo').onclick = async function () {
       var st = document.getElementById('cpcStatus'); st.className = 'p-hint'; st.textContent = 'Signing locally & broadcasting…';
