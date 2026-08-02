@@ -1652,6 +1652,32 @@
     }
     // Trigger-dispense: verify the entered address IS an open dispenser and show what it gives.
     a.fields.forEach(function (f) { if (f.dispDetect) wireHubDispense(f.k); });
+    // Name issuance: live availability chip (✓ available / ✗ taken) as the user types the new name,
+    // querying the Counterparty registry — same as the web Terminal. (Submit re-checks as a guard.)
+    a.fields.forEach(function (f) { if (f.nameCheck) wireNameCheck(f.k, 'cphNm'); });
+  }
+  // Debounced Counterparty asset-name availability check → fills a small chip beside the field label.
+  function wireNameCheck(fieldKey, chipId) {
+    var inp = document.getElementById('cpf_' + fieldKey), chip = document.getElementById(chipId);
+    if (!inp || !chip) return;
+    var set = function (txt, color) { chip.textContent = txt; chip.style.color = color || ''; };
+    var t = null;
+    inp.addEventListener('input', function () {
+      clearTimeout(t);
+      var v = inp.value.trim().toUpperCase();
+      if (!v) return set('');
+      // Counterparty named assets: 4–12 letters A–Z, not starting with A (numeric A-names are auto).
+      if (!/^[B-Z][A-Z]{3,11}$/.test(v)) return set('4–12 letters, not A', 'var(--red)');
+      set('checking…', '');
+      t = setTimeout(async function () {
+        try {
+          var r = await fetch('api/cp/assetname/' + encodeURIComponent(v)).then(function (x) { return x.json(); });
+          if (inp.value.trim().toUpperCase() !== v) return; // stale — user kept typing
+          if (r && r.exists) set('✗ taken', 'var(--red)');
+          else set('✓ available', 'var(--green)');
+        } catch (e) { set(''); }
+      }, 350);
+    });
   }
   // Detect + verify an open dispenser at the address the user types, and offer one-tap trigger
   // quantities that fill the sats amount (mirrors the Send-Bitcoin dispenser detection).
