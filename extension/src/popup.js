@@ -63,6 +63,14 @@
   var short = function (a) { a = String(a || ''); return a.length > 16 ? a.slice(0, 7) + '…' + a.slice(-6) : a; };
   var fmt = function (x, d) { var n = Number(x); return isFinite(n) ? n.toLocaleString('en-US', { maximumFractionDigits: d }) : '0'; };
   var fmtBytes = function (n) { n = Number(n); if (!isFinite(n) || n <= 0) return '—'; if (n < 1024) return n + ' B'; if (n < 1048576) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB'; return (n / 1048576).toFixed(1) + ' MB'; };
+  // Token balance display: cap to 2 decimals, but if that rounds to 0 (dust like 0.00066 WETH), keep
+  // 2 significant figures so the balance never reads a misleading "0".
+  var fmtTokAmt = function (v) {
+    var n = Number(v); if (!isFinite(n) || n === 0) return '0';
+    var two = n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    if (parseFloat(two.replace(/,/g, '')) !== 0) return two;
+    return Number(n.toPrecision(2)).toLocaleString('en-US', { maximumFractionDigits: 20 });
+  };
   // Network-aware block-explorer links for a broadcast id → a clickable "Broadcast ✓" confirmation.
   var mempoolTx = function (txid) { return (isTN() ? 'https://mempool.space/testnet4/tx/' : 'https://mempool.space/tx/') + encodeURIComponent(String(txid || '')); };
   var explLinkHtml = function (url, id) { return 'Broadcast ✓ — <a href="' + url + '" target="_blank" rel="noopener" style="color:var(--gold2);text-decoration:underline">' + esc(String(id).slice(0, 18)) + '…</a> ↗'; };
@@ -852,7 +860,7 @@
       + (IN_PANEL ? '' : '<button class="p-ibtn" id="bPanel" title="Dock as side panel">' + PANEL_ICON + '</button>')
       + (acctKind !== 'watch' ? '<button class="p-ibtn" id="bAdv" title="Advanced — all addresses, sign message, hardware, custom derivation, reveal seed, export keys">' + GEAR_SVG + '</button>' : '')
       + '<button class="p-ibtn" id="bLock" title="Lock">' + LOCK_SVG + '</button></div></div>'
-      + '<div class="acct-bar">' + accountSelectHtml() + ((acctRemovable(curAccount) || acctKind === 'imported' || acctKind === 'watch') ? '<button class="p-ibtn acct-x" id="acctRemove" title="Remove">×</button>' : '') + '<button class="p-ibtn" id="acctAdd" title="Add account / import / watch-only">+</button></div>'
+      + '<div class="acct-bar">' + accountBarBtn() + '</div>'
       + '<div class="total"><div class="amt-wrap"><div class="amt" id="nativeVal">…</div><button class="priv-eye' + (PRIVACY ? ' on' : '') + '" id="bPrivacy" title="' + (PRIVACY ? 'Privacy view ON — show balances' : 'Privacy view (hide balances)') + '">' + (PRIVACY ? EYE_OFF_SVG : EYE_SVG) + '</button></div><div class="lbl" id="nativeLbl">' + (acctKind === 'imported' ? 'imported address' : 'estimated value') + '</div></div>'
       + '<div class="addr-row"><div class="addr-chip" data-copy="' + esc(addr || '') + '" title="Copy address">' + esc(short(addr || '—')) + '</div>'
       + (chain === 'btc' && (acctKind === 'hd' || acctKind === 'imported') ? '<button class="btctype-chip" id="btcTypeBtn" title="Bitcoin address type">' + esc(BTC_LABEL[acctKind === 'imported' ? impBtcType(impId) : acctBtcType(curAccount)]) + ' ▾</button>' : '') + '</div>'
@@ -869,29 +877,7 @@
     document.getElementById('chainBtn').onclick = chainMenu;
     document.getElementById('bLock').onclick = function () { C.lock(); render(); };
     document.getElementById('bRefresh').onclick = function () { var b = document.getElementById('assetBody'); if (b) b.innerHTML = '<div class="empty">Refreshing…</div>'; var nv = document.getElementById('nativeVal'); if (nv) nv.textContent = '…'; loadAssets(currentAddress()); };
-    document.getElementById('acctAdd').onclick = acctMenu;
-    var rmBtn = document.getElementById('acctRemove');
-    if (rmBtn && acctKind === 'watch') rmBtn.onclick = removeWatchFlow;
-    else if (rmBtn && acctKind === 'imported') rmBtn.onclick = function () {
-      overlay('<div class="menu" style="padding:12px;display:flex;flex-direction:column;gap:9px"><div class="p-title" style="font-size:15px">Remove imported address?</div>'
-        + '<div class="p-hint">This forgets the private key from this wallet. <b>Back up the WIF first</b> — it can’t be recovered from your seed.</div>'
-        + '<input class="p-in" id="rmPw" type="password" placeholder="Your wallet password" autocomplete="current-password"/><div class="p-err" id="rmErr"></div>'
-        + '<div class="actions"><button class="btn ghost" id="rmCancel">Cancel</button><button class="btn danger" id="rmGo">Remove</button></div></div>');
-      document.getElementById('rmCancel').onclick = closeOv;
-      document.getElementById('rmGo').onclick = async function () {
-        var err = document.getElementById('rmErr'); err.textContent = '';
-        try { await C.removeImportedKey(impId, document.getElementById('rmPw').value); impId = null; acctKind = 'hd'; curAccount = 0; closeOv(); render(); }
-        catch (e) { err.textContent = /wrong_password/.test(e.message) ? 'Wrong password.' : (e.message || 'Could not remove.'); }
-      };
-    };
-    else if (rmBtn) rmBtn.onclick = function () {
-      var i = curAccount;
-      overlay('<div class="menu" style="padding:12px"><div class="p-title" style="font-size:15px;margin-bottom:6px">Remove Account ' + i + '?</div>'
-        + '<div class="p-hint" style="margin-bottom:10px">This just hides it from your wallet — its funds are safe and it can be re-added anytime (it derives from your seed). Watch-only labels aren\'t affected.</div>'
-        + '<div class="actions"><button class="btn ghost" id="rmCancel">Cancel</button><button class="btn danger" id="rmGo">Remove</button></div></div>');
-      document.getElementById('rmCancel').onclick = closeOv;
-      document.getElementById('rmGo').onclick = function () { if (removeAcct(i)) { acctKind = 'hd'; curAccount = 0; } closeOv(); renderMain(); };
-    };
+    var acctBtn = document.getElementById('acctBtn'); if (acctBtn) acctBtn.onclick = accountPicker;
     var btBtn = document.getElementById('btcTypeBtn'); if (btBtn) btBtn.onclick = btcTypeMenu;
     var pvBtn = document.getElementById('bPrivacy'); if (pvBtn) pvBtn.onclick = togglePrivacy;
     var acBtn = document.getElementById('bActivity'); if (acBtn) acBtn.onclick = function () { renderActivity(currentAddress()); };
@@ -927,6 +913,108 @@
   function wireAccountSelect() {
     var sel = document.getElementById('acctSel'); if (!sel) return;
     sel.onchange = function () { var v = sel.value; if (v === 'hw') { acctKind = 'hardware'; chain = 'btc'; } else if (v.indexOf('hd:') === 0) { acctKind = 'hd'; curAccount = parseInt(v.slice(3), 10); } else if (v.indexOf('watch:') === 0) { acctKind = 'watch'; watchId = v.slice(6); } else if (v.indexOf('imp:') === 0) { acctKind = 'imported'; impId = v.slice(4); chain = 'btc'; } render(); };
+  }
+
+  // ── Custom account dropdown — replaces the native <select>. Each row has a ⋯ menu: Rename (all
+  //    accounts) + Delete (imported · watch-only · added HD accounts 4+). The old external ✕ is gone. ──
+  function acctDisplayName(kind, key, obj) {
+    if (kind === 'hd') { var nm = loadMap('ww:acctnames'); return 'Account ' + key + (nm[key] ? ' · ' + nm[key] : ''); }
+    if (kind === 'imp') { var oi = loadMap('ww:impnames'); return oi[key] || (obj && obj.label) || short(((obj && obj.bitcoin && obj.bitcoin.nativeSegwit) || {}).address || key); }
+    if (kind === 'watch') { var ow = loadMap('ww:watchnames'); return ow[key] || (obj && obj.label) || short(obj && obj.address); }
+    if (kind === 'hw') return '🔐 Ledger';
+    return String(key);
+  }
+  function currentAcctName() {
+    if (acctKind === 'imported') return acctDisplayName('imp', impId, currentImported()) + ' · imported';
+    if (acctKind === 'watch') { var w = watchList().filter(function (x) { return x.id === watchId; })[0]; return acctDisplayName('watch', watchId, w); }
+    if (acctKind === 'hardware') return '🔐 Ledger';
+    return acctDisplayName('hd', curAccount);
+  }
+  function accountBarBtn() {
+    return '<button class="acct-sel" id="acctBtn" title="Switch account" style="flex:1;display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left;cursor:pointer;overflow:hidden"><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(currentAcctName()) + '</span><span class="chev">▾</span></button>';
+  }
+  var KEBAB_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
+  function acctPickerRow(kind, key, label, sel, hasMenu) {
+    return '<div class="acct-item">'
+      + '<button class="acct-pick' + (sel ? ' on' : '') + '" data-sw="' + kind + ':' + esc(String(key)) + '">' + (sel ? '<span class="adot"></span>' : '') + esc(label) + '</button>'
+      + (hasMenu ? '<button class="acct-kebab" data-menu="' + kind + ':' + esc(String(key)) + '" title="Rename / delete">' + KEBAB_SVG + '</button>' : '')
+      + '</div>';
+  }
+  function accountPicker() {
+    var rows = '<div class="acct-grp">My accounts</div>';
+    acctList().forEach(function (i) { rows += acctPickerRow('hd', i, acctDisplayName('hd', i), acctKind === 'hd' && i === curAccount, true); });
+    if (IMPORTED.length) { rows += '<div class="acct-grp">Imported</div>'; IMPORTED.forEach(function (im) { rows += acctPickerRow('imp', im.id, acctDisplayName('imp', im.id, im) + ' · imported', acctKind === 'imported' && impId === im.id, true); }); }
+    var wl = watchList();
+    if (wl.length) { rows += '<div class="acct-grp">Watching</div>'; wl.forEach(function (w) { rows += acctPickerRow('watch', w.id, acctDisplayName('watch', w.id, w) + ' · ' + ((CH[CHAIN_OF[w.chain]] || {}).sym || '?'), acctKind === 'watch' && watchId === w.id, true); }); }
+    if (HW) { rows += '<div class="acct-grp">Hardware</div>' + acctPickerRow('hw', 'hw', '🔐 Ledger', acctKind === 'hardware', false); }
+    overlay('<div class="stamp-detail"><div class="st-head"><div class="st-htitle">Accounts</div><button class="m-close-x" id="apX" title="Close" aria-label="Close">✕</button></div>'
+      + '<div class="acct-picker" style="max-height:340px;overflow-y:auto">' + rows + '</div>'
+      + '<button class="btn ghost" id="apAdd" style="margin-top:12px">+ Add account · import · watch-only</button></div>');
+    document.getElementById('apX').onclick = closeOv;
+    document.getElementById('apAdd').onclick = acctMenu;
+    document.querySelectorAll('[data-sw]').forEach(function (b) { b.onclick = function () { switchAcct(b.dataset.sw); }; });
+    document.querySelectorAll('[data-menu]').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); acctItemMenu(b.dataset.menu); }; });
+  }
+  function switchAcct(ref) {
+    var p = ref.split(':'), kind = p[0], key = p.slice(1).join(':');
+    if (kind === 'hw') { if (HW) { acctKind = 'hardware'; chain = 'btc'; } }
+    else if (kind === 'hd') { acctKind = 'hd'; curAccount = parseInt(key, 10) || 0; }
+    else if (kind === 'watch') { acctKind = 'watch'; watchId = key; }
+    else if (kind === 'imp') { acctKind = 'imported'; impId = key; chain = 'btc'; }
+    closeOv(); render();
+  }
+  function acctItemMenu(ref) {
+    var p = ref.split(':'), kind = p[0], key = p.slice(1).join(':');
+    var canDelete = (kind === 'imp' || kind === 'watch' || (kind === 'hd' && Number(key) >= DEFAULT_ACCTS));
+    overlay('<div class="menu"><div class="menu-hd">' + esc(acctDisplayName(kind === 'imp' ? 'imp' : kind === 'watch' ? 'watch' : 'hd', key, kind === 'imp' ? IMPORTED.filter(function (x) { return x.id === key; })[0] : (kind === 'watch' ? watchList().filter(function (x) { return x.id === key; })[0] : null))) + '</div>'
+      + '<button class="menu-opt" data-a="rename"><span>✎ Rename / nickname</span></button>'
+      + (canDelete ? '<button class="menu-opt danger" data-a="delete"><span>🗑 Delete</span></button>' : '')
+      + '<button class="btn ghost" id="aimClose" style="margin-top:8px">Back</button></div>');
+    document.getElementById('aimClose').onclick = accountPicker;
+    document.querySelectorAll('[data-a]').forEach(function (b) { b.onclick = function () { if (b.dataset.a === 'rename') acctRename(kind, key); else acctDelete(kind, key); }; });
+  }
+  function acctRename(kind, key) {
+    var obj = kind === 'imp' ? IMPORTED.filter(function (x) { return x.id === key; })[0] : (kind === 'watch' ? watchList().filter(function (x) { return x.id === key; })[0] : null);
+    var curNm = kind === 'hd' ? (loadMap('ww:acctnames')[key] || '') : (kind === 'imp' ? (loadMap('ww:impnames')[key] || (obj && obj.label) || '') : (loadMap('ww:watchnames')[key] || (obj && obj.label) || ''));
+    overlay('<div class="menu" style="padding:14px;display:flex;flex-direction:column;gap:10px"><div class="p-title" style="font-size:15px">Rename</div>'
+      + '<input class="p-in" id="rnIn" maxlength="40" placeholder="Nickname" autocomplete="off" value="' + esc(curNm) + '"/>'
+      + '<div class="actions"><button class="btn ghost" id="rnCancel">Back</button><button class="btn" id="rnSave">Save</button></div></div>');
+    setTimeout(function () { var el = document.getElementById('rnIn'); if (el) { el.focus(); el.select(); } }, 30);
+    document.getElementById('rnCancel').onclick = accountPicker;
+    document.getElementById('rnSave').onclick = function () {
+      var v = (document.getElementById('rnIn').value || '').trim().slice(0, 40);
+      var mk = kind === 'hd' ? 'ww:acctnames' : (kind === 'imp' ? 'ww:impnames' : 'ww:watchnames');
+      var m = loadMap(mk); if (v) m[key] = v; else delete m[key]; lsSet(mk, m);
+      closeOv(); renderMain();
+    };
+  }
+  function acctDelete(kind, key) {
+    if (kind === 'imp') {
+      overlay('<div class="menu" style="padding:12px;display:flex;flex-direction:column;gap:9px"><div class="p-title" style="font-size:15px">Remove imported address?</div>'
+        + '<div class="p-hint">This forgets the private key from this wallet. <b>Back up the WIF first</b> — it can’t be recovered from your seed.</div>'
+        + '<input class="p-in" id="rmPw" type="password" placeholder="Your wallet password" autocomplete="current-password"/><div class="p-err" id="rmErr"></div>'
+        + '<div class="actions"><button class="btn ghost" id="rmCancel">Back</button><button class="btn danger" id="rmGo">Remove</button></div></div>');
+      document.getElementById('rmCancel').onclick = accountPicker;
+      document.getElementById('rmGo').onclick = async function () {
+        var err = document.getElementById('rmErr'); err.textContent = '';
+        try { await C.removeImportedKey(key, document.getElementById('rmPw').value); var mm = loadMap('ww:impnames'); delete mm[key]; lsSet('ww:impnames', mm); if (impId === key) { impId = null; acctKind = 'hd'; curAccount = 0; } closeOv(); render(); }
+        catch (e) { err.textContent = /wrong_password/.test(e.message) ? 'Wrong password.' : (e.message || 'Could not remove.'); }
+      };
+    } else if (kind === 'watch') {
+      var w = watchList().filter(function (x) { return x.id === key; })[0];
+      overlay('<div class="menu" style="padding:12px;display:flex;flex-direction:column;gap:9px"><div class="p-title" style="font-size:15px">Remove watch-only address?</div>'
+        + '<div class="p-hint">Stop watching <b>' + esc(acctDisplayName('watch', key, w)) + '</b>. Nothing on-chain changes; re-add anytime.</div>'
+        + '<div class="actions"><button class="btn ghost" id="rwCancel">Back</button><button class="btn danger" id="rwGo">Remove</button></div></div>');
+      document.getElementById('rwCancel').onclick = accountPicker;
+      document.getElementById('rwGo').onclick = function () { lsSet('ww:watch', watchList().filter(function (x) { return x.id !== key; })); var mw = loadMap('ww:watchnames'); delete mw[key]; lsSet('ww:watchnames', mw); if (watchId === key) { watchId = null; acctKind = 'hd'; curAccount = 0; } closeOv(); renderMain(); };
+    } else if (kind === 'hd') {
+      var i = Number(key);
+      overlay('<div class="menu" style="padding:12px"><div class="p-title" style="font-size:15px;margin-bottom:6px">Remove ' + esc(acctDisplayName('hd', i)) + '?</div>'
+        + '<div class="p-hint" style="margin-bottom:10px">This just hides it — funds are safe and it re-derives from your seed anytime.</div>'
+        + '<div class="actions"><button class="btn ghost" id="rmCancel">Back</button><button class="btn danger" id="rmGo">Remove</button></div></div>');
+      document.getElementById('rmCancel').onclick = accountPicker;
+      document.getElementById('rmGo').onclick = function () { if (removeAcct(i) && acctKind === 'hd' && curAccount === i) { curAccount = 0; } closeOv(); renderMain(); };
+    }
   }
 
   function chainMenu() {
@@ -1032,7 +1120,7 @@
         // Tokens = SRC-20 + fungible Counterparty tokens (fairmints / named). The numeric cpids
         // that back stamps are excluded — those live in Collectibles (click a stamp for its cpid).
         (a.src20 || []).forEach(function (x) { res.tokens.push({ name: x.tick, amount: x.amount, img: x.img, src20: true, tick: x.tick }); });
-        (a.counterparty || []).forEach(function (x) { if (stampCpids[x.asset]) return; res.tokens.push({ name: x.name || x.asset, amount: (x.qtyNormalized != null ? x.qtyNormalized : x.quantity), asset: x.asset, cp: true, divisible: !!x.divisible }); });
+        (a.counterparty || []).forEach(function (x) { if (stampCpids[x.asset]) return; res.tokens.push({ name: x.name || x.asset, amount: (x.qtyNormalized != null ? x.qtyNormalized : x.quantity), asset: x.asset, cp: true, divisible: !!x.divisible, owned: !!x.owned, locked: !!x.locked }); });
         res.collectibles = (a.stamps || []).map(function (s) { return { title: '#' + s.stamp, img: 'api/stamp/' + s.stamp + '/content', stamp: s.stamp, cpid: s.cpid, mime: s.mime || null, qty: (s.quantity != null ? Number(s.quantity) : 1) }; });
         // SRC-101 (.btc names) — surface as collectibles + capture the primary name.
         try {
@@ -1045,7 +1133,7 @@
       } else if (chain === 'eth') {
         var e = await fetch('api/eth/' + encodeURIComponent(addr)).then(function (r) { return r.json(); });
         res.native = e.eth || 0; res.usd = res.native * (PRICES.ethereum || 0);
-        res.tokens = (e.tokens || []).map(function (t) { return { name: t.symbol, amount: t.amount }; });
+        res.tokens = (e.tokens || []).map(function (t) { return { name: t.symbol, symbol: t.symbol, amount: t.amount, address: t.address, decimals: t.decimals, img: t.logo || null, usd: t.usd, value: t.value, eth: true }; });
         try { var enf = await fetch('api/eth/' + encodeURIComponent(addr) + '/nfts').then(function (r) { return r.json(); }); var earr = enf.items || []; res.collectibles = earr.slice(0, 60).map(function (n) { return { title: n.name || 'NFT', img: n.image ? ('api/img?url=' + encodeURIComponent(n.image)) : null, contract: n.contract, tokenId: n.tokenId, tokenType: n.tokenType }; }); if (!earr.length && enf.enabled === false) res.note = 'Ethereum NFT gallery needs a provider (ALCHEMY_KEY) set by the wallet host.'; } catch (e3) {}
       } else {
         var so = await fetch('api/sol/' + encodeURIComponent(addr)).then(function (r) { return r.json(); });
@@ -1066,16 +1154,37 @@
     if (tab === 'tokens') {
       if (!ASSETS.tokens.length) { body.innerHTML = '<div class="empty">No tokens on this ' + esc(CH[chain].name) + ' address.</div>'; return; }
       var canXfer = chain === 'btc' && canSignBtc();
-      body.innerHTML = '<div class="tok-list">' + ASSETS.tokens.map(function (t, i) {
+      var isEth = chain === 'eth';
+      // On Ethereum, hide low-value / unpriced tokens (airdrop spam) by default — a footer toggle
+      // reveals them. Only applies to ETH (BTC/CP/SOL tokens have no USD price to judge by).
+      var spamPref = lsGet('ww:hidespam', true) !== false;
+      var hideSpam = isEth && spamPref;
+      var hidden = 0;
+      var rows = ASSETS.tokens.map(function (t, i) {
+        if (hideSpam && t.eth && !(t.value != null && t.value >= 0.01)) { hidden++; return ''; }
         var ic;
         if (t.img) ic = '<img class="tok-ic" loading="lazy" src="api/img?url=' + encodeURIComponent(t.img) + '"/>';
         else if (t.cp && t.asset) ic = '<span class="tok-ic ph" data-cpimg="' + esc(t.asset) + '">' + esc(String(t.name || '?').slice(0, 2)) + '</span>'; // placeholder; art loaded lazily below
         else ic = '<span class="tok-ic ph">' + esc(String(t.name || '?').slice(0, 2)) + '</span>';
-        var xfer = (t.src20 && canXfer) ? '<button class="tok-xfer" data-x="' + i + '" title="Transfer ' + esc(t.tick) + '">' + XFER_IC + '</button>' : '';
+        var xfer = (t.src20 && canXfer) ? '<button class="tok-xfer" data-x="' + i + '" title="Transfer ' + esc(t.tick) + '">' + XFER_IC + '</button>'
+          : ((t.eth && acctKind === 'hd') ? '<button class="tok-xfer" data-eth="' + i + '" title="Send ' + esc(t.symbol || t.name) + '">' + XFER_IC + '</button>' : '');
         var chev = t.cp ? '<span class="tok-chev">›</span>' : '';
-        return '<div class="tok-row' + (t.cp ? ' tok-cp' : '') + '"' + (t.cp ? ' data-cp="' + i + '"' : '') + '>' + ic + '<span class="tok-name">' + esc(t.name) + '</span><span class="tok-amt">' + esc(mask(String(t.amount))) + '</span>' + xfer + chev + '</div>';
-      }).join('') + '</div>';
-      body.querySelectorAll('.tok-xfer').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); var t = ASSETS.tokens[+b.dataset.x]; if (t) renderSrc20Send(t.tick, t.amount); }; });
+        var usd = (t.value != null && t.value >= 0.005) ? '<small style="display:block;color:var(--faint);font-weight:400;font-size:11px">' + esc(mask('$' + Number(t.value).toLocaleString('en-US', { maximumFractionDigits: 2 }))) + '</small>' : '';
+        var amtStr = t.eth ? fmtTokAmt(t.amount) : String(t.amount); // ETH: cap to 2dp; BTC/CP/SOL keep their own formatting
+        var badge = t.owned ? ' <span style="font-size:9px;font-weight:600;color:var(--gold2);border:1px solid var(--border);border-radius:999px;padding:1px 6px">issued</span>' : '';
+        return '<div class="tok-row' + (t.cp ? ' tok-cp' : '') + '"' + (t.cp ? ' data-cp="' + i + '"' : '') + '>' + ic + '<span class="tok-name">' + esc(t.name) + badge + '</span><span class="tok-amt">' + esc(mask(amtStr)) + usd + '</span>' + xfer + chev + '</div>';
+      }).join('');
+      var footer = '';
+      if (isEth && (hidden > 0 || !spamPref)) {
+        footer = '<div class="tok-hidetoggle" style="text-align:center;padding:11px;font-size:12px;color:var(--faint);cursor:pointer;user-select:none">'
+          + (hideSpam ? ('+ ' + hidden + ' low-value token' + (hidden === 1 ? '' : 's') + ' hidden · <b style="color:var(--gold2)">show all</b>')
+            : '<b style="color:var(--gold2)">↓ hide low-value tokens</b>')
+          + '</div>';
+      }
+      body.innerHTML = '<div class="tok-list">' + rows + '</div>' + footer;
+      var ht = body.querySelector('.tok-hidetoggle'); if (ht) ht.onclick = function () { lsSet('ww:hidespam', !spamPref); renderAssetBody(); };
+      body.querySelectorAll('.tok-xfer[data-x]').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); var t = ASSETS.tokens[+b.dataset.x]; if (t) renderSrc20Send(t.tick, t.amount); }; });
+      body.querySelectorAll('.tok-xfer[data-eth]').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); var t = ASSETS.tokens[+b.dataset.eth]; if (t) renderEvmSend(t.address); }; });
       body.querySelectorAll('[data-cp]').forEach(function (b) { b.onclick = function () { var t = ASSETS.tokens[+b.dataset.cp]; if (t) cpTokenDetail(t); }; });
       loadCpTokenIcons(body); // swap placeholders for real artwork where it resolves
     } else {
@@ -1209,15 +1318,19 @@
     function build(info) {
       var divisible = info.divisible != null ? !!info.divisible : !!t.divisible;
       var supplyDisp = info.supply != null ? (divisible ? info.supply / 1e8 : info.supply) : null;
-      renderCpTokenDetail({ cpid: t.asset, stamp: null, name: t.name, divisible: divisible, supply: supplyDisp, locked: !!info.locked, description: info.description || '', held: (t.amount != null ? Number(t.amount) : null) });
+      renderCpTokenDetail({ cpid: t.asset, stamp: null, name: t.name, divisible: divisible, supply: supplyDisp, locked: !!info.locked, owner: info.owner || null, description: info.description || '', held: (t.amount != null ? Number(t.amount) : null) });
     }
   }
   function renderCpTokenDetail(s) {
     var pop = document.querySelector('#pop-ov .pop-pop'); if (!pop) return;
     var divisible = !!s.divisible, held = s.held, info = s;
     var supplyDisp = s.supply;
+    // You control this asset (issuer == your current address) and it isn't locked → offer a re-issue
+    // shortcut that jumps straight into the Name-issuance form pre-filled with this asset.
+    var iOwn = chain === 'btc' && canSignBtc() && s.owner && s.owner === curBtcAddress() && !info.locked;
     var tools = (chain === 'btc' && canSignBtc())
       ? '<div class="sd-tools"><div class="sd-tools-h">Tools</div><div class="sd-tools-row">'
+        + (iOwn ? '<button class="sd-tool" data-op="issue">' + PLUS_IC + '<span>Issue</span></button>' : '')
         + '<button class="sd-tool" data-op="send">' + XFER_IC + '<span>Send</span></button>'
         + '<button class="sd-tool" data-op="dispenser">' + DISP_IC + '<span>Dispenser</span></button>'
         + '<button class="sd-tool" data-op="destroy">' + FIRE_IC + '<span>Destroy</span></button>'
@@ -1247,6 +1360,7 @@
         return;
       }
       if (b.dataset.op === 'attach') { cpAttachDetach('attach', { asset: (s.name || s.cpid), qty: 1 }); return; }
+      if (b.dataset.op === 'issue') { closeOv(); CPH.src = curBtcAddress(); CPH.type = curBtcType(); cpForm('issuance', { asset: s.cpid }); return; }
       stampTool(b.dataset.op, s);
     }; });
   }
@@ -1577,11 +1691,9 @@
     var cpSection = '';
     if (canCP && srcs.length) {
       var grid = CP_ORDER.map(function (k) { var a = CP_ACTIONS[k]; return '<button class="cp-act' + (a.danger ? ' danger' : '') + '" data-k="' + k + '"><span class="cp-ic">' + a.ic + '</span><span>' + esc(a.label) + '</span></button>'; }).join('');
-      var selOpts = srcs.map(function (s) { return '<option value="' + esc(s.address) + '" data-t="' + s.type + '"' + (s.address === CPH.src ? ' selected' : '') + '>' + esc(s.label) + '</option>'; }).join('');
+      // Source is the address you opened Tools from (CPH.src/type set above) — no picker; by the time
+      // you're here you've already chosen the account/address this session is paired with.
       cpSection = '<div class="tool-sec-h">Counterparty actions</div>'
-        + '<div class="p-hint">Pick the source address your assets sit on — OG Counterparty / Stamps assets usually live on a <b>Legacy 1…</b> address.</div>'
-        + '<label class="stf"><span>Source address</span><select id="cphSrc" class="p-in">' + selOpts + '</select></label>'
-        + '<div class="cph-addr" data-copy="' + esc(CPH.src) + '" title="Copy">' + esc(CPH.src) + '</div>'
         + '<div class="cph-status" id="cphStatus">Checking pending Counterparty txs…</div>'
         + '<div class="cp-grid">' + grid + '</div>';
     }
@@ -1590,9 +1702,6 @@
     document.getElementById('cphX').onclick = closeOv;
     var eb = document.getElementById('thEmblem'); if (eb) eb.onclick = function () { closeOv(); openEmblem(); };
     if (canCP && srcs.length) {
-      var sel = document.getElementById('cphSrc');
-      sel.onchange = function () { CPH.src = sel.value; CPH.type = sel.options[sel.selectedIndex].getAttribute('data-t'); var ad = document.querySelector('.cph-addr'); if (ad) { ad.textContent = CPH.src; ad.setAttribute('data-copy', CPH.src); } cphMempool(); };
-      var ad0 = document.querySelector('.cph-addr'); if (ad0) ad0.onclick = function () { copy(CPH.src, ad0); };
       document.querySelectorAll('.cp-act').forEach(function (b) { b.onclick = function () { var a = CP_ACTIONS[b.dataset.k]; if (a && a.src20) { closeOv(); src20CreateChoose(); } else if (a && a.custom) cpAttachDetach('attach'); else cpForm(b.dataset.k); }; });
       cphMempool();
     }
@@ -1603,7 +1712,7 @@
       st.innerHTML = (m.pending && m.pending.length) ? '⏳ ' + m.pending.length + ' pending Counterparty tx(s) — CP confirmation differs from BTC.' : '✓ No pending Counterparty transactions.';
     }).catch(function () { st.textContent = ''; });
   }
-  async function cpForm(key) {
+  async function cpForm(key, prefill) {
     var a = CP_ACTIONS[key];
     if (!CP_HUB_FEES) { try { CP_HUB_FEES = await fetch('api/btc/fees').then(function (r) { return r.json(); }); } catch (e) { CP_HUB_FEES = { fastestFee: 10, halfHourFee: 6, hourFee: 3 }; } }
     if (CPH.fee == null) CPH.fee = CP_HUB_FEES.halfHourFee || 6;
@@ -1662,6 +1771,9 @@
     // Name issuance: live availability chip (✓ available / ✗ taken) as the user types the new name,
     // querying the Counterparty registry — same as the web Terminal. (Submit re-checks as a guard.)
     a.fields.forEach(function (f) { if (f.nameCheck) wireNameCheck(f.k, 'cphNm'); });
+    // Pre-fill (e.g. the "Issue" shortcut from an owned asset's detail) → sets the name + fires the
+    // availability check, which detects ownership → "you own this · re-issue" + locks divisibility.
+    if (prefill && prefill.asset) { var pf = document.getElementById('cpf_asset'); if (pf) { pf.value = String(prefill.asset).toUpperCase(); pf.dispatchEvent(new Event('input', { bubbles: true })); } }
   }
   // Debounced Counterparty asset-name availability check → fills a small chip beside the field label.
   function wireNameCheck(fieldKey, chipId) {
@@ -1669,19 +1781,24 @@
     if (!inp || !chip) return;
     var set = function (txt, color) { chip.textContent = txt; chip.style.color = color || ''; };
     var t = null;
+    // Re-issuance can't change divisibility, so when the user owns the name we set + lock the checkbox
+    // to the asset's real divisibility; a new/other name re-enables free choice.
+    var setDiv = function (checked, locked) { var dv = document.getElementById('cpf_divisible'); if (dv) { if (checked != null) dv.checked = !!checked; dv.disabled = !!locked; } };
     inp.addEventListener('input', function () {
       clearTimeout(t);
       var v = inp.value.trim().toUpperCase();
-      if (!v) return set('');
+      if (!v) { setDiv(null, false); return set(''); }
       // Counterparty named assets: 4–12 letters A–Z, not starting with A (numeric A-names are auto).
-      if (!/^[B-Z][A-Z]{3,11}$/.test(v)) return set('4–12 letters, not A', 'var(--red)');
+      if (!/^[B-Z][A-Z]{3,11}$/.test(v)) { setDiv(null, false); return set('4–12 letters, not A', 'var(--red)'); }
       set('checking…', '');
       t = setTimeout(async function () {
         try {
           var r = await fetch('api/cp/assetname/' + encodeURIComponent(v)).then(function (x) { return x.json(); });
           if (inp.value.trim().toUpperCase() !== v) return; // stale — user kept typing
-          if (r && r.exists) set('✗ taken', 'var(--red)');
-          else set('✓ available', 'var(--green)');
+          if (r && r.exists) {
+            if (r.owner && r.owner === CPH.src) { set('✓ you own this · re-issue', 'var(--green)'); setDiv(r.divisible, true); }
+            else { set('✗ taken', 'var(--red)'); setDiv(null, false); }
+          } else { set('✓ available', 'var(--green)'); setDiv(null, false); }
         } catch (e) { set(''); }
       }, 350);
     });
@@ -1742,7 +1859,7 @@
       if (typeof params.destination === 'string' && RE_DOTBTC.test(params.destination)) params.destination = await resolveNm(params.destination);
       if (typeof params.destinations === 'string' && /\.btc/i.test(params.destinations)) { var out = [], parts = params.destinations.split(',').map(function (x) { return x.trim(); }); for (var j = 0; j < parts.length; j++) out.push(RE_DOTBTC.test(parts[j]) ? await resolveNm(parts[j]) : parts[j]); params.destinations = out.join(','); }
       var nf = a.fields.find(function (f) { return f.nameCheck; });
-      if (nf && params[nf.k]) { params[nf.k] = params[nf.k].toUpperCase(); if (!/^[B-Z][A-Z]{3,11}$/.test(params[nf.k])) throw new Error('Named assets are 4–12 letters A–Z, not starting with A.'); st.textContent = 'Checking name availability…'; var chk = await fetch('api/cp/assetname/' + encodeURIComponent(params[nf.k])).then(function (r) { return r.json(); }).catch(function () { return {}; }); if (chk.exists) throw new Error('“' + params[nf.k] + '” is already registered — choose another name.'); st.textContent = 'Composing via Counterparty…'; }
+      if (nf && params[nf.k]) { params[nf.k] = params[nf.k].toUpperCase(); if (!/^[B-Z][A-Z]{3,11}$/.test(params[nf.k])) throw new Error('Named assets are 4–12 letters A–Z, not starting with A.'); st.textContent = 'Checking name availability…'; var chk = await fetch('api/cp/assetname/' + encodeURIComponent(params[nf.k])).then(function (r) { return r.json(); }).catch(function () { return {}; }); if (chk.exists && chk.owner !== CPH.src) throw new Error('“' + params[nf.k] + '” is registered to another address — choose another name.'); st.textContent = 'Composing via Counterparty…'; }
       if (a.fields.some(function (f) { return f.scaleBy === 'asset'; }) && params.asset) {
         var info = {}; try { info = await fetch('api/cp/asset/' + encodeURIComponent(params.asset)).then(function (r) { return r.json(); }); } catch (e) {}
         var div = (params.asset === 'XCP') ? true : !!info.divisible;
@@ -1770,6 +1887,7 @@
     pop.innerHTML = '<div class="stamp-detail"><div class="st-head"><button class="p-ibtn" id="cpcBack" title="Back">←</button><div class="st-htitle">Confirm · ' + esc(a.label) + '</div><button class="m-close-x" id="cpcX" title="Close" aria-label="Close">✕</button></div>'
       + '<div class="p-card" style="display:flex;flex-direction:column;gap:7px">'
       + ((key === 'issuance' && CPH.last && CPH.last.asset) ? '<div class="sd-row"><span class="sd-k">Name</span><span class="sd-v" style="font-family:var(--mono)">' + esc(CPH.last.asset) + '</span></div>' : '')
+      + ((key === 'issuance' && CPH.last && CPH.last.quantity != null) ? '<div class="sd-row"><span class="sd-k">Quantity</span><span class="sd-v">' + esc((CPH.last.divisible ? CPH.last.quantity / 1e8 : CPH.last.quantity).toLocaleString('en-US', { maximumFractionDigits: 8 })) + (CPH.last.divisible ? ' <span class="sub" style="opacity:.65">divisible</span>' : '') + '</span></div>' : '')
       + '<div class="sd-row"><span class="sd-k">Action</span><span class="sd-v">' + esc(a.label) + '</span></div>'
       + (dest ? '<div class="sd-row"><span class="sd-k">To</span><span class="sd-v" style="font-family:var(--mono);font-size:11px">' + esc(short(dest)) + '</span></div>' : '')
       + (xcpFee != null ? '<div class="sd-row"><span class="sd-k">XCP fee</span><span class="sd-v">' + xcp(xcpFee) + '</span></div>' : '')
@@ -2761,7 +2879,7 @@
     document.getElementById('bBack').onclick = renderMain;
   }
 
-  async function renderEvmSend() {
+  async function renderEvmSend(preAddr) {
     stopCd();
     var acc; try { acc = C.accounts(curAccount, 0, NET()); } catch (e) { return render(); }
     var addr = acc.ethereum.address;
@@ -2769,9 +2887,12 @@
     var data = {}; try { data = await fetch('api/eth/' + encodeURIComponent(addr) + '?network=' + ethNet() + '').then(function (r) { return r.json(); }); } catch (e) {}
     var netName = data.networkName || 'Ethereum', explorer = data.explorer || 'https://etherscan.io';
     var assets = [{ symbol: 'ETH', decimals: 18, native: true, amount: data.eth }].concat((data.tokens || []).map(function (t) { return { symbol: t.symbol, decimals: t.decimals, address: t.address, amount: t.amount }; }));
+    // Pre-select the token the user tapped "send" on (from the token list), else default to ETH.
+    var preIdx = 0;
+    if (preAddr) { for (var pi = 0; pi < assets.length; pi++) { if (assets[pi].address && assets[pi].address.toLowerCase() === String(preAddr).toLowerCase()) { preIdx = pi; break; } } }
     var body = document.getElementById('sendBody'); if (!body) return;
     body.innerHTML = '<div class="send-form">'
-      + '<label class="stf"><span>Asset</span><select id="evAsset" class="p-in">' + assets.map(function (a, i) { return '<option value="' + i + '">' + esc(a.symbol) + (a.native ? '' : ' (' + esc(String(a.amount)) + ')') + '</option>'; }).join('') + '</select></label>'
+      + '<label class="stf"><span>Asset</span><select id="evAsset" class="p-in">' + assets.map(function (a, i) { return '<option value="' + i + '"' + (i === preIdx ? ' selected' : '') + '>' + esc(a.symbol) + (a.native ? '' : ' (' + esc(String(a.amount)) + ')') + '</option>'; }).join('') + '</select></label>'
       + '<input id="evTo" class="p-in" placeholder="Recipient (0x…)" spellcheck="false" autocomplete="off"/>'
       + '<input id="evAmt" class="p-in" type="number" step="any" min="0" placeholder="Amount"/>'
       + '<div id="evStatus" class="p-err"></div>'

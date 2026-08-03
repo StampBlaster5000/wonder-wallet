@@ -344,11 +344,19 @@ app.get('/api/btc/:address/scan', wrap(async (req, res) => {
 app.get('/api/btc/:address/assets', wrap(async (req, res) => {
   const address = String(req.params.address);
   if (!okBtc(address)) { const e = new Error('invalid'); e.status = 400; throw e; }
-  const [counterparty, st] = await Promise.all([
+  const [counterparty, owned, st] = await Promise.all([
     cp.getAddressAssets(address).catch(() => []),
+    cp.getOwnedAssets(address).catch(() => []),
     stamps.getBalance(address).catch(() => ({ stamps: [], src20: [] })),
   ]);
-  res.json({ address, counterparty, stamps: st.stamps, src20: st.src20 });
+  // Surface NAMED assets you ISSUED but don't currently hold (e.g. a fresh 0-supply registration) so a
+  // name you control is visible + manageable even with no balance. Numeric (A#) assets are stamp cpids /
+  // internal and stay out of the token list; anything already held is skipped (no duplicates).
+  const held = new Set(counterparty.map((c) => c.asset));
+  const issued = (owned || [])
+    .filter((o) => o.asset && !/^A\d+$/.test(o.asset) && !held.has(o.asset))
+    .map((o) => ({ asset: o.asset, name: o.name || o.asset, quantity: 0, qtyNormalized: '0', divisible: !!o.divisible, locked: !!o.locked, owned: true, utxo: null }));
+  res.json({ address, counterparty: counterparty.concat(issued), stamps: st.stamps, src20: st.src20 });
 }));
 
 // Unified activity / transaction history (Counterparty + BTC + SRC-20, classified, with confirm state).

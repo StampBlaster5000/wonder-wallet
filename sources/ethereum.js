@@ -47,16 +47,57 @@ async function getAddress(address, network = 'ethereum') {
 
   const balHex = await rpc(N.rpc, 'eth_getBalance', [address, 'latest']);
   const eth = hexToFloat(balHex, 18);
-  const list = TOKENS[network] || [];
-  const tokens = (await pool(list, async (t) => {
-    const res = await rpc(N.rpc, 'eth_call', [{ to: t.addr, data: BALANCE_OF + pad(address) }, 'latest']);
-    const amount = hexToFloat(res, t.decimals);
-    return amount > 0 ? { symbol: t.symbol, amount, address: t.addr, decimals: t.decimals } : null;
-  }, 4)).filter((x) => x && !x.__error);
+  // Full ERC-20 enumeration via Alchemy when a key is set; otherwise the curated majors.
+  let tokens = null;
+  if (ALCHEMY_KEY && ALCHEMY_NET[network]) tokens = await alchemyTokens(address, network).catch(() => null);
+  if (!tokens) {
+    const list = TOKENS[network] || [];
+    tokens = (await pool(list, async (t) => {
+      const res = await rpc(N.rpc, 'eth_call', [{ to: t.addr, data: BALANCE_OF + pad(address) }, 'latest']);
+      const amount = hexToFloat(res, t.decimals);
+      return amount > 0 ? { symbol: t.symbol, amount, address: t.addr, decimals: t.decimals } : null;
+    }, 4)).filter((x) => x && !x.__error);
+  }
 
   const out = { address, network, networkName: N.name, chainId: N.chainId, explorer: N.explorer, eth, tokens, networks: Object.keys(NETWORKS) };
   cacheSet(key, out, 30_000);
   return out;
+}
+
+// Full ERC-20 balances + symbol/decimals via Alchemy's enhanced token API (free-tier friendly):
+// getTokenBalances (1 call) → per-token metadata (pooled, capped). Returns null on failure so the
+// caller falls back to the curated majors.
+async function alchemyTokens(address, network) {
+  const sub = ALCHEMY_NET[network] || 'eth-mainnet';
+  const url = `https://${sub}.g.alchemy.com/v2/${ALCHEMY_KEY}`;
+  const bal = await rpc(url, 'alchemy_getTokenBalances', [address]);
+  const nonzero = ((bal && bal.tokenBalances) || [])
+    .filter((t) => t.tokenBalance && !/^0x0*$/.test(t.tokenBalance))
+    .slice(0, 60); // cap the metadata fan-out
+  const out = await pool(nonzero, async (t) => {
+    const m = await rpc(url, 'alchemy_getTokenMetadata', [t.contractAddress]).catch(() => null);
+    if (!m || !m.symbol) return null; // no metadata → skip (usually spam / non-standard)
+    const decimals = m.decimals != null ? m.decimals : 18;
+    const amount = hexToFloat(t.tokenBalance, decimals);
+    return amount > 0 ? { symbol: m.symbol, name: m.name || m.symbol, amount, address: t.contractAddress, decimals, logo: m.logo || null } : null;
+  }, 6);
+  const list = out.filter((x) => x && !x.__error);
+  // USD prices via Alchemy Prices API → attach `usd` (unit price) + `value`. The API caps at 25
+  // addresses per request, so chunk it.
+  try {
+    const pmap = {};
+    for (let i = 0; i < list.length; i += 25) {
+      const chunk = list.slice(i, i + 25);
+      const pr = await fetchJson(`https://api.g.alchemy.com/prices/v1/${ALCHEMY_KEY}/tokens/by-address`, {
+        method: 'POST', timeout: 8000, body: { addresses: chunk.map((t) => ({ network: sub, address: t.address })) },
+      }).catch(() => null);
+      ((pr && pr.data) || []).forEach((d) => { const p = (d.prices || []).find((x) => x.currency === 'usd'); if (p && d.address) pmap[String(d.address).toLowerCase()] = Number(p.value); });
+    }
+    list.forEach((t) => { const u = pmap[String(t.address).toLowerCase()]; if (u != null && isFinite(u)) { t.usd = u; t.value = u * t.amount; } });
+  } catch (_) {}
+  // Valued tokens (your real holdings) float to the top; unpriced spam sinks to the bottom.
+  list.sort((a, b) => (b.value || 0) - (a.value || 0));
+  return list;
 }
 
 /** Prepare an EIP-1559 tx: nonce, chainId, gas, fees. Client signs the result. */
@@ -93,8 +134,9 @@ async function getNfts(address, network = 'ethereum') {
   const hit = cacheGet(key);
   if (hit) return hit;
   try {
-    // NB: the brackets in excludeFilters[] MUST be percent-encoded (%5B%5D) — Alchemy's edge 403s on raw "[]".
-    const url = `https://${sub}.g.alchemy.com/nft/v3/${ALCHEMY_KEY}/getNFTsForOwner?owner=${encodeURIComponent(address)}&withMetadata=true&pageSize=100&excludeFilters%5B%5D=SPAM`;
+    // NOTE: do NOT send excludeFilters[]=SPAM — Alchemy 400s that param on the free tier ("payg or
+    // higher plan"), which killed the whole gallery. Spam is filtered client-side via the art check.
+    const url = `https://${sub}.g.alchemy.com/nft/v3/${ALCHEMY_KEY}/getNFTsForOwner?owner=${encodeURIComponent(address)}&withMetadata=true&pageSize=100`;
     const j = await fetchJson(url, { timeout: 9000 });
     const items = (j.ownedNfts || [])
       .filter((n) => n.tokenType !== 'ERC20')

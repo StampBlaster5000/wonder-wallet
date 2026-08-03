@@ -12,6 +12,9 @@
  */
 (function () {
   'use strict';
+  // Carry the wallet's theme (Midnight/Parchment) into this window. localStorage is shared across all
+  // extension pages, and this runs before any content renders (route() is async), so there's no flash.
+  try { if (localStorage.getItem('ww:theme') === 'light') document.documentElement.classList.add('theme-light'); } catch (_) {}
   var C = window.WonderCore, S = window.WWTxSummary;
   // This window loads wallet-core directly (no shim), so network calls use the ABSOLUTE proxy URL.
   // IMPORTANT: the Wonder Wallet API is served at the ARTIFACT path (like shim.js WW_PROXY) — the

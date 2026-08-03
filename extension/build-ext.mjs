@@ -71,7 +71,7 @@ const DAPP_HOSTS = ['http://*/*', 'https://*/*'];
 const manifest = {
   manifest_version: 3,
   name: 'Wonder Wallet',
-  version: '0.51.0',
+  version: '0.52.0',
   description: 'A self-custodial Bitcoin wallet for collectors. Your keys, your assets, and your data stay on your own device.',
   action: { default_title: 'Wonder Wallet', default_popup: 'popup.html' },
   background: { service_worker: 'background.js' },
