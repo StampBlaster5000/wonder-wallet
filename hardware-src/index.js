@@ -15,8 +15,6 @@
 import TransportWebHID from '@ledgerhq/hw-transport-webhid';
 import Btc from '@ledgerhq/hw-app-btc';
 import { AppClient } from '@ledgerhq/hw-app-btc/lib-es/newops/appClient';
-import { WalletPolicy } from '@ledgerhq/hw-app-btc/lib-es/newops/policy';
-import { PsbtV2, psbtIn } from '@ledgerhq/psbtv2';
 import Eth from '@ledgerhq/hw-app-eth';
 import Solana from '@ledgerhq/hw-app-solana';
 import { base58 } from '@scure/base';
@@ -200,45 +198,28 @@ async function getChainAddress(chain, account = 0) {
 
 // ── Signing adapters (device confirms on its screen) ──
 
-// Standard single-sig policies per address type — the account purpose + the descriptor the device
-// registers as its default (empty-name) wallet. Native SegWit (bc1q), Legacy 1… (OG Counterparty /
-// Stamps), and Taproot bc1p all sign this way; the PSBT carries each input's derivation so the device
-// knows which of its keys to use.
-const SIGN_DESC = {
-  nativeSegwit: ['84', 'wpkh(@0/**)'],
-  legacy: ['44', 'pkh(@0/**)'],
-  taproot: ['86', 'tr(@0/**)'],
-};
 // Build marker — bumped with each sign-path change so a thrown error reveals WHICH build is actually
 // loaded (the #1 source of confusion has been Chrome running a stale unpacked folder). Any signPsbt
 // failure is tagged `signPsbt[<phase> · <SIGN_BUILD>]`, so if you don't see this tag you're on an old build.
-const SIGN_BUILD = 'v53.4';
-/** Sign a (CP-aware, asset-safe) PSBT on the Ledger for the given single-sig address type. */
+const SIGN_BUILD = 'v53.5';
+const PURPOSE = { nativeSegwit: 84, legacy: 44, taproot: 86 };
+/** Sign a (CP-aware, asset-safe) PSBT on the Ledger for the given single-sig address type.
+ *  Uses Ledger's OWN high-level signPsbtBuffer — it deserializes our v0 PSBT → v2, auto-detects the
+ *  account type from the inputs, builds the standard single-sig wallet policy (correct fingerprint hex +
+ *  getExtendedPubkey args — the exact low-level details we kept getting wrong by hand), signs on the
+ *  device, then finalizes. Returns broadcast-ready hex. */
 async function signPsbt(psbtBase64, account = 0, type = 'nativeSegwit') {
   let phase = 'init';
   try {
     requireDevice();
     phase = 'ensureApp'; await ensureApp('Bitcoin');
-    const app = new AppClient(transport);
-    phase = 'fingerprint'; const fpr = await app.getMasterFingerprint();
-    const [purpose, desc] = SIGN_DESC[type] || SIGN_DESC.nativeSegwit;
-    const acct = `${purpose}'/0'/${account}'`;
-    phase = 'xpub'; const xpub = await app.getExtendedPubkey('m/' + acct);
-    const policy = new WalletPolicy('', desc, [`[${fpr}/${acct}]${xpub}`]); // empty name = standard/default policy
-    // The Ledger AppClient signs a PsbtV2 OBJECT — passing a base64 string makes it deref undefined
-    // ("Cannot read properties of undefined (reading 'length')"). Our PSBTs are v0 (BIP-174) from
-    // @scure/btc-signer, so convert v0 → PsbtV2 first (allowTxnVersion1=true, matching Ledger's own parser).
-    phase = 'psbtv2'; const psbtv2 = PsbtV2.fromV0(Buffer.from(psbtBase64, 'base64'), true);
-    phase = 'device-sign'; const sigMap = await app.signPsbt(psbtv2, policy, null); // Map<inputIndex, signatureBytes>
-    // Reshape to finalizeHwSend's [[idx, {pubkey, signature}]]. The device yields the signature bytes only;
-    // the pubkey comes from the input's BIP32 derivation (exactly how Ledger's own BtcNew consumes it).
-    phase = 'reshape';
-    const signatures = [];
-    sigMap.forEach((sig, idx) => {
-      const pk = psbtv2.getInputKeyDatas(idx, psbtIn.BIP32_DERIVATION);
-      signatures.push([idx, { pubkey: (pk && pk.length) ? pk[0] : null, signature: sig }]);
-    });
-    return { signatures, policy: desc, type };
+    const purpose = PURPOSE[type] || 84;
+    const accountPath = `m/${purpose}'/0'/${account}'`;
+    const btcApp = new Btc({ transport }); // default export → BtcNew for a modern Bitcoin app
+    phase = 'device-sign';
+    const res = await btcApp.signPsbtBuffer(Buffer.from(psbtBase64, 'base64'), { accountPath, finalizePsbt: true });
+    if (!res || !res.tx) throw new Error('the device returned no signed transaction (it may not recognise these inputs as its own — re-pair and retry)');
+    return { txhex: res.tx, type };
   } catch (e) {
     const m = String((e && e.message) || e || '');
     throw new Error('signPsbt[' + phase + ' · ' + SIGN_BUILD + ']: ' + m);

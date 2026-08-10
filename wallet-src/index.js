@@ -417,6 +417,11 @@ function finalizeHwSend(psbtB64, entries) {
   tx.finalize();
   return { txhex: hex.encode(tx.extract()), txid: tx.id, vsize: tx.vsize };
 }
+// Compute the txid of an already-signed raw transaction hex (e.g. when the Ledger lib finalizes for us).
+function txidOf(txhex) {
+  const tx = btc.Transaction.fromRaw(hex.decode(String(txhex).replace(/^0x/, '')), { allowUnknownOutputs: true, allowUnknownInputs: true, allowLegacyWitnessUtxo: true });
+  return tx.id;
+}
 
 /**
  * Sign a Counterparty-composed PSBT (Phase 6). CP v2 returns the PSBT plus
@@ -1234,7 +1239,7 @@ const WonderCore = {
   accounts, secrets, revealSeed, armAutoLock, selfTest,
   isCwPhrase, cwSeedHex, cwDeriveAddrs, // Counterwallet / FreeWallet legacy passphrase (Electrum-v1)
   send, signMessage, signMessageImported, signCp, signStamp, psbtInputs, decodeTxOutputs, addrHash, sendEvm, sendSol, sendSpl, sendCnft, ethPersonalSign, buildSend, buildUnsignedSend, signMessageBIP322, bip322SignWithKey, bsmSignWithKey, signCpPsbt, signStampPsbt, signEvm,
-  personalSign, personalSignWithKey, buildSolTransfer, buildSplTransfer, buildCnftTransfer, erc20TransferData, erc20ApproveData, estimateVsize, buildHwSend, finalizeHwSend,
+  personalSign, personalSignWithKey, buildSolTransfer, buildSplTransfer, buildCnftTransfer, erc20TransferData, erc20ApproveData, estimateVsize, buildHwSend, finalizeHwSend, txidOf,
   ethSignTypedData, eip712Digest, signTypedDataWithKey, btcNet, btcPaths, version: '0.11.0', // 0.11.0: Counterwallet/FreeWallet passphrase support
 };
 
@@ -1245,7 +1250,7 @@ const PUBLIC_API = {
   generateMnemonic, validateMnemonic, hasVault, createVault, unlock, lock, isUnlocked, destroyVault,
   importKey, importKeys, removeImportedKey, importedAccounts, importedAddresses,
   accounts, secrets, revealSeed, deriveCustom, deriveReceiveAddrs, isCwPhrase, cwDeriveAddrs, send, signMessage, signMessageImported, signCp, signStamp, psbtInputs, decodeTxOutputs, describePsbt, signProviderPsbt, signProvider, buildUnsignedSend, addrHash, sendEvm, sendSol, sendSpl, sendCnft, solSignMessage, solSignTransaction,
-  buildHwSend, finalizeHwSend, // hardware (Ledger) BTC send — keyless: builds an annotated PSBT, finalizes with device sigs
+  buildHwSend, finalizeHwSend, txidOf, // hardware (Ledger) BTC send — keyless: builds an annotated PSBT, finalizes with device sigs
   ethPersonalSign, ethSignTypedData, erc20TransferData, erc20ApproveData, selfTest,
   resumeSession, getSessionSecret, onLockChange, armAutoLock, // cross-surface session (extension)
   version: WonderCore.version,

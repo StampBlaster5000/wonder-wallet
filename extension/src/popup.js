@@ -739,20 +739,17 @@
       await HWm.connect(); // reuse the paired grant — no picker
       s.textContent = 'Confirm on your Ledger — check the recipient & amount on the device…';
       step = 'sign';
+      // The device signs AND finalizes (Ledger's signPsbtBuffer) → broadcast-ready hex. If it couldn't
+      // sign the inputs as its own, signPsbtBuffer throws during finalize — surfaced via the step label.
       var res = await HWm.signPsbt(built.psbt, HW.account || 0);
-      // The device returns one partial signature per input it recognises as its own. If it signed
-      // NONE (or fewer than the inputs), finalizing would blow up cryptically — surface it clearly.
-      var sigs = (res && res.signatures) || [];
-      if (!sigs.length) throw new Error('The Ledger returned no signatures — it didn’t recognise these ' + nIn + ' input(s) as its own. This usually means a fresh device grant is needed: re-pair from the Connect flow, then retry.');
-      if (nIn && sigs.length < nIn) throw new Error('The Ledger only signed ' + sigs.length + ' of ' + nIn + ' inputs — a consolidation across multiple addresses needs the device to sign every input. Re-pair and retry; if it persists, send from a single address instead.');
-      step = 'finalize';
-      var fin = C.finalizeHwSend(built.psbt, sigs);
+      var txhex = res && res.txhex;
+      if (!txhex) throw new Error('The Ledger did not return a signed transaction — re-pair from the Connect flow, then retry.');
       step = 'broadcast';
       s.textContent = 'Broadcasting…';
-      var r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: fin.txhex }) }).then(function (x) { return x.json(); });
+      var r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: txhex }) }).then(function (x) { return x.json(); });
       if (r.error) throw new Error(r.detail || r.error);
       try { await HWm.disconnect(); } catch (e) {}
-      s.className = 'p-hint'; s.innerHTML = '<span style="color:var(--green)">Sent ✓ — ' + esc(String(r.txid || fin.txid).slice(0, 20)) + '…</span>';
+      s.className = 'p-hint'; s.innerHTML = '<span style="color:var(--green)">Sent ✓ — ' + esc(String(r.txid || (C.txidOf ? C.txidOf(txhex) : '')).slice(0, 20)) + '…</span>';
       setTimeout(hwRenderMain, 2200);
     } catch (err) {
       try { console.error('[WonderHW] sign/broadcast failed at [' + step + ']:', err); } catch (e) {}

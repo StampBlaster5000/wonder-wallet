@@ -771,10 +771,10 @@
       signPsbt: hwCanSign ? async function (psbt) {
         const HWm = window.WonderHW; if (!HWm) throw new Error('Ledger module not loaded — reconnect your device.');
         await HWm.connect(); // reuse the paired grant (no picker)
-        // signBroadcast hands us the PSBT as hex; WonderHW.signPsbt + finalizeHwSend want base64.
+        // signBroadcast hands us the PSBT as hex; WonderHW.signPsbt wants base64.
         const b64 = /^[0-9a-fA-F]+$/.test(psbt) ? hexToB64(psbt) : psbt;
-        const res = await HWm.signPsbt(b64, hwAcct, bt); // sign for THIS address type (wpkh / pkh / tr)
-        return C.finalizeHwSend(b64, res.signatures); // → { txhex, txid } (connected path broadcasts it)
+        const res = await HWm.signPsbt(b64, hwAcct, bt); // device signs + finalizes → broadcast-ready hex
+        return { txhex: res.txhex, txid: (C.txidOf ? C.txidOf(res.txhex) : '') }; // connected path broadcasts it
       } : null };
     const viewing = !!hwViewAddr;
     const canScan = !!(a.bitcoin[bt] && a.bitcoin[bt].acct);
