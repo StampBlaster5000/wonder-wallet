@@ -209,29 +209,40 @@ const SIGN_DESC = {
   legacy: ['44', 'pkh(@0/**)'],
   taproot: ['86', 'tr(@0/**)'],
 };
+// Build marker — bumped with each sign-path change so a thrown error reveals WHICH build is actually
+// loaded (the #1 source of confusion has been Chrome running a stale unpacked folder). Any signPsbt
+// failure is tagged `signPsbt[<phase> · <SIGN_BUILD>]`, so if you don't see this tag you're on an old build.
+const SIGN_BUILD = 'v53.4';
 /** Sign a (CP-aware, asset-safe) PSBT on the Ledger for the given single-sig address type. */
 async function signPsbt(psbtBase64, account = 0, type = 'nativeSegwit') {
-  requireDevice();
-  await ensureApp('Bitcoin');
-  const app = new AppClient(transport);
-  const fpr = await app.getMasterFingerprint();
-  const [purpose, desc] = SIGN_DESC[type] || SIGN_DESC.nativeSegwit;
-  const acct = `${purpose}'/0'/${account}'`;
-  const xpub = await app.getExtendedPubkey('m/' + acct);
-  const policy = new WalletPolicy('', desc, [`[${fpr}/${acct}]${xpub}`]); // empty name = standard/default policy
-  // The Ledger AppClient signs a PsbtV2 OBJECT — passing a base64 string makes it deref undefined
-  // ("Cannot read properties of undefined (reading 'length')"). Our PSBTs are v0 (BIP-174) from
-  // @scure/btc-signer, so convert v0 → PsbtV2 first (allowTxnVersion1=true, matching Ledger's own parser).
-  const psbtv2 = PsbtV2.fromV0(Buffer.from(psbtBase64, 'base64'), true);
-  const sigMap = await app.signPsbt(psbtv2, policy, null); // Map<inputIndex, signatureBytes>
-  // Reshape to finalizeHwSend's [[idx, {pubkey, signature}]]. The device yields the signature bytes only;
-  // the pubkey comes from the input's BIP32 derivation (exactly how Ledger's own BtcNew consumes it).
-  const signatures = [];
-  sigMap.forEach((sig, idx) => {
-    const pk = psbtv2.getInputKeyDatas(idx, psbtIn.BIP32_DERIVATION);
-    signatures.push([idx, { pubkey: (pk && pk.length) ? pk[0] : null, signature: sig }]);
-  });
-  return { signatures, policy: desc, type };
+  let phase = 'init';
+  try {
+    requireDevice();
+    phase = 'ensureApp'; await ensureApp('Bitcoin');
+    const app = new AppClient(transport);
+    phase = 'fingerprint'; const fpr = await app.getMasterFingerprint();
+    const [purpose, desc] = SIGN_DESC[type] || SIGN_DESC.nativeSegwit;
+    const acct = `${purpose}'/0'/${account}'`;
+    phase = 'xpub'; const xpub = await app.getExtendedPubkey('m/' + acct);
+    const policy = new WalletPolicy('', desc, [`[${fpr}/${acct}]${xpub}`]); // empty name = standard/default policy
+    // The Ledger AppClient signs a PsbtV2 OBJECT — passing a base64 string makes it deref undefined
+    // ("Cannot read properties of undefined (reading 'length')"). Our PSBTs are v0 (BIP-174) from
+    // @scure/btc-signer, so convert v0 → PsbtV2 first (allowTxnVersion1=true, matching Ledger's own parser).
+    phase = 'psbtv2'; const psbtv2 = PsbtV2.fromV0(Buffer.from(psbtBase64, 'base64'), true);
+    phase = 'device-sign'; const sigMap = await app.signPsbt(psbtv2, policy, null); // Map<inputIndex, signatureBytes>
+    // Reshape to finalizeHwSend's [[idx, {pubkey, signature}]]. The device yields the signature bytes only;
+    // the pubkey comes from the input's BIP32 derivation (exactly how Ledger's own BtcNew consumes it).
+    phase = 'reshape';
+    const signatures = [];
+    sigMap.forEach((sig, idx) => {
+      const pk = psbtv2.getInputKeyDatas(idx, psbtIn.BIP32_DERIVATION);
+      signatures.push([idx, { pubkey: (pk && pk.length) ? pk[0] : null, signature: sig }]);
+    });
+    return { signatures, policy: desc, type };
+  } catch (e) {
+    const m = String((e && e.message) || e || '');
+    throw new Error('signPsbt[' + phase + ' · ' + SIGN_BUILD + ']: ' + m);
+  }
 }
 
 /** Sign an unsigned EIP-1559 tx (raw RLP hex without 0x) → {v,r,s}. */
