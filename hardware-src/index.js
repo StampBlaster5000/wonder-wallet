@@ -16,6 +16,7 @@ import TransportWebHID from '@ledgerhq/hw-transport-webhid';
 import Btc from '@ledgerhq/hw-app-btc';
 import { AppClient } from '@ledgerhq/hw-app-btc/lib-es/newops/appClient';
 import { WalletPolicy } from '@ledgerhq/hw-app-btc/lib-es/newops/policy';
+import { PsbtV2, psbtIn } from '@ledgerhq/psbtv2';
 import Eth from '@ledgerhq/hw-app-eth';
 import Solana from '@ledgerhq/hw-app-solana';
 import { base58 } from '@scure/base';
@@ -218,8 +219,19 @@ async function signPsbt(psbtBase64, account = 0, type = 'nativeSegwit') {
   const acct = `${purpose}'/0'/${account}'`;
   const xpub = await app.getExtendedPubkey('m/' + acct);
   const policy = new WalletPolicy('', desc, [`[${fpr}/${acct}]${xpub}`]); // empty name = standard/default policy
-  const entries = await app.signPsbt(psbtBase64, policy, null); // [[inputIndex, PartialSig]]
-  return { signatures: entries, policy: desc, type };
+  // The Ledger AppClient signs a PsbtV2 OBJECT — passing a base64 string makes it deref undefined
+  // ("Cannot read properties of undefined (reading 'length')"). Our PSBTs are v0 (BIP-174) from
+  // @scure/btc-signer, so convert v0 → PsbtV2 first (allowTxnVersion1=true, matching Ledger's own parser).
+  const psbtv2 = PsbtV2.fromV0(Buffer.from(psbtBase64, 'base64'), true);
+  const sigMap = await app.signPsbt(psbtv2, policy, null); // Map<inputIndex, signatureBytes>
+  // Reshape to finalizeHwSend's [[idx, {pubkey, signature}]]. The device yields the signature bytes only;
+  // the pubkey comes from the input's BIP32 derivation (exactly how Ledger's own BtcNew consumes it).
+  const signatures = [];
+  sigMap.forEach((sig, idx) => {
+    const pk = psbtv2.getInputKeyDatas(idx, psbtIn.BIP32_DERIVATION);
+    signatures.push([idx, { pubkey: (pk && pk.length) ? pk[0] : null, signature: sig }]);
+  });
+  return { signatures, policy: desc, type };
 }
 
 /** Sign an unsigned EIP-1559 tx (raw RLP hex without 0x) → {v,r,s}. */
