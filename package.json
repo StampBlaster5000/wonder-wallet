@@ -31,5 +31,8 @@
     "esbuild": "^0.24.2",
     "esbuild-plugin-polyfill-node": "^0.3.0",
     "micro-eth-signer": "^0.12.2"
+  },
+  "overrides": {
+    "body-parser": "^1.20.6"
   }
 }

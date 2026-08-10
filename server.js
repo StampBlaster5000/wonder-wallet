@@ -12,6 +12,8 @@ const path = require('path');
 const rateLimit = require('express-rate-limit');
 const dns = require('dns').promises;
 const netmod = require('net');
+const httpMod = require('http');
+const httpsMod = require('https');
 const core = require('./core');
 const btc = require('./sources/bitcoin');
 const cp = require('./sources/counterparty');
@@ -130,31 +132,66 @@ function isPrivateIp(ip) {
   // and any residual IPv4-mapped hex form (::ffff:…) that dodged the dotted-quad normalization above.
   return x === '::1' || x === '::' || x.startsWith('fc') || x.startsWith('fd') || /^fe[89ab]/.test(x) || x.startsWith('::ffff:');
 }
-async function assertPublicHttps(u) {
-  const url = new URL(u);
-  if (url.protocol !== 'https:') { const e = new Error('https_only'); e.status = 400; throw e; }
-  const { address } = await dns.lookup(url.hostname);
-  if (isPrivateIp(address)) { const e = new Error('blocked_host'); e.status = 400; throw e; }
-  return url.toString();
+const badReq = (msg) => { const e = new Error(msg); e.status = 400; return e; };
+
+// One HTTP(S) GET PINNED to a pre-validated IP (audit #4). The `lookup` override forces the socket to
+// connect to `ip` — the exact address we already checked — so the OS/undici can't re-resolve the
+// hostname to a private/internal IP after the check (classic DNS-rebinding TOCTOU). We keep `hostname`
+// for the Host header and `servername` so TLS SNI + certificate validation still bind to the real host.
+// No auto-redirect — a 3xx is surfaced so the caller re-validates the next hop.
+function pinnedRequest(u, ip, family, timeout, maxBytes) {
+  return new Promise((resolve, reject) => {
+    const mod = u.protocol === 'https:' ? httpsMod : httpMod;
+    const req = mod.request({
+      protocol: u.protocol, hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: (u.pathname || '/') + (u.search || ''), method: 'GET',
+      servername: u.protocol === 'https:' ? u.hostname : undefined, // TLS SNI/cert stays on the real host
+      // PIN to the checked IP. Node may call lookup with {all:true} (happy-eyeballs) → must answer with an
+      // ARRAY in that case, else a bare (addr,family) — handle both, or the socket errors "Invalid IP address".
+      lookup: (host, opts, cb) => { const fam = family || (netmod.isIPv6(ip) ? 6 : 4); if (opts && opts.all) cb(null, [{ address: ip, family: fam }]); else cb(null, ip, fam); },
+      headers: { 'user-agent': 'wonder-wallet-proxy', accept: 'image/*,application/json,text/*;q=0.8,*/*;q=0.5' },
+      timeout,
+    }, (r) => {
+      const status = r.statusCode || 0, hdrs = r.headers || {};
+      if (status >= 300 && status < 400 && hdrs.location) { r.resume(); return resolve({ status, redirect: hdrs.location, ct: '', buf: Buffer.alloc(0), hdrs }); }
+      const chunks = []; let len = 0, done = false;
+      r.on('data', (c) => { if (done) return; len += c.length; if (len > maxBytes) { done = true; req.destroy(); resolve({ status, ct: hdrs['content-type'] || '', buf: Buffer.alloc(0), tooLarge: true, hdrs }); return; } chunks.push(c); });
+      r.on('end', () => { if (!done) resolve({ status, ct: hdrs['content-type'] || '', buf: Buffer.concat(chunks), hdrs }); });
+      r.on('error', reject);
+    });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', reject);
+    req.end();
+  });
 }
-// Like assertPublicHttps but also allows http:// — classic Counterparty artwork (Rare Pepes, etc.)
-// is hosted on legacy HTTP-only servers. The real SSRF guard is the private-IP block, not the scheme;
-// the client always loads it back over our own HTTPS, so there's no mixed-content on the browser side.
-async function assertPublicHttp(u) {
-  const url = new URL(u);
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') { const e = new Error('bad_proto'); e.status = 400; throw e; }
-  const { address } = await dns.lookup(url.hostname);
-  if (isPrivateIp(address)) { const e = new Error('blocked_host'); e.status = 400; throw e; }
-  return url.toString();
+
+// SSRF-safe, DNS-rebinding-proof fetch: resolve+block-private, then connect to that exact IP (pinnedRequest).
+// Returns a fetch-Response-like object so it drops in for the old `assertPublic*(url) + fetch(url, …)`
+// pattern. follow=true resolves redirects internally, re-validating EACH hop; follow=false surfaces the 3xx
+// (headers.get('location')) so callers with their own hop loop keep working.
+async function safePinnedFetch(startUrl, { allowHttp = false, follow = false, timeout = 8000, maxBytes = 3_000_000, maxHops = 4 } = {}) {
+  let url = startUrl;
+  for (let hop = 0; hop <= maxHops; hop++) {
+    const u = new URL(url);
+    if (allowHttp) { if (u.protocol !== 'https:' && u.protocol !== 'http:') throw badReq('bad_proto'); }
+    else if (u.protocol !== 'https:') throw badReq('https_only');
+    const { address, family } = await dns.lookup(u.hostname);
+    if (isPrivateIp(address)) throw badReq('blocked_host');
+    const r = await pinnedRequest(u, address, family, timeout, maxBytes);
+    if (r.redirect && follow) { url = new URL(r.redirect, url).toString(); continue; }
+    return {
+      status: r.status, ok: r.status >= 200 && r.status < 300, tooLarge: !!r.tooLarge,
+      headers: { get: (k) => { k = String(k).toLowerCase(); if (k === 'location') return r.redirect || null; if (k === 'content-type') return r.ct || null; return r.hdrs[k] != null ? String(r.hdrs[k]) : null; } },
+      arrayBuffer: async () => r.buf,
+      text: async () => r.buf.toString('utf8'),
+    };
+  }
+  throw badReq('too_many_redirects');
 }
 async function safeFetchImage(startUrl, res, allowHttp = false) {
   let url = startUrl;
   for (let hop = 0; hop <= 3; hop++) {
-    await (allowHttp ? assertPublicHttp(url) : assertPublicHttps(url)); // re-validate EVERY hop (anti-redirect-SSRF)
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 8000);
-    let r;
-    try { r = await fetch(url, { signal: ctrl.signal, redirect: 'manual' }); } finally { clearTimeout(t); }
+    const r = await safePinnedFetch(url, { allowHttp, follow: false }); // audit #4 — resolve+block-private, then pin the connection to that IP
     if (r.status >= 300 && r.status < 400 && r.headers.get('location')) { url = new URL(r.headers.get('location'), url).toString(); continue; }
     const ct = r.headers.get('content-type') || '';
     if (!r.ok || !ct.startsWith('image/')) return res.status(404).end();
@@ -173,9 +210,7 @@ async function safeFetchImage(startUrl, res, allowHttp = false) {
 async function fetchImageBuffer(startUrl, allowHttp) {
   let url = startUrl;
   for (let hop = 0; hop <= 3; hop++) {
-    await (allowHttp ? assertPublicHttp(url) : assertPublicHttps(url));
-    const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 8000);
-    let r; try { r = await fetch(url, { signal: ctrl.signal, redirect: 'manual' }); } finally { clearTimeout(t); }
+    const r = await safePinnedFetch(url, { allowHttp, follow: false }); // audit #4 — pinned to the validated IP
     if (r.status >= 300 && r.status < 400 && r.headers.get('location')) { url = new URL(r.headers.get('location'), url).toString(); continue; }
     const ct = r.headers.get('content-type') || '';
     if (!r.ok || !ct.startsWith('image/')) return null;
@@ -213,9 +248,7 @@ async function resolveCpAssetImage(description) {
   if (IMG_EXT.test(url)) return url; // already a direct image
   let cur = url;
   for (let hop = 0; hop <= 2; hop++) {
-    await assertPublicHttp(cur); // re-validate every hop (anti-redirect-SSRF); http allowed for legacy CP hosts
-    const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 6000);
-    let r; try { r = await fetch(cur, { signal: ctrl.signal, redirect: 'manual' }); } finally { clearTimeout(t); }
+    const r = await safePinnedFetch(cur, { allowHttp: true, follow: false, timeout: 6000 }); // audit #4 — pinned to the validated IP
     if (r.status >= 300 && r.status < 400 && r.headers.get('location')) { cur = new URL(r.headers.get('location'), cur).toString(); continue; }
     const ct = (r.headers.get('content-type') || '').toLowerCase();
     if (ct.startsWith('image/')) return cur; // was an image after all
@@ -234,11 +267,7 @@ const STAMP_ALLOW = (ct) => /^(image\/|text\/(plain|html)|application\/(json|gzi
 async function safeFetchStamp(startUrl, res) {
   let url = startUrl;
   for (let hop = 0; hop <= 3; hop++) {
-    await assertPublicHttps(url);
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 8000);
-    let r;
-    try { r = await fetch(url, { signal: ctrl.signal, redirect: 'manual' }); } finally { clearTimeout(t); }
+    const r = await safePinnedFetch(url, { follow: false }); // audit #4 — pinned to the validated IP
     if (r.status >= 300 && r.status < 400 && r.headers.get('location')) { url = new URL(r.headers.get('location'), url).toString(); continue; }
     if (!r.ok) return res.status(404).end();
     let ct = (r.headers.get('content-type') || 'application/octet-stream').split(';')[0].trim();
@@ -437,9 +466,7 @@ const XCHAIN_PLACEHOLDER_MD5 = new Set(['a758b9b397eacc038e5b931d5f466bbf', '32b
 async function fetchXchainIcon(asset) {
   const url = 'https://xchain.io/icon/' + encodeURIComponent(asset) + '.png';
   try {
-    await assertPublicHttps(url);
-    const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 8000);
-    let r; try { r = await fetch(url, { signal: ctrl.signal }); } finally { clearTimeout(t); }
+    const r = await safePinnedFetch(url, { follow: true }); // audit #4 — pinned to the validated IP (follows redirects, re-validating each hop)
     const ct = (r.headers.get('content-type') || '').toLowerCase();
     if (!r.ok || !ct.startsWith('image/')) return null;
     const buf = Buffer.from(await r.arrayBuffer());
@@ -460,9 +487,7 @@ const XCP_CDN_PLACEHOLDER_MD5 = new Set([
 async function fetchXcpCdn(asset, full) {
   const url = 'https://cdn.xcp.io/img/' + (full ? 'full/' : 'icon/') + encodeURIComponent(asset);
   try {
-    await assertPublicHttps(url);
-    const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 8000);
-    let r; try { r = await fetch(url, { signal: ctrl.signal }); } finally { clearTimeout(t); }
+    const r = await safePinnedFetch(url, { follow: true }); // audit #4 — pinned to the validated IP (follows redirects, re-validating each hop)
     const ct = (r.headers.get('content-type') || '').toLowerCase();
     if (!r.ok || !ct.startsWith('image/')) return null;
     const buf = Buffer.from(await r.arrayBuffer());
