@@ -27,3 +27,6 @@ public/wonder-wallet-b*.zip
 
 # ── Internal studio/promo harnesses (asset tooling, not shipped app) ──
 public/_*
+
+# CWS upload package (built artifact, served from public/)
+public/wonder-wallet-cws-*.zip
