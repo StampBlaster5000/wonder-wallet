@@ -4,9 +4,16 @@
    are 100% local). v2 will port these reads fully client-side (direct to the chains). */
 (function () {
   // The stateless reader — project-controlled infra (audit #3). wonder-wallet.com's Cloudflare Worker
-  // proxies /api → the stateless server.js. Change this to point at your own reader if you self-host.
-  var PROXY = 'https://wonder-wallet.com';
-  window.WW_PROXY = PROXY;
+  // proxies /api → the stateless server.js. A user can override it (Advanced → Reader endpoint) to point
+  // at their own server.js; the custom origin is stored in localStorage and granted via
+  // optional_host_permissions. reader() is read per-request so a change takes effect with no reload.
+  var DEFAULT_READER = 'https://wonder-wallet.com';
+  function reader() { try { var c = localStorage.getItem('ww:reader'); return (c && /^https:\/\/[^\s"'<>]+$/.test(c)) ? c.replace(/\/+$/, '') : DEFAULT_READER; } catch (e) { return DEFAULT_READER; } }
+  // WW_PROXY is a LIVE getter (not a snapshot) so code that builds absolute image URLs via it —
+  // proxied() in popup.js — tracks a reader change with no reload, same as the fetch/abs() path.
+  try { Object.defineProperty(window, 'WW_PROXY', { get: reader, configurable: true }); }
+  catch (e) { window.WW_PROXY = reader(); }
+  window.WW_DEFAULT_READER = DEFAULT_READER;
   // Testnet Mode (global toggle). Persisted per-profile in localStorage. Reads carry the network
   // as a QUERY PARAM (?network=testnet), NOT a custom header — the extension calls the proxy
   // cross-origin, and a custom header would trip a CORS preflight the platform proxy rejects
@@ -14,7 +21,7 @@
   // sails through CORS AND gives testnet its own cache-distinct URL (no mainnet/testnet collision).
   function netMode() { try { return localStorage.getItem('ww:netmode') === 'testnet' ? 'testnet' : 'mainnet'; } catch (e) { return 'mainnet'; } }
   function netParam(url) { return netMode() === 'testnet' ? (url + (url.indexOf('?') >= 0 ? '&' : '?') + 'network=testnet') : url; }
-  function abs(u) { return netParam(PROXY + '/' + String(u).replace(/^\.?\//, '')); }
+  function abs(u) { return netParam(reader() + '/' + String(u).replace(/^\.?\//, '')); }
   function isApi(u) { return typeof u === 'string' && /^api\//.test(u); }
   window.WWNetMode = {
     get: netMode,

@@ -71,12 +71,28 @@ only **public** blockchain data. Architecture:
 - It remains a **single point of metadata trust** for extension reads/broadcasts (whoever runs the reader
   can see which addresses are looked up and which raw transactions are broadcast — the same visibility any
   blockchain-data provider has). No keys, seeds, or identity-linked data ever reach it.
-- **You can self-host it.** The endpoint is a single constant in `extension/src/shim.js` (+ `build-ext.mjs`
-  for the manifest origin); point it at your own instance of `server.js` (configured via the env vars in
-  `README.md`) and the extension talks only to you.
+- **You can self-host it — no rebuild needed.** In the extension: **Advanced → Reader endpoint**, enter your
+  own `https://` server running this repo's `server.js` (configured via the env vars in `README.md`). The
+  extension then talks only to you. The build-time default (`extension/src/shim.js` + `build-ext.mjs`) still
+  points at `wonder-wallet.com` for anyone who doesn't change it.
 
-**Roadmap:** a user-configurable endpoint in the extension settings (via `optional_host_permissions`), so a
-privacy-conscious user can switch readers without rebuilding.
+#### Custom reader endpoint — how it's kept safe
+
+The custom endpoint is a **privacy** feature (choose who sees your read/broadcast metadata); it never touches
+key material. Its guardrails:
+
+- **Runtime-granted, not a default.** A default install has host access to `wonder-wallet.com` only. A custom
+  origin is granted at the moment you set it, via `chrome.permissions.request` (`optional_host_permissions`
+  is `https://*/*`) — you approve the specific host. Reset returns to the default and revokes the grant.
+- **https-only.** The URL must be `https://…`; plaintext and localhost/loopback are rejected.
+- **No remote code — ever.** The extension CSP keeps `script-src 'self'`; only `connect-src` / `img-src` /
+  `frame-src` are widened to `https:` so a custom reader can serve blockchain data and stamp art. A malicious
+  endpoint can serve wrong *data* (which the wallet already treats as untrusted upstream) but **cannot execute
+  script** in the extension.
+- **In-app trust warning.** Setting a custom endpoint shows that whoever runs it can see which addresses you
+  look up and the raw transactions you broadcast — and to use only a server you run or trust.
+- The choice is stored locally (`localStorage['ww:reader']` + `chrome.storage.local` for the service worker);
+  it is never synced or transmitted.
 
 ### Asset-aware UTXO protection
 - Coin-control classifies every output against the Counterparty / Ordinals / Stamps indexers so

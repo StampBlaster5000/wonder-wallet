@@ -76,7 +76,12 @@ Lets the user open the wallet in the browser's side panel so it stays visible al
 
 **Host permission** — `https://wonder-wallet.com/*`
 ```
-The extension reads PUBLIC blockchain data (address balances, assets, fees) and broadcasts the transactions the user signs, through this single stateless proxy on the project's own domain (wonder-wallet.com). It requests only public information and stores no user data. This host permission is the ONLY server the extension ever contacts.
+The extension reads PUBLIC blockchain data (address balances, assets, fees) and broadcasts the transactions the user signs, through this single stateless proxy on the project's own domain (wonder-wallet.com). It requests only public information and stores no user data. This host permission is the ONLY server the extension contacts by default.
+```
+
+**Optional host permission** — `https://*/*` (requested only if the user sets a custom reader)
+```
+Self-custody users can optionally point the wallet's read/broadcast backend at their OWN server (running the project's open-source server.js) for privacy, via Advanced → Reader endpoint. That user-chosen https origin is requested at runtime with chrome.permissions.request the moment they set it — it is never granted on install, and resetting to the default removes it. It carries only public blockchain reads and the user's own signed-transaction broadcasts; no keys or personal data. If the user never sets a custom endpoint, this permission is never requested.
 ```
 
 **Content scripts on all sites** (`content_scripts` → `matches: <all_urls>`) — this is what produces the "read and change data on all your sites" warning.
@@ -84,7 +89,7 @@ The extension reads PUBLIC blockchain data (address balances, assets, fees) and 
 To let the user connect their wallet to any decentralized app (dApp) they choose, the extension injects a standards-based wallet connector (EIP-6963 / EIP-1193, the Solana Wallet Standard, and a Bitcoin provider) into pages — exactly like MetaMask and Phantom. This announces the wallet so a dApp's "Connect Wallet" dialog can list it, and relays connection/signature requests. Every connection and every signature requires explicit, per-origin user approval in the wallet's own dialog; the requesting origin is taken from the browser (chrome sender), never from the page, so it cannot be spoofed. The connector reads no page content, collects nothing, and has no access to the user's keys — signing happens only inside the wallet's trusted extension pages. An allowlist is not used because that would force us to gatekeep which sites may integrate; instead the wallet is discoverable everywhere and each dApp decides whether to surface it.
 ```
 
-**Remote code:** `No` — the extension executes no remotely-hosted code (strict CSP `script-src 'self'`).
+**Remote code:** `No` — the extension executes no remotely-hosted code. The CSP keeps `script-src 'self'`; `connect-src`/`img-src`/`frame-src` allow `https:` only so a user-chosen custom reader endpoint can serve public blockchain DATA and stamp artwork — never script.
 
 ---
 

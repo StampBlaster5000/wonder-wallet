@@ -27,14 +27,20 @@ eq('permissions', (m.permissions || []).slice().sort(), ['alarms', 'sidePanel', 
 eq('content_scripts[0].matches', m.content_scripts && m.content_scripts[0] && m.content_scripts[0].matches, ['http://*/*', 'https://*/*']);
 eq('content_scripts[0].js', m.content_scripts && m.content_scripts[0] && m.content_scripts[0].js, ['provider/content.js']);
 eq('content_scripts[0].run_at', m.content_scripts && m.content_scripts[0] && m.content_scripts[0].run_at, 'document_start');
-// Backend: exactly ONE proxy origin in host_permissions (no surprise extra hosts).
+// Backend: exactly ONE proxy origin in host_permissions granted by DEFAULT (no surprise extra hosts).
 if (!(Array.isArray(m.host_permissions) && m.host_permissions.length === 1 && /^https:\/\/.+\/\*$/.test(m.host_permissions[0]))) {
   fails.push('host_permissions: expected exactly one https proxy origin ending in /*, got ' + JSON.stringify(m.host_permissions));
 }
-// CSP must stay strict (script-src 'self', object-src 'none').
+// Custom reader endpoint (Advanced → Reader endpoint): a user-chosen backend is granted at RUNTIME via
+// optional_host_permissions — never a default grant. Locked to https only.
+eq('optional_host_permissions', m.optional_host_permissions, ['https://*/*']);
+// CSP: script-src MUST stay strict 'self' (no remote code, ever) and object-src 'none'. img/connect/frame
+// are broadened to https: so a custom reader can serve reads/art — script execution is unaffected.
 const csp = (m.content_security_policy && m.content_security_policy.extension_pages) || '';
 if (!/script-src 'self'/.test(csp)) fails.push("content_security_policy: script-src 'self' missing");
+if (/script-src[^;]*https:/.test(csp)) fails.push("content_security_policy: script-src must NOT allow https: (remote code)");
 if (!/object-src 'none'/.test(csp)) fails.push("content_security_policy: object-src 'none' missing");
+if (!/connect-src 'self' https:/.test(csp)) fails.push("content_security_policy: connect-src must allow https: (custom reader)");
 
 if (fails.length) {
   console.error('manifest-contract: FAIL — the shipped manifest drifted from the reviewed contract:\n - ' + fails.join('\n - ')
@@ -42,4 +48,4 @@ if (fails.length) {
   process.exit(1);
 }
 console.log('✅ manifest-contract: OK — permissions [' + (m.permissions || []).join(', ') + '], inject ['
-  + ((m.content_scripts && m.content_scripts[0] && m.content_scripts[0].matches) || []).join(', ') + '], one proxy origin, strict CSP.');
+  + ((m.content_scripts && m.content_scripts[0] && m.content_scripts[0].matches) || []).join(', ') + '], one default proxy origin, optional https reader grant, strict script-src.');

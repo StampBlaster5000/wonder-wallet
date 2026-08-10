@@ -18,7 +18,10 @@
   var C = window.WonderCore, S = window.WWTxSummary;
   // This window loads wallet-core directly (no shim), so network calls use the ABSOLUTE proxy URL —
   // the project-controlled backend (audit #3); wonder-wallet.com's Cloudflare Worker proxies /api.
-  var PROXY = 'https://wonder-wallet.com';
+  // Reader endpoint — default project backend, overridable via Advanced → Reader endpoint (ww:reader in
+  // localStorage, shared across extension pages incl. this window). Read per-use so changes take effect.
+  var DEFAULT_READER = 'https://wonder-wallet.com';
+  function reader() { try { var c = localStorage.getItem('ww:reader'); return (c && /^https:\/\/[^\s"'<>]+$/.test(c)) ? c.replace(/\/+$/, '') : DEFAULT_READER; } catch (_) { return DEFAULT_READER; } }
   // Testnet Mode mirrors the extension's global toggle — the popup persists it to localStorage, which
   // is shared across ALL extension pages (incl. this approval window). So the network the user set on
   // the wallet carries into the connect/sign request: testnet derives coin-type-1' addresses (tb1…),
@@ -31,7 +34,7 @@
       try {
         if (isTN()) {
           var url = typeof input === 'string' ? input : (input && input.url) || '';
-          if (url.indexOf(PROXY) === 0 && !/[?&]network=/.test(url)) {
+          if (url.indexOf(reader()) === 0 && !/[?&]network=/.test(url)) {
             var nu = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'network=testnet';
             input = (typeof input === 'string') ? nu : new Request(nu, input);
           }
@@ -40,7 +43,7 @@
       return _f(input, init);
     };
   })();
-  function postJson(path, body) { return fetch(PROXY + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(function (r) { return r.json(); }); }
+  function postJson(path, body) { return fetch(reader() + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(function (r) { return r.json(); }); }
   var app = document.getElementById('app');
   // Build stamp — a persistent corner badge (survives re-renders) so it's obvious which build is loaded.
   // Bump BUILD on each provider fix; if the badge doesn't match, the extension wasn't fully reloaded.
@@ -50,7 +53,7 @@
   var btc = function (n) { return n == null ? '—' : (Number(n) / 1e8).toFixed(8).replace(/0+$/, '').replace(/\.$/, '') + ' BTC'; };
   var short = function (a) { a = String(a || ''); return a.length > 22 ? a.slice(0, 10) + '…' + a.slice(-8) : a; };
   var _btcUsd = 0; // BTC price for the sign screen's fee/total USD readout — prefetched on window open
-  try { fetch(PROXY + '/api/prices').then(function (r) { return r.json(); }).then(function (p) { _btcUsd = (p && p.bitcoin) || 0; }).catch(function () {}); } catch (_) {}
+  try { fetch(reader() + '/api/prices').then(function (r) { return r.json(); }).then(function (p) { _btcUsd = (p && p.bitcoin) || 0; }).catch(function () {}); } catch (_) {}
   function usdTag(sats) { if (isTN()) return ''; var u = (Number(sats) / 1e8) * _btcUsd; return (_btcUsd && u) ? ' <span class="ap-fine">≈ $' + u.toLocaleString('en-US', { maximumFractionDigits: 2 }) + '</span>' : ''; }
   var reqId = new URLSearchParams(location.search).get('id');
   var req = null;

@@ -13,8 +13,14 @@
   'use strict';
   var PERM = self.WWPermissions, B = self.WWBroker, P = self.WWProtocol;
   // Project-controlled backend (audit #3) — wonder-wallet.com's Cloudflare Worker proxies /api → the
-  // stateless server.js. Matches shim.js WW_PROXY.
-  var PROXY = 'https://wonder-wallet.com';
+  // stateless server.js. Overridable via Advanced → Reader endpoint (ww:reader). The service worker has
+  // no localStorage, so read/track it from chrome.storage.local (the settings UI writes both stores).
+  var DEFAULT_READER = 'https://wonder-wallet.com';
+  var PROXY = DEFAULT_READER;
+  try {
+    chrome.storage.local.get('ww:reader', function (o) { var c = o && o['ww:reader']; if (c && /^https:\/\//.test(c)) PROXY = c.replace(/\/+$/, ''); });
+    chrome.storage.onChanged.addListener(function (ch, area) { if (area === 'local' && ch['ww:reader']) { var c = ch['ww:reader'].newValue; PROXY = (c && /^https:\/\//.test(c)) ? c.replace(/\/+$/, '') : DEFAULT_READER; } });
+  } catch (_) {}
   var PENDING = {}; // id -> { origin, method, params, tabId, kind, resolve }
   var WINDOWS = {}; // approvalWindowId -> requestId
 

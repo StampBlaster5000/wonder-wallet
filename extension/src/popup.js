@@ -2159,6 +2159,7 @@
       + '<button class="adv-opt" data-adv="autolock"><b>Auto-lock timer</b><span>Change or turn off the idle lock</span></button>'
       + '<button class="adv-opt" data-adv="theme"><b>Appearance</b><span>Dark or light wallet skin</span></button>'
       + '<button class="adv-opt" data-adv="network"><b>Network</b><span>Currently on <b>' + (isTN() ? 'Testnet' : 'Mainnet') + '</b> · switch for testing</span></button>'
+      + '<button class="adv-opt" data-adv="reader"><b>Reader endpoint</b><span>' + (isCustomReader() ? 'Custom · ' + esc(short(readerUrl().replace(/^https:\/\//, ''))) : 'Default · wonder-wallet.com') + '</span></button>'
       + '<button class="adv-opt" data-adv="sites"><b>Connected sites</b><span>dApps allowed to connect to this wallet</span></button>'
       + '<button class="adv-opt" data-adv="terminal"><b>Wonder Terminal</b><span>Open the full wallet view in a window</span></button>'
       + '</div><button class="btn ghost" id="advClose">Close</button></div>');
@@ -2174,6 +2175,7 @@
       else if (a === 'autolock') advAutoLock();
       else if (a === 'theme') advTheme();
       else if (a === 'network') advNetwork();
+      else if (a === 'reader') advReader();
       else if (a === 'sites') { overlay('<div id="wwcsMount"></div>'); if (self.WWConnectedSites) self.WWConnectedSites.render(document.getElementById('wwcsMount'), advancedMenu); else { closeOv(); } }
       else if (a === 'terminal') { closeOv(); openTerminal(); }
     }; });
@@ -2213,6 +2215,67 @@
       + '<div class="adv-menu">' + F.map(function (f) { return '<a class="adv-opt" href="' + f[1] + '" target="_blank" rel="noopener"><b>' + esc(f[0]) + ' ↗</b><span>' + esc(f[2]) + '</span></a>'; }).join('') + '</div>'
       + '<button class="btn ghost" id="fcClose" style="margin-top:8px">Close</button></div>');
     document.getElementById('fcBack').onclick = advNetwork; document.getElementById('fcClose').onclick = closeOv;
+  }
+  // ── Reader endpoint (custom backend) ─────────────────────────────────────────────────────────────
+  // The extension talks to ONE origin for all reads/broadcasts. Default = wonder-wallet.com (project
+  // infra). A privacy-conscious user can repoint it at their OWN server.js. The choice is stored in
+  // localStorage['ww:reader'] (read by shim.js/approval.js) AND chrome.storage.local (read by the
+  // service worker, which has no localStorage). The custom origin is granted via chrome.permissions.
+  var READER_DEFAULT = 'https://wonder-wallet.com';
+  function readerUrl() { try { var c = localStorage.getItem('ww:reader'); return (c && /^https:\/\/[^\s"'<>]+$/.test(c)) ? c.replace(/\/+$/, '') : READER_DEFAULT; } catch (e) { return READER_DEFAULT; } }
+  function isCustomReader() { return readerUrl() !== READER_DEFAULT; }
+  function readerOriginPattern(u) { try { return 'https://' + new URL(u).host + '/*'; } catch (e) { return null; } }
+  function setReader(url, done) {
+    // url === null → reset to default (clear both stores). Otherwise persist the validated https origin.
+    try { if (url) localStorage.setItem('ww:reader', url); else localStorage.removeItem('ww:reader'); } catch (e) {}
+    try {
+      if (chrome && chrome.storage && chrome.storage.local) {
+        if (url) chrome.storage.local.set({ 'ww:reader': url }, function () { done && done(); });
+        else chrome.storage.local.remove('ww:reader', function () { done && done(); });
+        return;
+      }
+    } catch (e) {}
+    done && done();
+  }
+  function advReader() {
+    var cur = readerUrl(), custom = isCustomReader();
+    overlay('<div class="stamp-detail"><div class="st-head"><button class="p-ibtn" id="rdBack" title="Back">←</button><div class="st-htitle">Reader endpoint</div></div>'
+      + '<div class="p-hint">Wonder Wallet reads public blockchain data (balances, assets, fees, prices) and broadcasts your signed transactions through <b>one</b> backend. Your keys and seed <b>never</b> touch it. By default that\'s the project\'s own <b>wonder-wallet.com</b>. If you run your own <code>server.js</code>, point the wallet at it here so only <b>you</b> can see which addresses are looked up.</div>'
+      + '<div class="acct-line"><div class="acct-lab">Current</div><div class="acct-val"><span class="acct-addr" title="' + esc(cur) + '">' + esc(cur.replace(/^https:\/\//, '')) + (custom ? '' : ' · default') + '</span></div></div>'
+      + '<label class="stf"><span>Custom endpoint (https://…)</span><input id="rdIn" class="p-in" type="url" inputmode="url" spellcheck="false" placeholder="https://my-server.example.com" value="' + (custom ? esc(cur) : '') + '"/></label>'
+      + '<div class="p-hint" style="border-left:3px solid #E0B453;padding-left:8px">⚠️ <b>Trust warning.</b> Whoever runs this endpoint can see which addresses you view and the raw transactions you broadcast (the same visibility any blockchain-data provider has). Only use a server <b>you</b> run or fully trust. It must expose the same <code>/api/*</code> routes as this project\'s <code>server.js</code>.</div>'
+      + '<div id="rdOut" class="sm-out" hidden></div>'
+      + '<button class="btn" id="rdSave">Use this endpoint</button>'
+      + (custom ? '<button class="btn ghost" id="rdReset" style="margin-top:8px">↺ Reset to default (wonder-wallet.com)</button>' : '')
+      + '<button class="btn ghost" id="rdClose" style="margin-top:8px">Close</button></div>');
+    document.getElementById('rdBack').onclick = advancedMenu; document.getElementById('rdClose').onclick = closeOv;
+    var out = document.getElementById('rdOut');
+    var say = function (msg, ok) { out.hidden = false; out.textContent = msg; out.style.color = ok ? '#7fd18a' : '#e88'; };
+    document.getElementById('rdSave').onclick = function () {
+      var v = (document.getElementById('rdIn').value || '').trim().replace(/\/+$/, '');
+      if (!/^https:\/\/[^\s"'<>]+$/.test(v)) { say('Enter a valid https:// URL.', false); return; }
+      if (/^https:\/\/(localhost|127\.|0\.0\.0\.0|\[?::1)/i.test(v)) { say('Local addresses aren\'t allowed here.', false); return; }
+      var pat = readerOriginPattern(v);
+      if (!pat) { say('Couldn\'t parse that URL.', false); return; }
+      var apply = function () { setReader(v, function () { say('✓ Reader set to ' + v.replace(/^https:\/\//, '') + '. New reads use it immediately.', true); setTimeout(advReader, 900); }); };
+      try {
+        if (chrome && chrome.permissions && chrome.permissions.request) {
+          chrome.permissions.request({ origins: [pat] }, function (granted) {
+            if (chrome.runtime && chrome.runtime.lastError) { say('Permission error: ' + chrome.runtime.lastError.message, false); return; }
+            if (!granted) { say('Permission for ' + pat + ' was denied — endpoint not changed.', false); return; }
+            apply();
+          });
+        } else { apply(); }
+      } catch (e) { say('Could not request permission: ' + (e && e.message || e), false); }
+    };
+    var rst = document.getElementById('rdReset');
+    if (rst) rst.onclick = function () {
+      var oldPat = readerOriginPattern(cur);
+      setReader(null, function () {
+        try { if (oldPat && chrome && chrome.permissions && chrome.permissions.remove) chrome.permissions.remove({ origins: [oldPat] }, function () {}); } catch (e) {}
+        say('✓ Reset to wonder-wallet.com.', true); setTimeout(advReader, 800);
+      });
+    };
   }
   function advAutoLock() {
     var cur = '5'; try { cur = localStorage.getItem('ww:idlemins') || '5'; } catch (e) {}

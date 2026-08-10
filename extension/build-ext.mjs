@@ -81,6 +81,11 @@ const manifest = {
   // exists, and dropping it shrinks the Chrome permission warning. (Re-add if an allowlist runtime toggle lands.)
   permissions: ['storage', 'alarms', 'sidePanel'],
   host_permissions: [PROXY + '/*'],
+  // Custom reader endpoint (Advanced → Reader endpoint): a privacy-conscious user can repoint reads
+  // at their OWN server.js. The origin is granted at runtime via chrome.permissions.request (NOT a
+  // default grant — the default install still talks only to wonder-wallet.com). script-src stays
+  // 'self' regardless; this only widens where READS/images/frames may come from.
+  optional_host_permissions: ['https://*/*'],
   content_scripts: [{
     matches: DAPP_HOSTS,
     js: ['provider/content.js'],
@@ -92,7 +97,12 @@ const manifest = {
     matches: DAPP_HOSTS,
   }],
   content_security_policy: {
-    extension_pages: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: ${PROXY}; connect-src 'self' ${PROXY}; frame-src ${PROXY}; object-src 'none'; base-uri 'self'`,
+    // script-src stays STRICT 'self' (no remote code, ever). img-src/connect-src/frame-src allow https:
+    // so a user-set custom reader endpoint (Advanced → Reader endpoint) can serve reads/stamp art/HTML
+    // stamps. MV3 CSP is static (can't be narrowed to the chosen origin at runtime); the runtime guard is
+    // the https-only validation + the per-origin chrome.permissions grant. Default install still only
+    // ever contacts wonder-wallet.com (shim.js reader() falls back to it).
+    extension_pages: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https:; frame-src https:; object-src 'none'; base-uri 'self'`,
   },
   icons: { 16: 'icons/icon-16.png', 48: 'icons/icon-48.png', 128: 'icons/icon-128.png' },
 };
