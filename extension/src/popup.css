@@ -245,6 +245,8 @@ html.in-panel #app { height: 100vh; }
 .send-form { display: flex; flex-direction: column; gap: 10px; }
 .send-amt { display: flex; align-items: center; gap: 8px; }
 .send-amt .p-in { flex: 1; }
+.send-usd { margin: -5px 2px 0; font-size: 12px; font-family: var(--mono); color: var(--gold2); opacity: .9; }
+.send-usd.dim { color: var(--muted); font-family: inherit; }
 .send-max { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted2); white-space: nowrap; }
 button.send-max { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; cursor: pointer; font-family: inherit; font-weight: 600; }
 button.send-max:hover { border-color: var(--gold); color: var(--gold2); }

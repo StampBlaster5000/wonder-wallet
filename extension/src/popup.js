@@ -684,6 +684,7 @@
       + '<input id="hTo" class="p-in" placeholder="Address or name.btc" spellcheck="false" autocomplete="off" autocapitalize="off"/>'
       + '<div id="hNameRes" class="name-resolve" hidden></div>'
       + '<div class="send-amt"><input id="hAmt" class="p-in" type="number" step="0.00000001" min="0" placeholder="Amount (BTC)"/><label class="send-max"><input type="checkbox" id="hMax"/> Max</label></div>'
+      + '<div id="hAmtUsd" class="send-usd" hidden></div>'
       + feeRowHtml(fees)
       + '<div class="p-hint">You’ll confirm the exact recipient &amp; amount <b>on your Ledger</b> before it signs.</div>'
       + '<div id="hStatus" class="p-err"></div>'
@@ -691,6 +692,7 @@
     document.getElementById('bBack').onclick = hwRenderMain;
     wireFeeRow(function (r) { feeRate = r; });
     wireNameResolve('hTo', 'hNameRes');
+    wireAmtUsd('hAmt', 'hMax', 'hAmtUsd');
     document.getElementById('hReview').onclick = async function () {
       var s = document.getElementById('hStatus'); s.className = 'p-hint'; s.textContent = agg ? 'Scanning your addresses & building…' : 'Selecting UTXOs & building…';
       try {
@@ -2731,12 +2733,14 @@
       + '<div id="pNameRes" class="name-resolve" hidden></div>'
       + '<div id="pDisp" class="disp-panel" hidden></div>'
       + '<div class="send-amt"><input id="pAmt" class="p-in" type="number" step="0.00000001" min="0" placeholder="Amount (BTC)"/><label class="send-max"><input type="checkbox" id="pMax"/> Max</label></div>'
+      + '<div id="pAmtUsd" class="send-usd" hidden></div>'
       + feeRowHtml(fees)
       + '<div id="pStatus" class="p-err"></div>'
       + '<button class="btn" id="pReview">Review</button></div>';
     document.getElementById('bBack').onclick = renderMain;
     wireFeeRow(function (r) { feeRate = r; });
     wireDispenser();
+    wireAmtUsd('pAmt', 'pMax', 'pAmtUsd');
     document.getElementById('pReview').onclick = async function () {
       var s = document.getElementById('pStatus'); s.className = 'p-hint'; s.textContent = 'Selecting safe UTXOs & signing…';
       try {
@@ -2796,6 +2800,23 @@
         try { var r = await fetch('api/cp/dispensers/' + v).then(function (x) { return x.json(); }); if (to.value.trim() !== v) return; if (!r.dispensers || !r.dispensers.length) { panel.style.display = 'none'; return; } renderDispPanel(r.dispensers[0], panel); } catch (e) { panel.style.display = 'none'; }
       }, 400);
     };
+  }
+  // Live USD readout under a BTC amount input. Uses the loaded BTC price; updates as the user types and
+  // when Max is toggled. Purely a display estimate — the authoritative amount/fee are shown again on Review.
+  function wireAmtUsd(amtId, maxId, usdId) {
+    var amt = document.getElementById(amtId), mx = document.getElementById(maxId), out = document.getElementById(usdId);
+    if (!amt || !out) return;
+    var upd = function () {
+      var p = Number(PRICES && PRICES.bitcoin) || 0;
+      if (mx && mx.checked) { out.hidden = false; out.className = 'send-usd dim'; out.textContent = 'Max — sends the entire spendable balance (minus network fee)'; return; }
+      var v = parseFloat(amt.value);
+      if (!p || !isFinite(v) || v <= 0) { out.hidden = true; out.textContent = ''; return; }
+      out.hidden = false; out.className = 'send-usd';
+      out.textContent = '≈ $' + (v * p).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' USD';
+    };
+    amt.addEventListener('input', upd);
+    if (mx) mx.addEventListener('change', upd);
+    upd();
   }
   function renderDispPanel(d, panel) {
     panel.style.display = 'block';
