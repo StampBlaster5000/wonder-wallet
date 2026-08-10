@@ -16,10 +16,9 @@
   // extension pages, and this runs before any content renders (route() is async), so there's no flash.
   try { if (localStorage.getItem('ww:theme') === 'light') document.documentElement.classList.add('theme-light'); } catch (_) {}
   var C = window.WonderCore, S = window.WWTxSummary;
-  // This window loads wallet-core directly (no shim), so network calls use the ABSOLUTE proxy URL.
-  // IMPORTANT: the Wonder Wallet API is served at the ARTIFACT path (like shim.js WW_PROXY) — the
-  // emblem.build ROOT /api/ is the auth-gated dashboard and returns Unauthorized.
-  var PROXY = 'https://build-1dadb019a5802eb5fee63753.emblem.build/pub/bitcoin_wallet/wonder-wallet';
+  // This window loads wallet-core directly (no shim), so network calls use the ABSOLUTE proxy URL —
+  // the project-controlled backend (audit #3); wonder-wallet.com's Cloudflare Worker proxies /api.
+  var PROXY = 'https://wonder-wallet.com';
   // Testnet Mode mirrors the extension's global toggle — the popup persists it to localStorage, which
   // is shared across ALL extension pages (incl. this approval window). So the network the user set on
   // the wallet carries into the connect/sign request: testnet derives coin-type-1' addresses (tb1…),

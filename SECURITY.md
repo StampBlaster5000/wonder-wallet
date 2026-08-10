@@ -59,23 +59,24 @@ The core promise is **your keys, your art, your data — all local**. Concretely
 
 #### The extension's read/broadcast proxy — full disclosure
 
-The extension talks to exactly **one** backend for all reads (balances, assets, fees, PSBT decode,
-prices) and for broadcasting the transactions the user signs. Today that endpoint is a stateless proxy
-running the same `server.js` in this repo, hosted on **Emblem Build** (`*.emblem.build`) — a third-party
-developer platform run by Crosschain Ventures (the same company behind the Emblem Vault bridging the
-wallet already uses; disclosed in-app). It is the **only** origin in the extension's `host_permissions`,
-it holds zero user data, and it forwards only **public** blockchain data — but you should know:
+The extension talks to exactly **one** origin for all reads (balances, assets, fees, PSBT decode, prices)
+and for broadcasting the transactions the user signs: **`https://wonder-wallet.com`** — the project's own
+domain. It is the **only** entry in the extension's `host_permissions`, holds zero user data, and forwards
+only **public** blockchain data. Architecture:
 
-- it is a **single point of failure and of metadata trust** for extension reads/broadcasts (the operator
+- `wonder-wallet.com` is fronted by a **Cloudflare Worker** we operate, which proxies `/api/*` to a
+  stateless instance of this repo's `server.js`. Because the extension targets our domain (not the backend
+  host directly), we can **move or scale the backend without shipping an extension update** — the previous
+  build-preview origin is gone.
+- It remains a **single point of metadata trust** for extension reads/broadcasts (whoever runs the reader
   can see which addresses are looked up and which raw transactions are broadcast — the same visibility any
-  blockchain-data provider has);
-- **you can self-host it.** The extension's endpoint is a single constant; point it at your own instance of
-  this repo's `server.js` (configured via the same env vars documented in `README.md`) and the extension
-  talks only to you.
+  blockchain-data provider has). No keys, seeds, or identity-linked data ever reach it.
+- **You can self-host it.** The endpoint is a single constant in `extension/src/shim.js` (+ `build-ext.mjs`
+  for the manifest origin); point it at your own instance of `server.js` (configured via the env vars in
+  `README.md`) and the extension talks only to you.
 
-**Roadmap:** moving this backend onto project-controlled infrastructure at `wonder-wallet.com` (behind the
-existing Cloudflare Worker) and making the endpoint user-configurable in the extension. Until then, the
-above is the honest trust boundary.
+**Roadmap:** a user-configurable endpoint in the extension settings (via `optional_host_permissions`), so a
+privacy-conscious user can switch readers without rebuilding.
 
 ### Asset-aware UTXO protection
 - Coin-control classifies every output against the Counterparty / Ordinals / Stamps indexers so

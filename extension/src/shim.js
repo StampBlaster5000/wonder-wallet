@@ -3,8 +3,9 @@
    route those READS to the stateless proxy (no user data ever touches it; keys/signing/vault
    are 100% local). v2 will port these reads fully client-side (direct to the chains). */
 (function () {
-  // The stateless reader. Change this to point at your own reader if you self-host.
-  var PROXY = 'https://build-1dadb019a5802eb5fee63753.emblem.build/pub/bitcoin_wallet/wonder-wallet';
+  // The stateless reader — project-controlled infra (audit #3). wonder-wallet.com's Cloudflare Worker
+  // proxies /api → the stateless server.js. Change this to point at your own reader if you self-host.
+  var PROXY = 'https://wonder-wallet.com';
   window.WW_PROXY = PROXY;
   // Testnet Mode (global toggle). Persisted per-profile in localStorage. Reads carry the network
   // as a QUERY PARAM (?network=testnet), NOT a custom header — the extension calls the proxy

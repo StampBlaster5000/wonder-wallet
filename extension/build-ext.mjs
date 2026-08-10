@@ -61,7 +61,7 @@ for (const size of [16, 48, 128]) {
 }
 
 // 4. manifest.json (v2 — popup + expanded + dApp provider; reads via the stateless proxy).
-const PROXY = 'https://build-1dadb019a5802eb5fee63753.emblem.build';
+const PROXY = 'https://wonder-wallet.com'; // project-controlled backend (audit #3); host_permissions + CSP origin
 // UNIVERSAL WALLET (v0.50): the dApp provider injects on ALL websites so any BTC/ETH/SOL dApp can
 // discover + connect to Wonder Wallet with zero setup — the MetaMask/Phantom model. Safety rests on the
 // per-origin approval model (every connect + every signature is user-approved; origin authenticated from

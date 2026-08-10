@@ -74,9 +74,9 @@ Drives the idle auto-lock timer that re-locks the encrypted wallet after a user-
 Lets the user open the wallet in the browser's side panel so it stays visible alongside their tabs. Also used for the hardware-wallet connection flow, which needs a persistent surface.
 ```
 
-**Host permission** — `https://<your-proxy-host>/*`
+**Host permission** — `https://wonder-wallet.com/*`
 ```
-The extension reads PUBLIC blockchain data (address balances, assets, fees) and broadcasts the transactions the user signs, through this single stateless proxy. It requests only public information and stores no user data. This host permission is the ONLY server the extension ever contacts.
+The extension reads PUBLIC blockchain data (address balances, assets, fees) and broadcasts the transactions the user signs, through this single stateless proxy on the project's own domain (wonder-wallet.com). It requests only public information and stores no user data. This host permission is the ONLY server the extension ever contacts.
 ```
 
 **Content scripts on all sites** (`content_scripts` → `matches: <all_urls>`) — this is what produces the "read and change data on all your sites" warning.

@@ -12,10 +12,9 @@
 (function (root) {
   'use strict';
   var PERM = self.WWPermissions, B = self.WWBroker, P = self.WWProtocol;
-  // The Wonder Wallet API is at the ARTIFACT path (matches shim.js WW_PROXY); the emblem.build root
-  // /api/ is the auth-gated dashboard (Unauthorized). connect-src/host_permissions are origin-based, so
-  // the extra path is fine.
-  var PROXY = 'https://build-1dadb019a5802eb5fee63753.emblem.build/pub/bitcoin_wallet/wonder-wallet';
+  // Project-controlled backend (audit #3) — wonder-wallet.com's Cloudflare Worker proxies /api → the
+  // stateless server.js. Matches shim.js WW_PROXY.
+  var PROXY = 'https://wonder-wallet.com';
   var PENDING = {}; // id -> { origin, method, params, tabId, kind, resolve }
   var WINDOWS = {}; // approvalWindowId -> requestId
 
