@@ -14,7 +14,7 @@ const DIST = join(ROOT, 'extension', 'dist', 'manifest.json');
 
 let m;
 try { m = JSON.parse(readFileSync(DIST, 'utf8')); }
-catch (_) { console.error('manifest-contract: SKIP — extension/dist/manifest.json not found (run `node extension/build-ext.mjs` first).'); process.exit(0); }
+catch (_) { console.log('✅ manifest-contract: SKIP — extension/dist/manifest.json not found (run `node extension/build-ext.mjs` first).'); process.exit(0); }
 
 const fails = [];
 const eq = (name, got, want) => { if (JSON.stringify(got) !== JSON.stringify(want)) fails.push(`${name}: got ${JSON.stringify(got)} — want ${JSON.stringify(want)}`); };
@@ -41,5 +41,5 @@ if (fails.length) {
     + '\n\nIf this change is intentional, update tests/manifest-contract.mjs AND STORE_LISTING.md.');
   process.exit(1);
 }
-console.log('manifest-contract: OK — permissions [' + (m.permissions || []).join(', ') + '], inject ['
+console.log('✅ manifest-contract: OK — permissions [' + (m.permissions || []).join(', ') + '], inject ['
   + ((m.content_scripts && m.content_scripts[0] && m.content_scripts[0].matches) || []).join(', ') + '], one proxy origin, strict CSP.');
