@@ -28,6 +28,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const LEDGER_VID = 0x2c97; // Ledger USB vendor id (Nano S / X / S+)
 async function connect() {
   if (!isSupported()) throw new Error('WebHID not available — use a Chromium browser over HTTPS.');
+  // Idempotent: WebHID allows only ONE open handle per device. If we already hold a transport, REUSE it
+  // instead of opening the device a second time — a second TransportWebHID.open() on the same device
+  // throws "unable to claim", which previously surfaced as a false "Ledger is busy" when a caller (e.g.
+  // the sign flow) re-ran connect() right after pairing. Only discard the handle if we can positively
+  // tell it's closed (device unplugged → HIDDevice.opened === false).
+  if (transport) {
+    let dead = false;
+    try { dead = transport.device && transport.device.opened === false; } catch (_) { dead = false; }
+    if (!dead) return { connected: true, reused: true };
+    try { await transport.close(); } catch (_) {}
+    transport = null;
+  }
   // Drive WebHID directly (Ledger's own request() crashes with "reading 'open'" if the picker returns
   // nothing). 1) reuse an already-granted, connected Ledger; 2) else PROMPT the browser device picker.
   let device = null;
