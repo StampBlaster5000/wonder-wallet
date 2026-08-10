@@ -201,7 +201,7 @@ async function getChainAddress(chain, account = 0) {
 // Build marker — bumped with each sign-path change so a thrown error reveals WHICH build is actually
 // loaded (the #1 source of confusion has been Chrome running a stale unpacked folder). Any signPsbt
 // failure is tagged `signPsbt[<phase> · <SIGN_BUILD>]`, so if you don't see this tag you're on an old build.
-const SIGN_BUILD = 'v53.5';
+const SIGN_BUILD = 'v53.6';
 const PURPOSE = { nativeSegwit: 84, legacy: 44, taproot: 86 };
 /** Sign a (CP-aware, asset-safe) PSBT on the Ledger for the given single-sig address type.
  *  Uses Ledger's OWN high-level signPsbtBuffer — it deserializes our v0 PSBT → v2, auto-detects the
@@ -217,7 +217,10 @@ async function signPsbt(psbtBase64, account = 0, type = 'nativeSegwit') {
     const accountPath = `m/${purpose}'/0'/${account}'`;
     const btcApp = new Btc({ transport }); // default export → BtcNew for a modern Bitcoin app
     phase = 'device-sign';
-    const res = await btcApp.signPsbtBuffer(Buffer.from(psbtBase64, 'base64'), { accountPath, finalizePsbt: true });
+    // knownAddressDerivations MUST be a Map (the lib reads `.size` on it when an output lacks a BIP32
+    // derivation — e.g. a send-to-self / MAX send). Empty Map → it skips the local scan cleanly instead
+    // of throwing "reading 'size'". Our inputs already carry derivations, so nothing else is needed.
+    const res = await btcApp.signPsbtBuffer(Buffer.from(psbtBase64, 'base64'), { accountPath, finalizePsbt: true, knownAddressDerivations: new Map() });
     if (!res || !res.tx) throw new Error('the device returned no signed transaction (it may not recognise these inputs as its own — re-pair and retry)');
     return { txhex: res.tx, type };
   } catch (e) {
