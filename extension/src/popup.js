@@ -82,6 +82,19 @@
   // Absolute proxy URL for images set via JS (the shim only rewrites fetch() + DOM <img src="api/…">,
   // NOT Image().src or a src assigned before insertion — so a relative "api/…" would hit chrome-extension:// and 404).
   function proxied(path) { return (window.WW_PROXY ? window.WW_PROXY + '/' : '') + path; }
+  // Broadcast a signed tx, tolerating a non-JSON response. Our server always replies JSON, so an HTML
+  // body means an intermediary (proxy/relay) returned an error page (transient 5xx/timeout). Re-broadcasting
+  // the SAME signed tx is safe — Ledger/our signing is deterministic (RFC-6979) → identical txid, mempool
+  // dedupes — so a timeout after the relay already forwarded the tx isn't a double-spend.
+  async function bcast(txhex) {
+    var resp = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: txhex }) });
+    var text = await resp.text();
+    try { return JSON.parse(text); } catch (_) {
+      throw new Error(resp.ok
+        ? 'The relay returned an unreadable response — your transaction may already have broadcast. Check the explorer for this address before retrying (re-sending the same signed tx is safe: identical txid).'
+        : 'Broadcast relay hiccup (HTTP ' + resp.status + '). Wait a moment and retry — re-broadcasting the same signed transaction is safe (identical txid).');
+    }
+  }
   var loadMap = function (k) { try { return JSON.parse(localStorage.getItem(k) || '{}'); } catch (e) { return {}; } };
   var lsGet = function (k, d) { try { var v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } };
   var lsSet = function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
@@ -746,7 +759,7 @@
       if (!txhex) throw new Error('The Ledger did not return a signed transaction — re-pair from the Connect flow, then retry.');
       step = 'broadcast';
       s.textContent = 'Broadcasting…';
-      var r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: txhex }) }).then(function (x) { return x.json(); });
+      var r = await bcast(txhex);
       if (r.error) throw new Error(r.detail || r.error);
       try { await HWm.disconnect(); } catch (e) {}
       s.className = 'p-hint'; s.innerHTML = '<span style="color:var(--green)">Sent ✓ — ' + esc(String(r.txid || (C.txidOf ? C.txidOf(txhex) : '')).slice(0, 20)) + '…</span>';
@@ -1704,7 +1717,7 @@
         assertCpRecipient(c.psbt, c.data, dest); // for a send: the recipient must be baked into the tx / CP data
         if (stype === 'legacy') { st.textContent = 'Fetching previous transactions…'; var uniq = [...new Set(C.psbtInputs(c.psbt).map(function (x) { return x.txid; }))]; var got = await Promise.all(uniq.map(function (t) { return fetch('api/btc/tx/' + t + '/hex').then(function (r2) { return r2.ok ? r2.text() : null; }).then(function (h) { return [t, h && h.trim()]; }).catch(function () { return [t, null]; }); })); got.forEach(function (p) { if (p[1]) prevTxs[p[0]] = p[1]; }); st.textContent = 'Signing locally & broadcasting…'; }
         var signed = C.signCp(c.psbt, c.inputs_values, c.lock_scripts, curAccount, stype, prevTxs, curImportedId());
-        var r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then(function (x) { return x.json(); });
+        var r = await bcast(signed.txhex);
         if (r.error) throw new Error(r.detail || r.error);
         st.className = 'p-hint'; st.innerHTML = txLinkHtml(r.txid);
         setTimeout(function () { closeOv(); renderMain(); }, 1800);
@@ -2013,7 +2026,7 @@
         var prevTxs = {};
         if (CPH.type === 'legacy') { st.textContent = 'Fetching previous transactions…'; var uniq = [...new Set(C.psbtInputs(c.psbt).map(function (x) { return x.txid; }))]; var got = await Promise.all(uniq.map(function (t) { return fetch('api/btc/tx/' + t + '/hex').then(function (r) { return r.ok ? r.text() : null; }).then(function (h) { return [t, h && h.trim()]; }).catch(function () { return [t, null]; }); })); got.forEach(function (p) { if (p[1]) prevTxs[p[0]] = p[1]; }); st.textContent = 'Signing locally & broadcasting…'; }
         var signed = C.signCp(c.psbt, c.inputs_values, c.lock_scripts, curAccount, CPH.type, prevTxs, curImportedId());
-        var r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then(function (x) { return x.json(); });
+        var r = await bcast(signed.txhex);
         if (r.error) throw new Error(r.detail || r.error);
         st.className = 'p-hint'; st.innerHTML = txLinkHtml(r.txid);
         var go = document.getElementById('cpcGo'), bk = document.getElementById('cpcBack2'); if (bk) bk.remove(); if (go) { go.textContent = 'Done'; go.onclick = function () { closeOv(); renderMain(); }; }
@@ -2122,7 +2135,7 @@
         var prevTxs = {};
         if (CPH.type === 'legacy') { st.textContent = 'Fetching previous transactions…'; var uniq = [...new Set(C.psbtInputs(c.psbt).map(function (x) { return x.txid; }))]; var got = await Promise.all(uniq.map(function (t) { return fetch('api/btc/tx/' + t + '/hex').then(function (r) { return r.ok ? r.text() : null; }).then(function (h) { return [t, h && h.trim()]; }).catch(function () { return [t, null]; }); })); got.forEach(function (p) { if (p[1]) prevTxs[p[0]] = p[1]; }); st.textContent = 'Signing locally & broadcasting…'; }
         var signed = C.signCp(c.psbt, c.inputs_values, c.lock_scripts, curAccount, CPH.type, prevTxs, curImportedId());
-        var r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then(function (x) { return x.json(); });
+        var r = await bcast(signed.txhex);
         if (r.error) throw new Error(r.detail || r.error);
         st.className = 'p-hint'; st.innerHTML = txLinkHtml(r.txid);
         var go = document.getElementById('adcGo'), bk = document.getElementById('adcBack2'); if (bk) bk.remove(); if (go) { go.textContent = 'Done'; go.onclick = function () { closeOv(); renderMain(); }; }
@@ -2555,7 +2568,7 @@
         // conflict with (replace) the stuck tx. Same recipient + amount preserved; higher fee eats change.
         var signed = C.send({ account: curAccount, importedId: curImportedId(), type: stype, utxos: inputs, recipient: recipient, amountSats: amount, feeRate: newRate, rbf: true, sign: true, prevTxs: prevTxs });
         if (!(signed.fee > oldFee)) throw new Error('That rate doesn’t raise the absolute fee enough to replace it — pick a higher rate.');
-        var r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then(function (x) { return x.json(); });
+        var r = await bcast(signed.txhex);
         if (r.error) throw new Error(r.detail || r.error);
         st.className = 'p-hint'; st.innerHTML = '<span style="color:var(--green)">Replaced ✓ — ' + esc(String(r.txid).slice(0, 20)) + '…</span>';
         setTimeout(function () { closeOv(); ACT.items = null; loadActivity(); }, 1800);
@@ -2590,7 +2603,7 @@
         var stype = curBtcType(), prevTxs = {};
         if (stype === 'legacy') { var h = await fetch('api/btc/tx/' + it.txid + '/hex').then(function (x) { return x.ok ? x.text() : null; }).catch(function () { return null; }); if (h) prevTxs[it.txid] = h.trim(); }
         var signed = C.send({ account: curAccount, importedId: curImportedId(), type: stype, utxos: [{ txid: it.txid, vout: it.ownVout.vout, value: it.ownVout.value }], recipient: from, sendMax: true, feeRate: childRate, rbf: true, sign: true, prevTxs: prevTxs });
-        var b = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then(function (x) { return x.json(); });
+        var b = await bcast(signed.txhex);
         if (b.error) throw new Error(b.detail || b.error);
         st.className = 'p-hint'; st.innerHTML = '<span style="color:var(--green)">Boosted ✓ — child ' + esc(String(b.txid).slice(0, 16)) + '…</span>';
         setTimeout(function () { closeOv(); ACT.items = null; loadActivity(); }, 1800);
@@ -2849,7 +2862,7 @@
     document.getElementById('pbSend').onclick = async function () {
       var s = document.getElementById('pbStatus'); s.className = 'p-hint'; s.textContent = 'Broadcasting…';
       try {
-        var r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: tx.txhex }) }).then(function (x) { return x.json(); });
+        var r = await bcast(tx.txhex);
         if (r.error) throw new Error(r.detail || r.error);
         s.className = 'p-hint'; s.innerHTML = txLinkHtml(r.txid);
         setTimeout(renderMain, 1800);
@@ -2915,7 +2928,7 @@
         // not apply — output verification is intentionally skipped here (see audit follow-up).
         if (stype === 'legacy') { s.textContent = 'Fetching previous transactions…'; var uniq = [...new Set(C.psbtInputs(r.hex).map(function (x) { return x.txid; }))]; var got = await Promise.all(uniq.map(function (t) { return fetch('api/btc/tx/' + t + '/hex').then(function (z) { return z.ok ? z.text() : null; }).then(function (h) { return [t, h && h.trim()]; }).catch(function () { return [t, null]; }); })); got.forEach(function (p) { if (p[1]) prevTxs[p[0]] = p[1]; }); s.textContent = 'Signing locally & broadcasting…'; }
         var signed = C.signStamp(r.hex, curAccount, stype, prevTxs, curImportedId());
-        var b = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then(function (x) { return x.json(); });
+        var b = await bcast(signed.txhex);
         if (b.error) throw new Error(b.detail || b.error);
         s.className = 'p-hint'; s.innerHTML = txLinkHtml(b.txid);
         setTimeout(renderMain, 1800);
@@ -3039,7 +3052,7 @@
         var stype = curBtcType(), prevTxs = {};
         if (stype === 'legacy') { s.textContent = 'Fetching previous transactions…'; var uniq = [...new Set(C.psbtInputs(r.hex).map(function (x) { return x.txid; }))]; var got = await Promise.all(uniq.map(function (t) { return fetch('api/btc/tx/' + t + '/hex').then(function (z) { return z.ok ? z.text() : null; }).then(function (h) { return [t, h && h.trim()]; }).catch(function () { return [t, null]; }); })); got.forEach(function (p) { if (p[1]) prevTxs[p[0]] = p[1]; }); s.textContent = 'Signing locally & broadcasting…'; }
         var signed = C.signStamp(r.hex, curAccount, stype, prevTxs, curImportedId());
-        var b = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then(function (x) { return x.json(); });
+        var b = await bcast(signed.txhex);
         if (b.error) throw new Error(b.detail || b.error);
         s.className = 'p-hint'; s.innerHTML = txLinkHtml(b.txid);
         setTimeout(renderMain, 1800);
