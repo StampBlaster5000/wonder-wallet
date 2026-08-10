@@ -1,5 +1,5 @@
 /*
- * Wonder Wallet dApp provider — "Connected sites" manager. Phase 12 (v0.48). STAGED.
+ * Wonder Wallet dApp provider — "Connected sites" manager. Phase 12 (v0.48). ACTIVE — the dApp provider ships wired into every build and injects on all sites (universal, MetaMask/Phantom model, v0.48+). See STORE_LISTING.md + docs/DAPP_PROVIDER_PLAN.md (superseded).
  * Slots into popup.js advancedMenu() at v0.48:
  *   '<button class="adv-opt" data-adv="sites"><b>Connected sites</b><span>dApps allowed to connect to this wallet</span></button>'
  *   ...  else if (a === 'sites') WWConnectedSites.render(overlayMount, advancedMenu);

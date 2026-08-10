@@ -1,5 +1,5 @@
 /*
- * Wonder Wallet dApp provider — Ethereum (EIP-1193 + EIP-6963). Phase 12 (v0.48). STAGED.
+ * Wonder Wallet dApp provider — Ethereum (EIP-1193 + EIP-6963). Phase 12 (v0.48). ACTIVE — the dApp provider ships wired into every build and injects on all sites (universal, MetaMask/Phantom model, v0.48+). See STORE_LISTING.md + docs/DAPP_PROVIDER_PLAN.md (superseded).
  * Injected into the page MAIN world alongside inpage.js. Exposes an EIP-1193 provider and ANNOUNCES
  * it via EIP-6963 so EVM dApps list "Wonder Wallet" automatically — no site changes, no clobbering
  * an existing window.ethereum (multi-wallet discovery). Marshals to the shared page↔background bridge.
@@ -41,7 +41,7 @@
 
   // ── EIP-6963 multi-wallet discovery ──
   var ICON = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMjggMTI4Ij48cmVjdCB3aWR0aD0iMTI4IiBoZWlnaHQ9IjEyOCIgcng9IjMwIiBmaWxsPSIjMGEwYTBmIi8+PGNpcmNsZSBjeD0iNjQiIGN5PSI2NCIgcj0iNDUiIGZpbGw9IiNFMEI0NTMiLz48L3N2Zz4=';
-  var info = { uuid: '7b2f9c1e-1d4a-4c2b-9f3e-wonderwallet01', name: 'Wonder Wallet', icon: ICON, rdns: 'com.wonderwallet' };
+  var info = { uuid: '7b2f9c1e-1d4a-4c2b-9f3e-a1b2c3d4e5f6', name: 'Wonder Wallet', icon: ICON, rdns: 'com.wonderwallet' }; // valid RFC-4122 hex (audit #9)
   function announce() { try { window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: Object.freeze({ info: info, provider: provider }) })); } catch (_) {} }
   window.addEventListener('eip6963:requestProvider', announce);
   announce();

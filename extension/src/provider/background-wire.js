@@ -1,5 +1,5 @@
 /*
- * Wonder Wallet dApp provider — background wiring. Phase 12 (v0.48). STAGED.
+ * Wonder Wallet dApp provider — background wiring. Phase 12 (v0.48). ACTIVE — the dApp provider ships wired into every build and injects on all sites (universal, MetaMask/Phantom model, v0.48+). See STORE_LISTING.md + docs/DAPP_PROVIDER_PLAN.md (superseded).
  * At v0.48, background.js adds ONE line:  importScripts('provider/background-wire.js');
  * (which itself pulls in protocol/permissions/broker/background-provider). Until then nothing here
  * runs — background.js is untouched, so the shipped package keeps minimal permissions.

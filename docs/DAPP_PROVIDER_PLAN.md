@@ -1,3 +1,13 @@
+> ⚠️ **SUPERSEDED / HISTORICAL (2026-08-10).** This is the original build plan; the provider has since been
+> **built and shipped** (v0.48+). Two "Locked decisions" below were consciously changed once it was live:
+> **(1) Injection scope** — the plan proposed an allowlist-first launch with a later "inject on all sites"
+> toggle; the shipped design is **universal injection** (all sites, the MetaMask/Phantom model), chosen
+> deliberately so the wallet is permissionless to integrate: no gatekeeping, no update treadmill. Each dApp
+> decides whether to surface Wonder Wallet via standard discovery (EIP-6963 / Wallet Standard). See
+> `STORE_LISTING.md` for the honest permission disclosure and `tests/manifest-contract.mjs` for the enforced
+> surface. Security posture is unchanged: every connect + signature is user-approved, origin unspoofable
+> (Chrome sender). Kept for historical context — **not** the current spec.
+
 # Wonder Wallet — dApp Provider Build Plan (Phase 12)
 
 **Status:** Drafted 2026-07-30 · **Queued for post-approval** (do NOT ship while extension v0.47.24 is in first Chrome Web Store review) · Target line: **v0.48.x → v0.50.x**

@@ -1,6 +1,6 @@
 /*
  * Wonder Wallet dApp provider — per-origin permission store (pure logic).
- * Phase 12 (v0.48). STAGED: not wired into the build until after store approval.
+ * Phase 12 (v0.48). ACTIVE — the dApp provider ships wired into every build and injects on all sites (universal, MetaMask/Phantom model, v0.48+). See STORE_LISTING.md + docs/DAPP_PROVIDER_PLAN.md (superseded).
  *
  * Pure functions over a plain object `store` (origin -> grant). The background service worker
  * loads/saves that object to chrome.storage.local under key 'ww:connections'; these helpers hold

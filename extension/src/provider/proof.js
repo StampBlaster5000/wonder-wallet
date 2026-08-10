@@ -1,5 +1,5 @@
 /*
- * Wonder Wallet dApp provider — "Sign-In With Bitcoin" proof (BIP-322). Phase 12 (v0.48). STAGED.
+ * Wonder Wallet dApp provider — "Sign-In With Bitcoin" proof (BIP-322). Phase 12 (v0.48). ACTIVE — the dApp provider ships wired into every build and injects on all sites (universal, MetaMask/Phantom model, v0.48+). See STORE_LISTING.md + docs/DAPP_PROVIDER_PLAN.md (superseded).
  *
  * At connect, the wallet auto-signs a wallet-generated message (domain + nonce + issued-at) so a site
  * gets proof-of-address-control in ONE round trip (no extra signMessage prompt) — mirrors XCP Wallet.

@@ -1,6 +1,6 @@
 /*
  * Wonder Wallet dApp provider — content script (ISOLATED world, document_start).
- * Phase 12 (v0.48). STAGED: not listed in the manifest until v0.48 (post-approval).
+ * Phase 12 (v0.48). ACTIVE — the dApp provider ships wired into every build and injects on all sites (universal, MetaMask/Phantom model, v0.48+). See STORE_LISTING.md + docs/DAPP_PROVIDER_PLAN.md (superseded).
  *
  * Two jobs:
  *  1. Inject inpage.js into the page's MAIN world so window.wonderWallet exists.
@@ -26,7 +26,7 @@
 
   // 2a. Page -> background. Forward request envelopes; post the reply back on the same origin.
   window.addEventListener('message', function (e) {
-    if (e.source !== window || !e.data || e.data.channel !== CHANNEL_REQ) return;
+    if (e.source !== window || e.origin !== window.location.origin || !e.data || e.data.channel !== CHANNEL_REQ) return; // origin check (audit #7c)
     var msg = e.data;
     var reply = function (payload) {
       window.postMessage({ channel: CHANNEL_RES, id: msg.id, result: payload && payload.result, error: payload && payload.error }, window.location.origin);

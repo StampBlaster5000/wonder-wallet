@@ -1,6 +1,6 @@
 /*
  * Wonder Wallet dApp provider — shared protocol constants + method classification.
- * Phase 12 (v0.48). STAGED: NOT wired into the manifest/build until after Chrome Web Store approval.
+ * Phase 12 (v0.48). ACTIVE — the dApp provider ships wired into every build and injects on all sites (universal, MetaMask/Phantom model, v0.48+). See STORE_LISTING.md + docs/DAPP_PROVIDER_PLAN.md (superseded).
  *
  * Dual-mode: `require()`-able in Node (tests) AND loadable as a classic script in the
  * content script / service worker (sets self.WWProtocol). inpage.js inlines its own copy

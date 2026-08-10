@@ -135,12 +135,17 @@
   // Source address-type switching (OG assets live on Legacy 1… / P2SH 3…). Reads the active
   // account's derived addresses from the wallet; legacy signing fetches prev-txs (nonWitnessUtxo).
   const BTC_TYPES = [['nativeSegwit', 'Native SegWit · bc1q'], ['legacy', 'Legacy · 1… (OG Counterparty / Stamps)'], ['taproot', 'Taproot · bc1p'], ['nestedSegwit', 'Nested SegWit · 3…']];
+  const BTC_SHORT = { nativeSegwit: 'Native SegWit', legacy: 'Legacy 1…', taproot: 'Taproot', nestedSegwit: 'Nested SegWit' };
   const acctBtc = () => { const a = window.__activeAccount; return a && a.bitcoin ? a.bitcoin : null; };
   function srcSelectorHtml() {
     const b = acctBtc();
-    if (!b) return `<div class="cp-src">${esc(FROM)}</div>`;
-    const opts = BTC_TYPES.filter(([t]) => b[t]).map(([t, l]) => `<option value="${t}"${t === FROM_TYPE ? ' selected' : ''}>${l}</option>`).join('');
-    return `<label class="cpf"><span>Source address</span><select id="cpSrcSel" class="m-in">${opts}</select></label><div class="cp-src" id="cpSrcAddr">${esc(FROM)}</div>`;
+    // Connected external wallet → one fixed address (already shown in the dashboard); nothing to show.
+    if (!b) return '';
+    // Local: the Bitcoin address type is chosen in the ACCOUNT WINDOW (native-segwit ↔ Legacy 1… for OG
+    // Counterparty / Stamps), and the tool launches with it — so this is a READ-ONLY confirmation of the
+    // active source, not a picker. To use a different address, switch type in the account window first.
+    const lbl = BTC_SHORT[FROM_TYPE] || '';
+    return `<div class="cp-srcline" title="Source address — change the type in the account window"><span class="cp-srck">Source</span><span class="cp-src" id="cpSrcAddr">${esc(FROM)}${lbl ? ` · ${esc(lbl)}` : ''}</span></div>`;
   }
   // Sign a composed CP PSBT for the current source type — fetch prev-txs when legacy.
   async function cpSign(c) {
@@ -180,7 +185,6 @@
     const grid = Object.entries(ACTIONS).map(([k, a]) => `<button class="cp-act" data-k="${k}"><span class="cp-ic">${a.icon}</span>${a.label}</button>`).join('')
       + `<button class="cp-act" data-adhub="1"><span class="cp-ic">🔗</span>Attach / Detach</button>`; // bind an asset to a UTXO / release it
     modal(`<h3 class="m-title">Counterparty actions</h3>
-      <div class="fine">Pick the source address your assets sit on — OG Counterparty / Stamps assets usually live on a <b>Legacy 1…</b> address.</div>
       ${srcSelectorHtml()}
       <div id="cpStatus" class="cp-status">Checking pending Counterparty txs…</div>
       <div class="cp-grid">${grid}</div>

@@ -1,6 +1,6 @@
 /*
  * Wonder Wallet dApp provider — clear-signing engine (pure).
- * Phase 12 (v0.48). STAGED: not wired into the build until after store approval.
+ * Phase 12 (v0.48). ACTIVE — the dApp provider ships wired into every build and injects on all sites (universal, MetaMask/Phantom model, v0.48+). See STORE_LISTING.md + docs/DAPP_PROVIDER_PLAN.md (superseded).
  *
  * Turns a decoded PSBT (or a message) into a COMPLETE, human-readable summary of exactly what the
  * user is being asked to approve, plus prioritized warnings. This is what backs the Sign dialog —

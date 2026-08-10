@@ -80,6 +80,81 @@ body {
 /* ── Layout ── */
 .wrap { max-width: 920px; margin: 0 auto; padding: clamp(24px, 5vw, 48px) clamp(18px, 5vw, 32px) 40px; display: flex; flex-direction: column; gap: 22px; }
 
+/* ── Terminal app-shell: docked tools rail + wallet ── */
+.term-shell { max-width: 1240px; margin: 0 auto; display: flex; align-items: flex-start; gap: 20px; padding: clamp(18px, 4vw, 34px) clamp(14px, 4vw, 32px) 40px; }
+.term-shell > .wrap { flex: 1 1 auto; max-width: 880px; margin: 0; padding: 0; min-width: 0; }
+
+/* Rail is only for an OPEN wallet — hidden on the create/restore/unlock landing (wallet re-centers). */
+.term-shell.no-rail { justify-content: center; }
+.term-shell.no-rail > .toolrail { display: none; }
+.term-shell.no-rail > .wrap { flex: 0 1 900px; }
+
+.toolrail {
+  flex: 0 0 268px; position: sticky; top: 16px; align-self: flex-start;
+  max-height: calc(100vh - 92px); overflow-y: auto; overflow-x: hidden;
+  background: linear-gradient(180deg, var(--surface), var(--bg2));
+  border: 1px solid var(--border2); border-radius: var(--radius);
+  padding: 13px 11px; display: flex; flex-direction: column; gap: 2px;
+  transition: flex-basis .18s ease;
+}
+.rail-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 4px 8px; }
+.rail-title { font-family: 'Fraunces', Georgia, serif; font-size: 15px; font-weight: 600; color: var(--gold2); }
+.rail-collapse { background: transparent; border: 1px solid var(--border); color: var(--muted2); width: 27px; height: 27px; border-radius: 8px; cursor: pointer; font-size: 13px; display: flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+.rail-collapse:hover { border-color: var(--border2); color: var(--text); }
+
+.rail-conn { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border-radius: 10px; background: var(--surface2); border: 1px solid var(--border); margin-bottom: 6px; }
+.rail-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; transition: background .2s; }
+.rail-conn.on .rail-dot { background: var(--green); box-shadow: 0 0 8px rgba(74,222,128,0.6); }
+.rail-conn.tn .rail-dot { background: var(--amber); box-shadow: 0 0 8px rgba(251,191,36,0.6); }
+.rail-conn-t { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.rail-conn-s { font-size: 12px; font-weight: 600; color: var(--text); }
+.rail-conn-a { font-family: var(--mono); font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px; }
+
+.rail-grp { font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px; color: var(--gold2); font-weight: 700; padding: 11px 6px 5px; opacity: .85; }
+.rail-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 8px 9px; border-radius: 9px; background: transparent; border: 1px solid transparent; color: var(--text); cursor: pointer; font: inherit; font-size: 13px; }
+.rail-item:hover { background: var(--surface2); border-color: var(--border); }
+.rail-item:disabled { opacity: .45; cursor: default; }
+.rail-item:disabled:hover { background: transparent; border-color: transparent; }
+.rail-ic { flex: 0 0 27px; width: 27px; height: 27px; border-radius: 7px; background: var(--surface3); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 13px; color: var(--gold2); font-weight: 700; }
+.rail-item.accent .rail-ic { background: rgba(224,180,83,0.13); border-color: rgba(224,180,83,0.32); }
+.rail-tx { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.rail-lbl { font-weight: 600; }
+.rail-sub { font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-foot { margin-top: auto; padding: 12px 6px 2px; font-size: 10px; color: var(--muted); line-height: 1.4; border-top: 1px solid var(--border); margin-top: 12px; }
+
+/* Collapsed → icon strip (desktop) */
+.toolrail.collapsed { flex-basis: 62px; padding: 13px 7px; }
+.toolrail.collapsed .rail-title, .toolrail.collapsed .rail-tx, .toolrail.collapsed .rail-grp,
+.toolrail.collapsed .rail-conn-t, .toolrail.collapsed .rail-foot { display: none; }
+.toolrail.collapsed .rail-head { justify-content: center; }
+.toolrail.collapsed .rail-item { justify-content: center; padding: 7px; }
+.toolrail.collapsed .rail-conn { justify-content: center; padding: 8px; }
+
+.rail-scrim { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 40; backdrop-filter: blur(2px); }
+
+.rail-toast { position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 12px); z-index: 60; background: var(--surface3); border: 1px solid var(--border2); color: var(--text); font-size: 13px; padding: 10px 16px; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,0.5); opacity: 0; pointer-events: none; transition: opacity .18s ease, transform .18s ease; }
+.rail-toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* The ☰ Tools toggle is redundant on desktop (rail is docked with its own collapse control) —
+   keep it only as the mobile drawer opener. */
+@media (min-width: 901px) { #dappsBtn { display: none !important; } }
+
+/* Mobile → off-canvas drawer (ignore icon-collapse) */
+@media (max-width: 900px) {
+  .term-shell { display: block; max-width: 920px; }
+  .term-shell > .wrap { max-width: none; margin: 0 auto; }
+  .toolrail {
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 50; width: 284px;
+    flex-basis: auto; max-height: none; border-radius: 0 16px 16px 0;
+    transform: translateX(-102%); transition: transform .22s ease;
+  }
+  .toolrail.open { transform: translateX(0); box-shadow: 0 0 40px rgba(0,0,0,0.6); }
+  .toolrail.collapsed { flex-basis: auto; width: 284px; padding: 13px 11px; }
+  .toolrail.collapsed .rail-title, .toolrail.collapsed .rail-tx, .toolrail.collapsed .rail-grp,
+  .toolrail.collapsed .rail-conn-t, .toolrail.collapsed .rail-foot { display: revert; }
+  .toolrail.collapsed .rail-item { justify-content: flex-start; padding: 8px 9px; }
+}
+
 /* ── Hero ── */
 .hero { padding: 14px 4px 8px; }
 .hero h1 {
@@ -592,6 +667,9 @@ textarea.m-in { font-family: var(--mono); resize: vertical; }
 
 /* ── Counterparty actions ── */
 .cp-src { font-family: var(--mono); font-size: 11px; color: var(--gold2); background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 11px; margin: 8px 0; word-break: break-all; }
+.cp-srcline { display: flex; align-items: center; gap: 9px; margin: 8px 0; }
+.cp-srck { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); font-weight: 700; flex: 0 0 auto; }
+.cp-srcline .cp-src { margin: 0; flex: 1 1 auto; }
 .cp-status { font-size: 12px; color: var(--muted2); margin: 8px 0 12px; }
 .cp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .cp-act { display: flex; align-items: center; gap: 9px; justify-content: flex-start; background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; font-size: 13px; font-weight: 600; }

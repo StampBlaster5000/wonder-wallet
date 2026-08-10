@@ -128,10 +128,12 @@
     if (!card) return;
     ensurePrivacyBtn(); // inject the topbar privacy toggle once
     window.__activeAccount = null; // cleared on lock/none; set by renderUnlocked
+    window.__connectedWallet = null; // set by renderConnected — the external-wallet session for the tools rail
+    window.__hardwareWallet = null; // set by renderHardware — Ledger session (read-only in the Terminal for now)
     // Network toggle is a LOCAL-VAULT feature (our own derivation). A connected UniSat/OKX wallet
     // owns its own network, and Ledger-testnet isn't validated — so hide the badge for those.
     if (acctKind === 'connected' && CONN) { setTopbarTools(true); syncNetBadge(true, false); return renderConnected(); } // external wallet (UniSat/OKX/Wonder) — no vault
-    if (acctKind === 'hardware') { if (HW) { setTopbarTools(true); syncNetBadge(true, false); return renderHardware(); } acctKind = 'hd'; } // Ledger dashboard (no vault needed)
+    if (acctKind === 'hardware') { if (HW) { setTopbarTools(true); syncNetBadge(true, false); return renderHardware(); } acctKind = 'hd'; } // Ledger dashboard — rail shows (read-only state), tools await on-device signing
     let state = 'none';
     try { if (C.isUnlocked()) state = 'unlocked'; else if (await C.hasVault()) state = 'locked'; } catch (_) {}
     setTopbarTools(state === 'unlocked'); // dApps / Backup / privacy only make sense once a wallet is open — hide on the create/restore/unlock screens
@@ -207,6 +209,7 @@
   // activeAddr() returns CONN.address for acctKind 'connected', so loadPortfolio/loadDashAssets just work.
   async function renderConnected() {
     const addr = CONN.address; dashChain = 'btc';
+    window.__connectedWallet = CONN; // expose to the tools rail (dapps.js) so it reflects the connection
     // Mirror the connected wallet's network: a Wonder extension in Testnet Mode grants a testnet
     // address (tb1…/m/n/2…) — scope the Terminal to testnet so reads hit testnet4 and the banner shows.
     // (Toggling here fires onChange→render, but the guard prevents a loop once already in sync.)
@@ -251,6 +254,7 @@
   }
   function connBtcType(a) { if (/^bc1p/i.test(a)) return 'taproot'; if (/^bc1q/i.test(a)) return 'nativeSegwit'; if (/^3/.test(a)) return 'nestedSegwit'; if (/^1/.test(a)) return 'legacy'; return 'nativeSegwit'; }
   function b64ToHex(b64) { const bin = atob(b64); let h = ''; for (let i = 0; i < bin.length; i++) h += (bin.charCodeAt(i) & 0xff).toString(16).padStart(2, '0'); return h; }
+  function hexToB64(h) { h = String(h).replace(/^0x/, ''); let bin = ''; for (let i = 0; i < h.length; i += 2) bin += String.fromCharCode(parseInt(h.substr(i, 2), 16)); return btoa(bin); }
   // Connected-wallet BTC send: WonderCore composes an UNSIGNED PSBT from the connected pubkey (asset-safe
   // UTXO selection via coincontrol), the connected wallet signs + broadcasts. Keys never touch us.
   async function renderConnectedSend() {
@@ -511,8 +515,16 @@
   // Inject the privacy toggle into the topbar once (works for both the web /app and the extension expanded view).
   // Show/hide the wallet-only topbar tools (dApps, Backup, privacy eye). They're meaningless before a
   // wallet is open, so they stay hidden on the create / restore / connect / unlock screens.
-  function setTopbarTools(show) {
-    ['dappsBtn', 'backupBtn', 'privacyBtn'].forEach((id) => { const el = document.getElementById(id); if (el) el.style.display = show ? '' : 'none'; });
+  function setTopbarTools(show, showRail) {
+    if (showRail === undefined) showRail = show;
+    // Backup + privacy are available whenever any wallet is open (including read-only Ledger).
+    ['backupBtn', 'privacyBtn'].forEach((id) => { const el = document.getElementById(id); if (el) el.style.display = show ? '' : 'none'; });
+    // The ☰ Tools button + docked rail track showRail — hidden on the create/restore/unlock landing AND
+    // for a Ledger (read-only in the Terminal: Counterparty/send signing on hardware isn't wired yet, so
+    // the signing-tool rail would be dead). Ledger uses its own account/portfolio view instead.
+    const db = document.getElementById('dappsBtn'); if (db) db.style.display = showRail ? '' : 'none';
+    const shell = document.getElementById('termShell'); if (shell) shell.classList.toggle('no-rail', !showRail);
+    if (!showRail) { const r = document.getElementById('toolRail'); if (r) r.classList.remove('open'); const s = document.getElementById('railScrim'); if (s) s.hidden = true; }
   }
   function ensurePrivacyBtn() {
     if ($('#privacyBtn')) return;
@@ -571,6 +583,9 @@
   }
 
   function renderUnlocked() {
+    setTopbarTools(true); // local unlocked wallet → show the tools rail + Backup/privacy. Idempotent, but
+    // essential: renderUnlocked() is called DIRECTLY after unlock / create / restore (bypassing render(),
+    // which is the only other place setTopbarTools runs) — without this the rail stays hidden until reload.
     syncNetBadge(true, true); // local vault: banner + toggle chip inside the open wallet (mounted into the card header)
     // Resolve the active account: HD (own keys) or watch-only (read-only, no signing).
     let watch = null;
@@ -580,6 +595,10 @@
     if (acctKind === 'hd') { try { acc = C.accounts(curAccount, 0, NET()); } catch (_) { return render(); } }
     else if (acctKind === 'imported') { const im = currentImported(); if (im) acc = { account: 0, importedId: impId, bitcoin: im.bitcoin, ethereum: null, solana: null, imported: true }; }
     window.__activeAccount = acc; // watch-only → null; imported → synthetic {importedId, bitcoin}
+    // Surface the ACCOUNT-WINDOW-selected BTC address/type so the tools rail launches with it
+    // (native-segwit ↔ Legacy 1…), instead of a hardcoded native-segwit. Address selection lives in
+    // the account window; the tools follow it. (Connected/Ledger have their own fixed/derived source.)
+    if (acc) { acc.btcType = curBtcType(); acc.btcAddress = activeAddr(acc, 'btc'); }
     const acctNames = loadMap(ACCT_NAMES);
     const isW = acctKind === 'watch', isImp = acctKind === 'imported';
     const chains = (isW || isImp) ? [dashChain] : ['btc', 'eth', 'sol'];
@@ -740,6 +759,23 @@
     const bt = a.bitcoin[hwBtcType] ? hwBtcType : 'nativeSegwit';
     const mainAddr = hwAddr(bt);
     const addr = hwViewAddr || mainAddr;
+    // Present the Ledger to the tools rail as a connected-style signer: compose here → WonderHW.signPsbt
+    // (device confirms) → core finalizes the sigs → broadcast (the same proven flow the Ledger sends use).
+    // Native-segwit only for now (the device policy is wpkh on m/84'); legacy/taproot signing is a
+    // follow-up (extend hardware-src + rebuild the bundle). Browsed/aggregate views stay read-only.
+    const hwAcct = (HW && HW.account) || 0;
+    // Native SegWit, Legacy 1… (OG Counterparty / Stamps) and Taproot all sign on-device now (wpkh /
+    // pkh / tr policies). A browsed/aggregate view stays read-only (we sign the account's main address).
+    const hwCanSign = (bt === 'nativeSegwit' || bt === 'legacy' || bt === 'taproot') && !hwViewAddr && !hwAggregate;
+    window.__hardwareWallet = { address: addr, name: 'Ledger', type: bt, account: hwAcct,
+      signPsbt: hwCanSign ? async function (psbt) {
+        const HWm = window.WonderHW; if (!HWm) throw new Error('Ledger module not loaded — reconnect your device.');
+        await HWm.connect(); // reuse the paired grant (no picker)
+        // signBroadcast hands us the PSBT as hex; WonderHW.signPsbt + finalizeHwSend want base64.
+        const b64 = /^[0-9a-fA-F]+$/.test(psbt) ? hexToB64(psbt) : psbt;
+        const res = await HWm.signPsbt(b64, hwAcct, bt); // sign for THIS address type (wpkh / pkh / tr)
+        return C.finalizeHwSend(b64, res.signatures); // → { txhex, txid } (connected path broadcasts it)
+      } : null };
     const viewing = !!hwViewAddr;
     const canScan = !!(a.bitcoin[bt] && a.bitcoin[bt].acct);
     const agg = hwAggregate && canScan; // Phase 2 aggregate portfolio (only when the account key is available)
@@ -929,6 +965,7 @@
       <div class="adv-menu">
         ${BTC_TYPES.map(([t, l, p]) => `<button class="adv-opt" data-add="${t}"><b>${l} · ${p}</b><span>New Bitcoin account</span></button>`).join('')}
         <button class="adv-opt" data-add="import"><b>🔑 Import address (private key)</b><span>Restore & sign from a WIF private key</span></button>
+        <button class="adv-opt" data-add="cw"><b>↩ Import Counterparty / FreeWallet passphrase</b><span>Restore your legacy 1… addresses + Counterparty assets</span></button>
         <button class="adv-opt" data-add="watch"><b>👁 Add watch-only</b><span>Track any BTC / ETH / SOL address — no keys</span></button>
       </div><div class="wbtns"><button class="ghost" id="aamClose">Close</button></div>`);
     $('#aamClose').onclick = closeModal;
@@ -936,6 +973,7 @@
       const a = b.dataset.add;
       if (a === 'watch') { closeModal(); addWatchFlow(); return; }
       if (a === 'import') { closeModal(); importAddressFlow(); return; }
+      if (a === 'cw') { closeModal(); cwImportFlow(); return; }
       const idx = addAcct(); setAcctBtcType(idx, a); acctKind = 'hd'; curAccount = idx; dashChain = 'btc'; DASH_ASSETS = null; closeModal(); renderUnlocked();
     }));
   }
@@ -961,6 +999,50 @@
       $('#imGo').disabled = true;
       try { const res = await C.importKey(w, pw, label); impId = res.id; acctKind = 'imported'; dashChain = 'btc'; DASH_ASSETS = null; closeModal(); refreshImported(); renderUnlocked(); }
       catch (err) { $('#imGo').disabled = false; e.hidden = false; e.textContent = /wrong_password/.test(err.message) ? 'Wrong wallet password.' : /wif/i.test(err.message) ? 'Not a valid mainnet private key (WIF).' : (err.message || 'Import failed.'); }
+    };
+  }
+  // Import a 12-word Counterwallet / FreeWallet passphrase (Electrum-v1, NOT BIP-39): derive its legacy
+  // 1… addresses (m/0'/0/i), scan the first 10 for Counterparty / Stamps / SRC-20 activity, import the
+  // active ones as signable keys, and default them to the legacy type (where the assets live).
+  function cwImportFlow() {
+    modal(`<h3 class="m-title">Import Counterparty / FreeWallet passphrase</h3>
+      <p class="fine">Paste your <b>12-word Counterwallet / FreeWallet passphrase</b>. Wonder derives your legacy <b>1…</b> addresses, scans them for Counterparty / Stamps / SRC-20 assets, and imports the active ones — signable like your own accounts. This is <b>not</b> a BIP-39 seed.</p>
+      <textarea id="cwPhrase" class="m-in" rows="2" placeholder="twelve words separated by spaces" spellcheck="false" autocomplete="off" style="resize:vertical;font-family:var(--mono);font-size:12px"></textarea>
+      <div id="cwPrev" class="fine"></div>
+      <input id="cwPw" class="m-in" type="password" placeholder="Your wallet password" autocomplete="current-password"/>
+      <div id="cwErr" class="statusline" hidden></div>
+      <div class="wbtns"><button class="ghost" id="cwCancel">Cancel</button><button class="primary" id="cwGo" disabled>Scan &amp; import</button></div>`);
+    const ph = $('#cwPhrase'), pv = $('#cwPrev'), go = $('#cwGo');
+    ph.oninput = () => {
+      const p = ph.value.trim().replace(/\s+/g, ' '); pv.innerHTML = ''; go.disabled = true;
+      if (!p) return;
+      try {
+        if (C.isCwPhrase(p)) { const a0 = C.cwDeriveAddrs(p, 0, 1)[0].address; pv.innerHTML = `Primary address: <span class="vmono" style="color:var(--gold2)">${esc(a0)}</span>`; go.disabled = false; }
+        else { const n = p.split(' ').filter(Boolean).length; pv.innerHTML = `<span style="color:var(--red)">${n === 12 ? 'Not a Counterwallet passphrase — unknown words (this is the 1626-word Counterwallet list, not BIP-39).' : n + ' words — a Counterwallet passphrase is 12.'}</span>`; }
+      } catch (_) { pv.innerHTML = '<span style="color:var(--red)">Could not read that passphrase.</span>'; }
+    };
+    $('#cwCancel').onclick = closeModal;
+    go.onclick = async () => {
+      const e = $('#cwErr'); e.hidden = false; e.className = 'statusline load';
+      const p = ph.value.trim().replace(/\s+/g, ' '), pw = $('#cwPw').value;
+      if (!C.isCwPhrase(p)) { e.className = 'statusline err'; e.textContent = 'Enter a valid 12-word Counterwallet passphrase.'; return; }
+      if (!pw) { e.className = 'statusline err'; e.textContent = 'Enter your wallet password.'; return; }
+      go.disabled = true; e.textContent = 'Deriving & scanning your addresses…';
+      try {
+        const derived = C.cwDeriveAddrs(p, 0, 10); // legacy 1… addresses at m/0'/0/i
+        const active = [];
+        for (let i = 0; i < derived.length; i += 4) {
+          await Promise.all(derived.slice(i, i + 4).map(async (d) => {
+            try { const r = await fetch('api/btc/' + d.address + '/assets').then((x) => x.json()); const has = (r.counterparty || []).length + (r.stamps || []).length + (r.src20 || []).length; if (d.index === 0 || has > 0) active.push(d); }
+            catch (_) { if (d.index === 0) active.push(d); }
+          }));
+        }
+        active.sort((a, b) => a.index - b.index);
+        e.textContent = `Importing ${active.length} address${active.length === 1 ? '' : 'es'}…`;
+        const res = await C.importKeys(active.map((d) => d.wif), pw, active.map((d) => 'FreeWallet · 0/' + d.index));
+        res.forEach((r) => setImpBtcType(r.id, 'legacy')); // CP/Stamps assets live on the legacy address
+        impId = res[0].id; acctKind = 'imported'; dashChain = 'btc'; DASH_ASSETS = null; closeModal(); refreshImported(); renderUnlocked();
+      } catch (err) { go.disabled = false; e.className = 'statusline err'; e.textContent = /wrong_password/.test(err.message) ? 'Wrong wallet password.' : (err.message || 'Import failed.'); }
     };
   }
   // Switch the current account's Bitcoin address type (reach account 0's Legacy `1…`, etc.) with previews.
@@ -1177,7 +1259,7 @@
   // mirroring the extension popup but with the Terminal's full Cp + Emblem modules behind it.
   // SRC-101 .btc name detail — image, resolution target, owner, expiry + manage actions.
   function nameDetailModal(n, acc) {
-    const btc = isConn() ? CONN.address : (acc ? acc.bitcoin.nativeSegwit.address : null);
+    const btc = activeAddr(acc, 'btc'); // account-window-selected source (connected → CONN.address)
     modal(`<div class="statusline load">Loading ${esc(n.name)}…</div>`);
     fetch('api/src101/resolve/' + encodeURIComponent(n.name)).then((r) => r.json()).then((d) => {
       let expStr = '—';
@@ -1211,12 +1293,23 @@
   }
 
   function stampDetailModal(n, acc) {
-    const btc = isConn() ? CONN.address : acctKind === 'imported' ? impBtcAddr() : acctKind === 'hardware' ? hwAddr(hwBtcType) : (acc && acc.bitcoin ? acc.bitcoin.nativeSegwit.address : null);
+    const btc = activeAddr(acc, 'btc'); // account-window-selected source (native-segwit ↔ Legacy), connected/Ledger handled inside
     modal(`<div class="statusline load">Loading stamp #${esc(String(n.stamp))}…</div>`);
-    fetch('api/stamp/' + encodeURIComponent(n.stamp)).then((r) => r.json()).then((s) => {
+    Promise.all([
+      fetch('api/stamp/' + encodeURIComponent(n.stamp)).then((r) => r.json()).catch(() => ({})),
+      n.cpid ? fetch('api/cp/asset/' + encodeURIComponent(n.cpid)).then((r) => r.json()).catch(() => ({})) : Promise.resolve({}),
+    ]).then(([s0, cp0]) => {
+      const s = (s0 && !s0.error) ? s0 : {};
+      const cpInfo = (cp0 && !cp0.error) ? cp0 : {};
+      // Authoritative Counterparty state (lock/supply/divisible/issuer) from the asset endpoint — the stamp
+      // endpoint can be flaky/omit these, and defaulting "Locked: no" when unknown is misleading.
+      if (cpInfo.locked != null) s.locked = cpInfo.locked;
+      if (cpInfo.supply != null) s.supply = cpInfo.supply;
+      if (cpInfo.divisible != null) s.divisible = cpInfo.divisible;
+      if (!s.creator && cpInfo.issuer) s.creator = cpInfo.issuer;
       const cpid = s.cpid || n.cpid || '';
       const stampNo = s.stamp != null ? s.stamp : n.stamp;
-      const isHtml = /html/i.test(s.mime || '');
+      const isHtml = /html/i.test(s.mime || n.mime || '');
       modal(`<h3 class="m-title">Stamp #${esc(String(stampNo))}</h3>
         <div class="stampd">
           ${isHtml
@@ -1224,9 +1317,9 @@
             : `<img class="stampd-art" loading="lazy" src="api/stamp/${encodeURIComponent(n.stamp)}/content" alt="stamp #${esc(String(stampNo))}"/>`}
           <div class="m-grid">
             ${n.qty != null ? `<div><span class="k">You hold</span><span class="v">${fmtN(n.qty, 0)}</span></div>` : ''}
-            <div><span class="k">Supply</span><span class="v">${s.supply != null ? fmtN(s.supply, 0) : '—'}</span></div>
-            <div><span class="k">Locked</span><span class="v">${s.locked ? 'yes 🔒' : 'no'}</span></div>
-            <div><span class="k">Divisible</span><span class="v">${s.divisible ? 'yes' : 'no'}</span></div>
+            <div><span class="k">Supply</span><span class="v">${s.supply != null ? fmtN(s.supply, s.divisible ? 8 : 0) : '—'}</span></div>
+            <div><span class="k">Locked</span><span class="v">${s.locked === true ? 'yes 🔒' : s.locked === false ? 'no' : '—'}</span></div>
+            <div><span class="k">Divisible</span><span class="v">${s.divisible === true ? 'yes' : s.divisible === false ? 'no' : '—'}</span></div>
             <div><span class="k">Type</span><span class="v">${esc(s.mime || '—')}</span></div>
           </div>
           <div class="m-row" data-copy="${esc(cpid)}" title="Copy CPID"><span class="k">CPID</span><span class="vmono">${esc(cpid || '—')}</span></div>
@@ -1269,7 +1362,7 @@
   // Counterparty token detail — full-res art preview + metadata + the same power tools a stamp gets
   // (Send · Dispenser · Dividend · Destroy · Vault). Mirrors the extension popup's asset-detail window.
   function cpTokenDetailModal(t, acc) {
-    const btc = isConn() ? CONN.address : acctKind === 'imported' ? impBtcAddr() : acctKind === 'hardware' ? hwAddr(hwBtcType) : (acc && acc.bitcoin ? acc.bitcoin.nativeSegwit.address : null);
+    const btc = activeAddr(acc, 'btc'); // account-window-selected source (native-segwit ↔ Legacy), connected/Ledger handled inside
     const cpid = t.asset;
     const held = (t.amount != null ? Number(t.amount) : null);
     modal(`<div class="statusline load">Loading ${esc(t.name || cpid)}…</div>`);
@@ -1583,7 +1676,7 @@
     $('#bCreate2').onclick = async () => {
       const p1 = $('#pw1').value, p2 = $('#pw2').value, pp = $('#pp').value;
       const s = $('#pwStatus'); s.hidden = false; s.className = 'statusline err';
-      if (p1.length < 8) return (s.textContent = 'Password must be at least 8 characters.');
+      if (p1.length < 12) return (s.textContent = 'Password must be at least 12 characters.');
       if (p1 !== p2) return (s.textContent = 'Passwords do not match.');
       s.className = 'statusline load'; s.textContent = 'Encrypting (Argon2id)…';
       try { await C.createVault(draft.mnemonic, pp, p1); draft = null; closeModal(); renderUnlocked(); }
@@ -1594,8 +1687,9 @@
   // ── Restore flow ──
   function flowRestore() {
     const c = modal(`<h3 class="m-title">Restore from seed</h3>
-      <p class="fine">Enter your 12 or 24-word recovery phrase.</p>
+      <p class="fine">Enter your 12 or 24-word BIP-39 recovery phrase — or a <b>12-word Counterwallet / FreeWallet</b> passphrase (we detect it automatically).</p>
       <textarea id="rSeed" class="m-in" rows="3" placeholder="word1 word2 word3 …" spellcheck="false"></textarea>
+      <div id="rCw" class="fine"></div>
       <details class="adv"><summary>Advanced · BIP-39 passphrase</summary>
         <input id="rPp" class="m-in" type="text" placeholder="Passphrase (if you used one)" /></details>
       <input id="rPw1" class="m-in" type="password" placeholder="New password (min 8)" autocomplete="new-password" />
@@ -1603,14 +1697,20 @@
       <div id="rStatus" class="statusline" hidden></div>
       <div class="wbtns"><button class="ghost" id="mc">Cancel</button><button class="primary" id="bDo">Restore</button></div>`);
     $('#mc').onclick = closeModal;
+    $('#rSeed').oninput = () => {
+      const m = $('#rSeed').value.trim().replace(/\s+/g, ' ').toLowerCase(); const n = $('#rCw');
+      if (m && !C.validateMnemonic(m) && C.isCwPhrase(m)) n.innerHTML = '<span style="color:var(--gold2)">↩ Counterwallet / FreeWallet passphrase detected — restores your legacy 1… assets, plus fresh multi-chain accounts from the same seed.</span>';
+      else n.textContent = '';
+    };
     $('#bDo').onclick = async () => {
       const m = $('#rSeed').value.trim().replace(/\s+/g, ' ').toLowerCase();
       const s = $('#rStatus'); s.hidden = false; s.className = 'statusline err';
-      if (!C.validateMnemonic(m)) return (s.textContent = 'That phrase is not a valid BIP-39 mnemonic (check spelling & order).');
-      if ($('#rPw1').value.length < 8) return (s.textContent = 'Password must be at least 8 characters.');
+      const isCw = !C.validateMnemonic(m) && C.isCwPhrase(m);
+      if (!C.validateMnemonic(m) && !isCw) return (s.textContent = 'That phrase is not a valid BIP-39 mnemonic or Counterwallet passphrase (check spelling & order).');
+      if ($('#rPw1').value.length < 12) return (s.textContent = 'Password must be at least 12 characters.');
       if ($('#rPw1').value !== $('#rPw2').value) return (s.textContent = 'Passwords do not match.');
       s.className = 'statusline load'; s.textContent = 'Encrypting…';
-      try { await C.createVault(m, $('#rPp').value, $('#rPw1').value); closeModal(); renderUnlocked(); }
+      try { await C.createVault(m, $('#rPp').value, $('#rPw1').value); if (isCw) setAcctBtcType(0, 'legacy'); closeModal(); renderUnlocked(); } // CW assets live on legacy → default there
       catch (err) { s.className = 'statusline err'; s.textContent = 'Failed: ' + err.message; }
     };
   }
@@ -1676,7 +1776,7 @@
         try {
           const [chain, btcType] = $('#cpChain').value.split('-');
           const addr = C.deriveCustom(mnemonic, passphrase, $('#cpPath').value.trim(), chain, btcType || 'legacy');
-          const out = $('#cpOut'); out.hidden = false; out.innerHTML = `<span class="acct-addr">${addr}</span><button class="mini" data-copy="${addr}">copy</button>`;
+          const out = $('#cpOut'); out.hidden = false; out.innerHTML = `<span class="acct-addr">${esc(addr)}</span><button class="mini" data-copy="${esc(addr)}">copy</button>`; // esc: audit #7b
           out.querySelector('[data-copy]').onclick = (e) => copy(addr, e.target);
         } catch (err) { const out = $('#cpOut'); out.hidden = false; out.innerHTML = `<span class="statusline err">Invalid path: ${esc(err.message)}</span>`; }
       };

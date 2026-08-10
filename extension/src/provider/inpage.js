@@ -1,6 +1,6 @@
 /*
  * Wonder Wallet dApp provider — inpage script (runs in the PAGE's MAIN world).
- * Phase 12 (v0.48). STAGED: not injected until the manifest is wired at v0.48 (post-approval).
+ * Phase 12 (v0.48). ACTIVE — the dApp provider ships wired into every build and injects on all sites (universal, MetaMask/Phantom model, v0.48+). See STORE_LISTING.md + docs/DAPP_PROVIDER_PLAN.md (superseded).
  *
  * Defines window.wonderWallet — an EIP-1193-style provider (request/on/removeListener) with
  * `ww_`-prefixed methods, mirroring XCP Wallet so sites integrate both with near-identical code.

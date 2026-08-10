@@ -51,7 +51,7 @@ Wonder Wallet is beta software, provided as-is. Please use a test wallet, not yo
 
 ## Single-purpose statement
 ```
-Wonder Wallet is a self-custodial cryptocurrency wallet. Its single purpose is to let a user generate and hold their own keys locally, view their Bitcoin / Ethereum / Solana and Counterparty / Stamps / SRC-20 assets, and sign and broadcast their own transactions. It does not modify the web pages the user visits.
+Wonder Wallet is a self-custodial cryptocurrency wallet. Its single purpose is to let a user generate and hold their own keys locally, view their Bitcoin / Ethereum / Solana and Counterparty / Stamps / SRC-20 assets, connect to decentralized applications (dApps), and sign and broadcast their own transactions. So the user can connect to any dApp they choose, the extension injects a small, standards-based wallet connector into web pages (EIP-1193 + EIP-6963 for Ethereum, the Solana Wallet Standard, and a Bitcoin provider) — the same mechanism MetaMask and Phantom use. That connector only announces the wallet's presence and relays connection and signature requests, each of which the user must explicitly approve in a wallet dialog; it does not read, collect, or alter page content, and it never accesses keys (signing happens only in the wallet's own trusted context).
 ```
 
 ---
@@ -76,7 +76,12 @@ Lets the user open the wallet in the browser's side panel so it stays visible al
 
 **Host permission** — `https://<your-proxy-host>/*`
 ```
-The extension reads PUBLIC blockchain data (address balances, assets, fees) and broadcasts the transactions the user signs, through this single stateless proxy. It requests only public information and stores no user data. The extension does not access or modify any other websites.
+The extension reads PUBLIC blockchain data (address balances, assets, fees) and broadcasts the transactions the user signs, through this single stateless proxy. It requests only public information and stores no user data. This host permission is the ONLY server the extension ever contacts.
+```
+
+**Content scripts on all sites** (`content_scripts` → `matches: <all_urls>`) — this is what produces the "read and change data on all your sites" warning.
+```
+To let the user connect their wallet to any decentralized app (dApp) they choose, the extension injects a standards-based wallet connector (EIP-6963 / EIP-1193, the Solana Wallet Standard, and a Bitcoin provider) into pages — exactly like MetaMask and Phantom. This announces the wallet so a dApp's "Connect Wallet" dialog can list it, and relays connection/signature requests. Every connection and every signature requires explicit, per-origin user approval in the wallet's own dialog; the requesting origin is taken from the browser (chrome sender), never from the page, so it cannot be spoofed. The connector reads no page content, collects nothing, and has no access to the user's keys — signing happens only inside the wallet's trusted extension pages. An allowlist is not used because that would force us to gatekeep which sites may integrate; instead the wallet is discoverable everywhere and each dApp decides whether to surface it.
 ```
 
 **Remote code:** `No` — the extension executes no remotely-hosted code (strict CSP `script-src 'self'`).

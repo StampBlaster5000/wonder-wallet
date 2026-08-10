@@ -149,14 +149,19 @@ async function getAddresses(account = 0) {
   // Account-level pubkey + chaincode per type → lets the UI derive the WHOLE receiving-address chain
   // locally (a Ledger issues a fresh address each receive), so balances/assets beyond index 0 are
   // visible. Non-fatal: if unavailable, the wallet just falls back to the single index-0 view.
+  // SINGLE attempt (best-effort). Do NOT retry here — extra reads on this btcApp interfere with the
+  // AppClient master-fingerprint read below (which gates on-device signing / the Send button). If this
+  // misses, we simply fall back to the index-0 view (Portfolio scan disabled), never breaking Send.
   const acctKey = async (p) => { try { const r = await btcApp.getWalletPublicKey(p, {}); return (r && r.publicKey && r.chainCode) ? { pub: r.publicKey, chainCode: r.chainCode } : null; } catch (_) { return null; } };
   try {
     out.bitcoin.nativeSegwit.acct = await acctKey(`84'/0'/${account}'`);
     out.bitcoin.legacy.acct = await acctKey(`44'/0'/${account}'`);
     if (out.bitcoin.taproot) out.bitcoin.taproot.acct = await acctKey(`86'/0'/${account}'`);
   } catch (_) {}
-  // Master key fingerprint — needed to annotate PSBTs so the device recognises its own inputs/change at sign time.
-  try { out.mfp = await new AppClient(transport).getMasterFingerprint(); } catch (_) { out.mfp = null; }
+  // Master key fingerprint — enables on-device signing (the Send button). Retry once; a miss drops the
+  // wallet to read-only. This is the LAST device read, so retrying it can't interfere with anything else.
+  out.mfp = null;
+  for (let i = 0; i < 2 && !out.mfp; i++) { try { const f = await new AppClient(transport).getMasterFingerprint(); if (f) out.mfp = f; } catch (_) {} if (!out.mfp) await sleep(300); }
 
   // Ethereum (optional) — switches to the Ethereum app.
   try { await ensureApp('Ethereum'); const ethApp = new Eth(transport); out.ethereum = { address: (await ethApp.getAddress(PATHS.ethereum(account))).address, path: 'm/' + PATHS.ethereum(account) }; }
@@ -182,17 +187,27 @@ async function getChainAddress(chain, account = 0) {
 
 // ── Signing adapters (device confirms on its screen) ──
 
-/** Sign a (CP-aware, asset-safe) PSBT on the Ledger. Native SegWit single-sig. */
-async function signPsbt(psbtBase64, account = 0) {
+// Standard single-sig policies per address type — the account purpose + the descriptor the device
+// registers as its default (empty-name) wallet. Native SegWit (bc1q), Legacy 1… (OG Counterparty /
+// Stamps), and Taproot bc1p all sign this way; the PSBT carries each input's derivation so the device
+// knows which of its keys to use.
+const SIGN_DESC = {
+  nativeSegwit: ['84', 'wpkh(@0/**)'],
+  legacy: ['44', 'pkh(@0/**)'],
+  taproot: ['86', 'tr(@0/**)'],
+};
+/** Sign a (CP-aware, asset-safe) PSBT on the Ledger for the given single-sig address type. */
+async function signPsbt(psbtBase64, account = 0, type = 'nativeSegwit') {
   requireDevice();
   await ensureApp('Bitcoin');
   const app = new AppClient(transport);
   const fpr = await app.getMasterFingerprint();
-  const path = `m/84'/0'/${account}'`;
-  const xpub = await app.getExtendedPubkey(path);
-  const policy = new WalletPolicy('', 'wpkh(@0/**)', [`[${fpr}/84'/0'/${account}']${xpub}`]); // empty name = standard/default policy
+  const [purpose, desc] = SIGN_DESC[type] || SIGN_DESC.nativeSegwit;
+  const acct = `${purpose}'/0'/${account}'`;
+  const xpub = await app.getExtendedPubkey('m/' + acct);
+  const policy = new WalletPolicy('', desc, [`[${fpr}/${acct}]${xpub}`]); // empty name = standard/default policy
   const entries = await app.signPsbt(psbtBase64, policy, null); // [[inputIndex, PartialSig]]
-  return { signatures: entries, policy: 'wpkh' };
+  return { signatures: entries, policy: desc, type };
 }
 
 /** Sign an unsigned EIP-1559 tx (raw RLP hex without 0x) → {v,r,s}. */

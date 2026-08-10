@@ -1,5 +1,5 @@
 /*
- * Wonder Wallet dApp provider — background router. Phase 12 (v0.48). STAGED.
+ * Wonder Wallet dApp provider — background router. Phase 12 (v0.48). ACTIVE — the dApp provider ships wired into every build and injects on all sites (universal, MetaMask/Phantom model, v0.48+). See STORE_LISTING.md + docs/DAPP_PROVIDER_PLAN.md (superseded).
  * importScripts()'d into background.js at v0.48 (classic service worker). Owns: the permission store,
  * the request→decision flow, opening the approval window, relaying its result, and emitting events.
  *
@@ -22,7 +22,7 @@
   function loadStore(cb) { chrome.storage.local.get(PERM.STORAGE_KEY, function (o) { cb((o && o[PERM.STORAGE_KEY]) || {}); }); }
   function saveStore(store, cb) { var o = {}; o[PERM.STORAGE_KEY] = store; chrome.storage.local.set(o, cb || function () {}); }
   function nowMs() { return Date.now(); }
-  function genId() { return 'req-' + nowMs() + '-' + Math.floor(Math.random() * 1e6); }
+  function genId() { return 'req-' + ((typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : (nowMs() + '-' + Math.floor(Math.random() * 1e6))); } // crypto UUID (audit #7c)
   function faviconFor(origin) { try { return new URL(origin).origin + '/favicon.ico'; } catch (_) { return ''; } }
 
   // Content script → background. Returns a Promise resolving to { result } | { error:{code,message} }.

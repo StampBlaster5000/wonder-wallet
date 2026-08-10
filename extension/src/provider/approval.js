@@ -1,6 +1,6 @@
 /*
  * Wonder Wallet dApp provider — approval window renderer (Connect / Sign / Broadcast).
- * Phase 12 (v0.48). STAGED: not reachable until wired at v0.48 (post-approval).
+ * Phase 12 (v0.48). ACTIVE — the dApp provider ships wired into every build and injects on all sites (universal, MetaMask/Phantom model, v0.48+). See STORE_LISTING.md + docs/DAPP_PROVIDER_PLAN.md (superseded).
  *
  * Presentation only. The background hands us a fully-prepared request so this file never touches
  * keys or the network — it renders exactly what the user is approving and posts back the decision:
@@ -440,7 +440,7 @@
           var gl = tx.gas ? BigInt(tx.gas) : BigInt(prep.gasLimit);
           var maxEth = Number(gl * BigInt(prep.maxFeePerGas)) / 1e18;
           feeRow = '<div class="ap-kv"><span>Max network fee</span><span>' + maxEth.toFixed(6).replace(/0+$/, '').replace(/\.$/, '') + ' ETH</span></div>'
-            + '<div class="ap-kv"><span>Gas / nonce</span><span class="ap-fine">' + gl.toString() + ' · #' + prep.nonce + '</span></div>';
+            + '<div class="ap-kv"><span>Gas / nonce</span><span class="ap-fine">' + esc(gl.toString()) + ' · #' + esc(String(prep.nonce)) + '</span></div>'; // esc: audit #6 — consistency/defense-in-depth
         } catch (_) {}
       } else { feeRow = '<div class="ap-warn warn">⚠️ <span>Couldn’t fetch gas/fee estimate — it will be computed when you approve.</span></div>'; }
       app.innerHTML = '<div class="ap-wrap">' + originBar()

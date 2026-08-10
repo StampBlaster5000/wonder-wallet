@@ -12,6 +12,7 @@
 import { generateMnemonic as genM, mnemonicToSeedSync, validateMnemonic as valM } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
 import { HDKey } from '@scure/bip32';
+import { CW_WORDS } from './cw-words.js';
 import * as btc from '@scure/btc-signer';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { ed25519 } from '@noble/curves/ed25519';
@@ -98,6 +99,45 @@ function solAddress(priv) { return base58.encode(ed25519.getPublicKey(priv)); }
 // address is identical across networks by design.
 const btcNet = (network) => (network === 'testnet' ? btc.TEST_NETWORK : btc.NETWORK);
 
+// ── Counterparty / Counterwallet / FreeWallet legacy passphrase (Electrum-v1 mnemonic) ──────────────
+// NOT BIP-39. The 12-word passphrase decodes (1626-word list) → a 16-byte seed → BIP-32 → legacy
+// P2PKH (1…) at m/0'/0/i — this is what Counterwallet, FreeWallet, XCP Chrome wallet, etc. use, and is
+// where OG Counterparty / Stamps assets live. Verified byte-for-byte against Counterwallet's own test
+// fixtures ("voice flame certainly…" → 1F2MFgLaQNLCTFCMWhffEG43GtxPxu6KWM); see selfTest.cwLegacy.
+const CW_N = 1626;
+const cwMod = (a, b) => ((a % b) + b) % b;
+const cwWords = (passphrase) => String(passphrase || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+// Strip an optional leading 'old' (13-word legacy-sweep variant) → the 12 payload words.
+function cwPayload(passphrase) { const w = cwWords(passphrase); return (w.length === 13 && w[0] === 'old') ? w.slice(1) : w; }
+// True if every word is in the Electrum-v1 list and the count is 12 — used to route restore/import.
+function isCwPhrase(passphrase) { const w = cwPayload(passphrase); return w.length === 12 && w.every((x) => CW_WORDS.indexOf(x) !== -1); }
+// The Electrum-v1 mn_decode: 12 words → 32-char hex seed (16 bytes).
+function cwSeedHex(passphrase) {
+  const w = cwPayload(passphrase);
+  if (!w.length || w.length % 3 !== 0) throw new Error('cw_bad_length');
+  let out = '';
+  for (let i = 0; i < w.length / 3; i++) {
+    const i1 = CW_WORDS.indexOf(w[3 * i]), i2 = CW_WORDS.indexOf(w[3 * i + 1]), i3 = CW_WORDS.indexOf(w[3 * i + 2]);
+    if (i1 < 0 || i2 < 0 || i3 < 0) throw new Error('cw_bad_word');
+    const w1 = i1, w2 = i2 % CW_N, w3 = i3 % CW_N;
+    const x = w1 + CW_N * cwMod(w2 - w1, CW_N) + CW_N * CW_N * cwMod(w3 - w2, CW_N);
+    out += ('0000000' + (x >>> 0).toString(16)).slice(-8);
+  }
+  return out;
+}
+// Derive the legacy addresses + keys a Counterwallet/FreeWallet passphrase controls (m/0'/0/i, P2PKH).
+// Returns [{ index, path, address, wif, pub }] — WIFs are compressed, matching Counterwallet.
+function cwDeriveAddrs(passphrase, start = 0, count = 10, network = 'mainnet') {
+  const master = HDKey.fromMasterSeed(hex.decode(cwSeedHex(passphrase)));
+  const net = btcNet(network);
+  const out = [];
+  for (let i = start; i < start + count; i++) {
+    const node = master.derive("m/0'/0/" + i);
+    out.push({ index: i, path: "m/0'/0/" + i, address: btc.p2pkh(node.publicKey, net).address, wif: toWIF(node.privateKey, network), pub: hex.encode(node.publicKey) });
+  }
+  return out;
+}
+
 // ── Bitcoin address (all four types) from an HD node ─────────────────────────
 function btcFromPub(pub, type, network = 'mainnet') {
   const net = btcNet(network);
@@ -122,13 +162,26 @@ const BTC_PATHS_TESTNET = {
 };
 const btcPaths = (network) => (network === 'testnet' ? BTC_PATHS_TESTNET : BTC_PATHS);
 
+// ── Counterwallet seed as a native account (Level B) ────────────────────────────────────────────────
+// A restored Counterwallet/FreeWallet passphrase is stored as the "mnemonic". We detect it (CW-valid AND
+// NOT a valid BIP-39 mnemonic, so genuine BIP-39 seeds are NEVER misread) and derive from the 16-byte CW
+// seed, overriding only the LEGACY path to m/0'/0/account so the 1… addresses match Counterwallet exactly
+// (that's where the user's assets are). All other types (segwit/taproot/nested + ETH + SOL) derive fresh
+// from the same seed → the full multi-chain Wonder experience going forward.
+function isCwSeed(mnemonic) { try { return isCwPhrase(mnemonic) && !valM(mnemonic, wordlist); } catch (_) { return false; } }
+function masterSeed(mnemonic, passphrase) { return isCwSeed(mnemonic) ? hex.decode(cwSeedHex(mnemonic)) : mnemonicToSeedSync(mnemonic, passphrase); }
+function btcPathStr(mnemonic, network, type, account, index) {
+  if (type === 'legacy' && isCwSeed(mnemonic)) return "m/0'/0/" + account; // Counterwallet legacy — assets live here
+  return btcPaths(network)[type](account, index);
+}
+
 /** Derive display addresses (NO secrets) for one account index across all chains. */
 function deriveAccounts(mnemonic, passphrase = '', account = 0, index = 0, network = 'mainnet') {
-  const seed = mnemonicToSeedSync(mnemonic, passphrase);
+  const seed = masterSeed(mnemonic, passphrase);
   const root = HDKey.fromMasterSeed(seed);
   const bitcoin = {};
-  for (const [type, mk] of Object.entries(btcPaths(network))) {
-    const path = mk(account, index);
+  for (const type of Object.keys(btcPaths(network))) {
+    const path = btcPathStr(mnemonic, network, type, account, index);
     bitcoin[type] = { address: btcFromPub(root.derive(path).publicKey, type, network), path };
   }
   // ETH & SOL: same key on their testnets — only the network endpoint changes.
@@ -143,12 +196,13 @@ function deriveAccounts(mnemonic, passphrase = '', account = 0, index = 0, netwo
 
 /** Reveal secrets for one account (password-gated by the caller). */
 function deriveSecrets(mnemonic, passphrase = '', account = 0, index = 0, network = 'mainnet') {
-  const seed = mnemonicToSeedSync(mnemonic, passphrase);
+  const seed = masterSeed(mnemonic, passphrase);
   const root = HDKey.fromMasterSeed(seed);
   const out = { bitcoin: {}, ethereum: null, solana: null, network };
-  for (const [type, mk] of Object.entries(btcPaths(network))) {
-    const node = root.derive(mk(account, index));
-    out.bitcoin[type] = { address: btcFromPub(node.publicKey, type, network), wif: toWIF(node.privateKey, network), path: mk(account, index) };
+  for (const type of Object.keys(btcPaths(network))) {
+    const path = btcPathStr(mnemonic, network, type, account, index);
+    const node = root.derive(path);
+    out.bitcoin[type] = { address: btcFromPub(node.publicKey, type, network), wif: toWIF(node.privateKey, network), path };
   }
   const e = root.derive(`m/44'/60'/${account}'/0/${index}`);
   out.ethereum = { address: ethAddress(e.privateKey), privateKey: '0x' + hex.encode(e.privateKey) };
@@ -160,7 +214,7 @@ function deriveSecrets(mnemonic, passphrase = '', account = 0, index = 0, networ
 
 /** Custom derivation path (OG recovery) → address for a given chain. */
 function deriveCustom(mnemonic, passphrase, path, chain = 'bitcoin', btcType = 'legacy') {
-  const seed = mnemonicToSeedSync(mnemonic, passphrase);
+  const seed = masterSeed(mnemonic, passphrase);
   if (chain === 'solana') {
     // SECURITY (audit L2): SLIP-0010 ed25519 is all-hardened; silently hardening a
     // non-hardened segment would derive a DIFFERENT key than other wallets → "lost" funds.
@@ -255,7 +309,7 @@ function buildSend({ mnemonic, passphrase = '', account = 0, index = 0, type = '
   const net = btcNet(network);
   let seed = null, node;
   if (wif) { node = importedNode(wif); } // imported key signs its own address (any of the 4 types)
-  else { seed = mnemonicToSeedSync(mnemonic, passphrase); node = HDKey.fromMasterSeed(seed).derive(paths[type](account, index)); }
+  else { seed = masterSeed(mnemonic, passphrase); node = HDKey.fromMasterSeed(seed).derive(btcPathStr(mnemonic, network, type, account, index)); }
   const p = btcPayment(node.publicKey, type, network);
   const fromAddress = p.address;
   const sel = selectUtxos(utxos, amountSats, feeRate, sendMax, type);
@@ -354,7 +408,11 @@ function finalizeHwSend(psbtB64, entries) {
   const tx = btc.Transaction.fromPSBT(base64.decode(psbtB64), { allowUnknownOutputs: true, allowUnknownInputs: true });
   for (const [idx, sig] of entries) {
     const toBytes = (v) => (v instanceof Uint8Array ? v : hex.decode(String(v).replace(/^0x/, '')));
-    tx.updateInput(idx, { partialSig: [[toBytes(sig.pubkey), toBytes(sig.signature)]] });
+    const sigBytes = toBytes(sig.signature);
+    // Taproot key-path returns a 64-byte (65 with a non-default sighash) Schnorr sig → tapKeySig.
+    // ECDSA (native-segwit / legacy) is a DER sig (~70-72 bytes) → partialSig with its pubkey.
+    if (sigBytes.length === 64 || sigBytes.length === 65) tx.updateInput(idx, { tapKeySig: sigBytes });
+    else tx.updateInput(idx, { partialSig: [[toBytes(sig.pubkey), sigBytes]] });
   }
   tx.finalize();
   return { txhex: hex.encode(tx.extract()), txid: tx.id, vsize: tx.vsize };
@@ -520,7 +578,7 @@ function signProviderPsbt(psbtHexOrB64, opts, mnemonic, passphrase = '', account
     // One signer per allowed type (an imported WIF is a single address type).
     let signers;
     if (wif) { const n = importedNode(wif); signers = [{ t: type, node: n, p: btcPayment(n.publicKey, type, network) }]; }
-    else { seed = mnemonicToSeedSync(mnemonic, passphrase); const root = HDKey.fromMasterSeed(seed); signers = types.map((t) => { const n = root.derive(paths[t](account, index)); return { t: t, node: n, p: btcPayment(n.publicKey, t, network) }; }); }
+    else { seed = masterSeed(mnemonic, passphrase); const root = HDKey.fromMasterSeed(seed); signers = types.map((t) => { const n = root.derive(btcPathStr(mnemonic, network, t, account, index)); return { t: t, node: n, p: btcPayment(n.publicKey, t, network) }; }); }
     const signerFor = (addr) => signers.find((sg) => sg.p.address === addr) || null;
 
     const s = String(psbtHexOrB64).replace(/^0x/, '');
@@ -573,7 +631,7 @@ function signStampPsbt(psbtHexOrB64, mnemonic, passphrase = '', account = 0, ind
   const bytes = /^[0-9a-fA-F]+$/.test(s) ? hex.decode(s) : base64.decode(s);
   let seed = null, node;
   if (wif) node = importedNode(wif);
-  else { seed = mnemonicToSeedSync(mnemonic, passphrase); node = HDKey.fromMasterSeed(seed).derive(btcPaths(network)[type](account, index)); }
+  else { seed = masterSeed(mnemonic, passphrase); node = HDKey.fromMasterSeed(seed).derive(btcPathStr(mnemonic, network, type, account, index)); }
   const tx = btc.Transaction.fromPSBT(bytes, { allowUnknownOutputs: true, allowUnknownInputs: true });
   if (type === 'legacy') {
     for (let i = 0; i < tx.inputsLength; i++) {
@@ -592,7 +650,7 @@ function signCpPsbt(psbtB64, inputsValues, lockScripts, mnemonic, passphrase = '
   if (!btcPaths(network)[type]) throw new Error('cp_sign_type_unsupported');
   let seed = null, node;
   if (wif) node = importedNode(wif);
-  else { seed = mnemonicToSeedSync(mnemonic, passphrase); node = HDKey.fromMasterSeed(seed).derive(btcPaths(network)[type](account, index)); }
+  else { seed = masterSeed(mnemonic, passphrase); node = HDKey.fromMasterSeed(seed).derive(btcPathStr(mnemonic, network, type, account, index)); }
   const r = signRawCp(psbtB64, inputsValues, lockScripts, node, type, prevTxs);
   if (seed) seed.fill(0);
   return r;
@@ -628,7 +686,7 @@ function bip322SignWithKey(message, privKey) {
 }
 function signMessageBIP322(message, mnemonic, passphrase = '', account = 0, index = 0, type = 'nativeSegwit') {
   if (type !== 'nativeSegwit') throw new Error('bip322_type_unsupported');
-  const seed = mnemonicToSeedSync(mnemonic, passphrase);
+  const seed = masterSeed(mnemonic, passphrase);
   const node = HDKey.fromMasterSeed(seed).derive(BTC_PATHS.nativeSegwit(account, index));
   const sig = bip322SignWithKey(message, node.privateKey);
   seed.fill(0);
@@ -680,7 +738,7 @@ function personalSignWithKey(message, privKey) {
   return '0x' + r + s + v;
 }
 function personalSign(message, mnemonic, passphrase = '', account = 0, index = 0) {
-  const seed = mnemonicToSeedSync(mnemonic, passphrase);
+  const seed = masterSeed(mnemonic, passphrase);
   const node = HDKey.fromMasterSeed(seed).derive(`m/44'/60'/${account}'/0/${index}`);
   const sig = personalSignWithKey(message, node.privateKey);
   seed.fill(0);
@@ -688,7 +746,7 @@ function personalSign(message, mnemonic, passphrase = '', account = 0, index = 0
 }
 
 function signEvm({ mnemonic, passphrase = '', account = 0, index = 0, to, valueWei = 0n, data = '0x', nonce, chainId, maxFeePerGas, maxPriorityFeePerGas, gasLimit }) {
-  const seed = mnemonicToSeedSync(mnemonic, passphrase);
+  const seed = masterSeed(mnemonic, passphrase);
   const node = HDKey.fromMasterSeed(seed).derive(`m/44'/60'/${account}'/0/${index}`);
   const tx = EvmTx.prepare({
     type: 'eip1559', chainId: BigInt(chainId), nonce: BigInt(nonce),
@@ -757,7 +815,7 @@ function ethSignTypedData(typedData, account = 0) {
   const s = requireUnlocked();
   const td = typeof typedData === 'string' ? JSON.parse(typedData) : typedData;
   if (!td || !td.types || !td.primaryType) throw new Error('bad_typed_data');
-  const seed = mnemonicToSeedSync(s.mnemonic, s.passphrase);
+  const seed = masterSeed(s.mnemonic, s.passphrase);
   const node = HDKey.fromMasterSeed(seed).derive(`m/44'/60'/${account}'/0/0`);
   const sig = signTypedDataWithKey(td, node.privateKey);
   seed.fill(0);
@@ -821,7 +879,7 @@ function bytesEq(a, b) { if (a.length !== b.length) return false; for (let i = 0
 // dApp-provider Solana signing (session-based). solSignMessage: ed25519 over arbitrary bytes.
 function solSignMessage(msgB64, account = 0) {
   const s = requireUnlocked();
-  const seed = mnemonicToSeedSync(s.mnemonic, s.passphrase);
+  const seed = masterSeed(s.mnemonic, s.passphrase);
   const priv = solDerive(seed, `m/44'/501'/${account}'/0'`);
   const sig = ed25519.sign(base64.decode(msgB64), priv);
   seed.fill(0);
@@ -831,7 +889,7 @@ function solSignMessage(msgB64, account = 0) {
 // signature in OUR required-signer slot (found by matching our pubkey) — never a slot that isn't ours.
 function solSignTransaction(txB64, account = 0) {
   const s = requireUnlocked();
-  const seed = mnemonicToSeedSync(s.mnemonic, s.passphrase);
+  const seed = masterSeed(s.mnemonic, s.passphrase);
   const priv = solDerive(seed, `m/44'/501'/${account}'/0'`);
   const pub = ed25519.getPublicKey(priv);
   const raw = base64.decode(txB64);
@@ -862,7 +920,7 @@ function computeBudgetIxs(units, microLamports) {
 }
 
 function buildSolTransfer({ mnemonic, passphrase = '', account = 0, to, lamports, blockhash, microLamports = 1000, units = 200000 }) {
-  const seed = mnemonicToSeedSync(mnemonic, passphrase);
+  const seed = masterSeed(mnemonic, passphrase);
   const priv = solDerive(seed, `m/44'/501'/${account}'/0'`);
   const from = ed25519.getPublicKey(priv);
   const toPub = base58.decode(to);
@@ -874,7 +932,7 @@ function buildSolTransfer({ mnemonic, passphrase = '', account = 0, to, lamports
 }
 
 function buildSplTransfer({ mnemonic, passphrase = '', account = 0, to, mint, amount, decimals, blockhash, microLamports = 1000, units = 200000 }) {
-  const seed = mnemonicToSeedSync(mnemonic, passphrase);
+  const seed = masterSeed(mnemonic, passphrase);
   const priv = solDerive(seed, `m/44'/501'/${account}'/0'`);
   const from = ed25519.getPublicKey(priv);
   const toPub = base58.decode(to);
@@ -912,7 +970,7 @@ function findPda(seeds, programId) {
 }
 // ctx (from the server's DAS lookup): { owner, delegate, dataHash, creatorHash, leafId, tree, root, proof:[b58…], canopyDepth }
 function buildCnftTransfer({ mnemonic, passphrase = '', account = 0, to, ctx, blockhash, microLamports = 1000, units = 300000 }) {
-  const seed = mnemonicToSeedSync(mnemonic, passphrase);
+  const seed = masterSeed(mnemonic, passphrase);
   const priv = solDerive(seed, `m/44'/501'/${account}'/0'`);
   const from = ed25519.getPublicKey(priv);
   const owner = base58.decode(ctx.owner);
@@ -999,7 +1057,8 @@ function onLockChange(cb) { if (typeof cb === 'function') lockListeners.push(cb)
 function fireLock(state) { for (const cb of lockListeners) { try { cb(state); } catch (_) {} } }
 
 async function createVault(mnemonic, passphrase, password) {
-  if (!validateMnemonic(mnemonic)) throw new Error('invalid_mnemonic');
+  // Accept a BIP-39 mnemonic OR a Counterwallet/FreeWallet passphrase (Electrum-v1) as the seed.
+  if (!validateMnemonic(mnemonic) && !isCwPhrase(mnemonic)) throw new Error('invalid_mnemonic');
   const blob = await encryptVault(JSON.stringify({ mnemonic, passphrase: passphrase || '', imported: [] }), password);
   await idb('put', 'vault', blob);
   SESSION = { mnemonic, passphrase: passphrase || '', imported: [] };
@@ -1016,17 +1075,23 @@ async function unlock(password) {
   fireLock(true);
   return true;
 }
-// Restore an unlocked session from a secret the caller already holds — NO password needed.
-// Used only by the extension session bridge (secret comes from chrome.storage.session, RAM).
+// SECURITY (audit 2026-08 finding #2): the cross-surface session bridge (resumeSession/getSessionSecret)
+// is a NO-PASSWORD secret path — it only makes sense inside the browser EXTENSION (secret lives in
+// chrome.storage.session). On the public Terminal (wonder-wallet.com) nothing calls it, so we hard-gate
+// it to the extension context. On a normal webpage chrome.runtime.id is undefined → these are inert, so
+// a future in-origin script can't call getSessionSecret() to lift the whole wallet with one bare call.
+const _extCtx = () => { try { return typeof chrome !== 'undefined' && !!(chrome.runtime && chrome.runtime.id); } catch (_) { return false; } };
+// Restore an unlocked session from a secret the caller already holds — NO password needed. Extension-only.
 function resumeSession(secret) {
+  if (!_extCtx()) return false;
   if (!secret || !secret.mnemonic) return false;
   SESSION = { mnemonic: secret.mnemonic, passphrase: secret.passphrase || '', imported: secret.imported || [] };
   armAutoLock();
   fireLock(true);
   return true;
 }
-// The current in-memory secret (unlocked only) — so the extension can persist it across surfaces.
-function getSessionSecret() { return SESSION ? { mnemonic: SESSION.mnemonic, passphrase: SESSION.passphrase, imported: SESSION.imported || [] } : null; }
+// The current in-memory secret (unlocked only) — so the extension can persist it across surfaces. Extension-only.
+function getSessionSecret() { if (!_extCtx()) return null; return SESSION ? { mnemonic: SESSION.mnemonic, passphrase: SESSION.passphrase, imported: SESSION.imported || [] } : null; }
 
 function lock() {
   const was = !!SESSION;
@@ -1055,6 +1120,24 @@ async function importKey(wif, password, label = '') {
   s.imported.push({ id, label: lbl, wif });
   const bitcoin = {}; for (const t of Object.keys(BTC_PATHS)) bitcoin[t] = { address: btcFromPub(node.publicKey, t) };
   return { id, label: lbl, bitcoin };
+}
+// Batch-import several WIFs in ONE vault decrypt/encrypt (avoids N× argon2 — matters when restoring
+// a Counterwallet/FreeWallet passphrase's several funded addresses at once). labels[] parallels wifs[].
+async function importKeys(wifs, password, labels = []) {
+  const s = requireUnlocked();
+  const blob = await idb('get', 'vault');
+  if (!blob) throw new Error('no_vault');
+  const data = JSON.parse(await decryptVault(blob, password)); // re-auth ONCE
+  const entries = (wifs || []).map((wif, i) => {
+    const node = importedNode(wif); // validates the WIF (throws not_mainnet_wif / bad_wif_length)
+    return { id: 'imp_' + hex.encode(sha256(node.publicKey)).slice(0, 16), label: String(labels[i] || '').slice(0, 40), wif, pub: node.publicKey };
+  });
+  const ids = new Set(entries.map((e) => e.id));
+  const persisted = entries.map((e) => ({ id: e.id, label: e.label, wif: e.wif }));
+  data.imported = (data.imported || []).filter((e) => !ids.has(e.id)).concat(persisted); // de-dup by key
+  await idb('put', 'vault', await encryptVault(JSON.stringify(data), password));
+  s.imported = (s.imported || []).filter((e) => !ids.has(e.id)).concat(persisted);
+  return entries.map((e) => { const bitcoin = {}; for (const t of Object.keys(BTC_PATHS)) bitcoin[t] = { address: btcFromPub(e.pub, t) }; return { id: e.id, label: e.label, bitcoin }; });
 }
 async function removeImportedKey(id, password) {
   const s = requireUnlocked();
@@ -1088,9 +1171,9 @@ function send(opts) { const s = requireUnlocked(); const wif = opts && opts.impo
 function signProvider(opts) { const s = requireUnlocked(); const wif = opts && opts.importedId ? _importedWif(opts.importedId) : null; return signProviderPsbt(opts.psbt, opts, s.mnemonic, s.passphrase, opts.account || 0, opts.index || 0, opts.type || 'nativeSegwit', opts.prevTxs || {}, wif, opts.network || 'mainnet'); }
 function signMessage(message, account = 0, type = 'nativeSegwit', network = 'mainnet') {
   const s = requireUnlocked();
-  const seed = mnemonicToSeedSync(s.mnemonic, s.passphrase);
+  const seed = masterSeed(s.mnemonic, s.passphrase);
   const paths = btcPaths(network);
-  const path = (paths[type] || paths.nativeSegwit)(account, 0);
+  const path = btcPathStr(s.mnemonic, network, paths[type] ? type : 'nativeSegwit', account, 0);
   const node = HDKey.fromMasterSeed(seed).derive(path);
   try {
     const address = btcFromPub(node.publicKey, type, network);
@@ -1128,6 +1211,17 @@ function selfTest() {
     tnetTaproot: /^tb1p/.test(t.bitcoin.taproot.address),
     tnetDistinct: t.bitcoin.nativeSegwit.address !== a.bitcoin.nativeSegwit.address,
     tnetSameEvm: t.ethereum.address === a.ethereum.address, // ETH/SOL: same key across networks
+    // Counterwallet / FreeWallet legacy passphrase → the exact addresses from Counterwallet's own
+    // test fixtures. If this ever fails, imported OG assets would land on the wrong address — hard stop.
+    cwLegacy: cwDeriveAddrs('voice flame certainly anyone former raw limit king rhythm tumble crystal earth', 0, 3).map((x) => x.address).join(',')
+      === '1F2MFgLaQNLCTFCMWhffEG43GtxPxu6KWM,16Qd1F7qYLJfvTpBueEZ3yMYhwrsanPjSN,1DD56rrRcL4yzmEVMhFEQWKepwVLJScrVA',
+    cwWif: cwDeriveAddrs('voice flame certainly anyone former raw limit king rhythm tumble crystal earth', 0, 1)[0].wif === 'KzHUABaxi5d9NwNnMAkco3xG3WjcXnZrfkR2G9App71HYetoX8Jy',
+    // Level B — restoring the CW passphrase as a native account: legacy (account 0) MATCHES Counterwallet
+    // (their assets), while native-segwit/ETH derive fresh from the same seed. And a real BIP-39 seed is
+    // NEVER misrouted as Counterwallet (masterSeed/isCwSeed guard) — bip84 above still passes.
+    cwAccount: (() => { const c = deriveAccounts('voice flame certainly anyone former raw limit king rhythm tumble crystal earth', '', 0, 0);
+      return c.bitcoin.legacy.address === '1F2MFgLaQNLCTFCMWhffEG43GtxPxu6KWM' && c.bitcoin.legacy.path === "m/0'/0/0"
+        && /^bc1q/.test(c.bitcoin.nativeSegwit.address) && /^0x/.test(c.ethereum.address) && c.solana.address.length > 30; })(),
   };
   checks.all = Object.values(checks).every(Boolean);
   return { checks, derived: a };
@@ -1136,11 +1230,12 @@ function selfTest() {
 const WonderCore = {
   generateMnemonic, validateMnemonic, deriveAccounts, deriveSecrets, deriveCustom, deriveReceiveAddrs,
   fromWIF, hasVault, createVault, unlock, lock, isUnlocked, destroyVault,
-  importKey, removeImportedKey, importedAccounts, importedAddresses,
+  importKey, importKeys, removeImportedKey, importedAccounts, importedAddresses,
   accounts, secrets, revealSeed, armAutoLock, selfTest,
+  isCwPhrase, cwSeedHex, cwDeriveAddrs, // Counterwallet / FreeWallet legacy passphrase (Electrum-v1)
   send, signMessage, signMessageImported, signCp, signStamp, psbtInputs, decodeTxOutputs, addrHash, sendEvm, sendSol, sendSpl, sendCnft, ethPersonalSign, buildSend, buildUnsignedSend, signMessageBIP322, bip322SignWithKey, bsmSignWithKey, signCpPsbt, signStampPsbt, signEvm,
   personalSign, personalSignWithKey, buildSolTransfer, buildSplTransfer, buildCnftTransfer, erc20TransferData, erc20ApproveData, estimateVsize, buildHwSend, finalizeHwSend,
-  ethSignTypedData, eip712Digest, signTypedDataWithKey, btcNet, btcPaths, version: '0.10.0', // 0.10.0: network-aware (testnet coin type 1')
+  ethSignTypedData, eip712Digest, signTypedDataWithKey, btcNet, btcPaths, version: '0.11.0', // 0.11.0: Counterwallet/FreeWallet passphrase support
 };
 
 // SECURITY (audit H1/H3): expose only the minimal app API on `window` — NOT the raw-key
@@ -1148,8 +1243,8 @@ const WonderCore = {
 // Reduces blast radius if any script runs in-origin. (Strong CSP is the primary defense.)
 const PUBLIC_API = {
   generateMnemonic, validateMnemonic, hasVault, createVault, unlock, lock, isUnlocked, destroyVault,
-  importKey, removeImportedKey, importedAccounts, importedAddresses,
-  accounts, secrets, revealSeed, deriveCustom, deriveReceiveAddrs, send, signMessage, signMessageImported, signCp, signStamp, psbtInputs, decodeTxOutputs, describePsbt, signProviderPsbt, signProvider, buildUnsignedSend, addrHash, sendEvm, sendSol, sendSpl, sendCnft, solSignMessage, solSignTransaction,
+  importKey, importKeys, removeImportedKey, importedAccounts, importedAddresses,
+  accounts, secrets, revealSeed, deriveCustom, deriveReceiveAddrs, isCwPhrase, cwDeriveAddrs, send, signMessage, signMessageImported, signCp, signStamp, psbtInputs, decodeTxOutputs, describePsbt, signProviderPsbt, signProvider, buildUnsignedSend, addrHash, sendEvm, sendSol, sendSpl, sendCnft, solSignMessage, solSignTransaction,
   buildHwSend, finalizeHwSend, // hardware (Ledger) BTC send — keyless: builds an annotated PSBT, finalizes with device sigs
   ethPersonalSign, ethSignTypedData, erc20TransferData, erc20ApproveData, selfTest,
   resumeSession, getSessionSecret, onLockChange, armAutoLock, // cross-surface session (extension)

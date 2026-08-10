@@ -1,6 +1,6 @@
 /*
  * Wonder Wallet dApp provider — request broker (pure decision logic).
- * Phase 12 (v0.48). STAGED: not wired into the build until after store approval.
+ * Phase 12 (v0.48). ACTIVE — the dApp provider ships wired into every build and injects on all sites (universal, MetaMask/Phantom model, v0.48+). See STORE_LISTING.md + docs/DAPP_PROVIDER_PLAN.md (superseded).
  *
  * decide() is a PURE function: given (method, origin, permission store) it returns what the
  * background service worker should do — serve directly, open an approval popup, revoke, or reject

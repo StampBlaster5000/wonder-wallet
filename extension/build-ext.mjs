@@ -11,6 +11,7 @@ const gRoot = execSync('npm root -g').toString().trim();
 const { Resvg } = require(join(gRoot, '@resvg', 'resvg-js'));
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const PKG = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')); // single version source (audit #8)
 const PUB = join(ROOT, 'public');
 const SRC = join(ROOT, 'extension', 'src');
 const DIST = join(ROOT, 'extension', 'dist');
@@ -71,12 +72,14 @@ const DAPP_HOSTS = ['http://*/*', 'https://*/*'];
 const manifest = {
   manifest_version: 3,
   name: 'Wonder Wallet',
-  version: '0.52.0',
+  version: PKG.version,
   description: 'A self-custodial Bitcoin wallet for collectors. Your keys, your assets, and your data stay on your own device.',
   action: { default_title: 'Wonder Wallet', default_popup: 'popup.html' },
   background: { service_worker: 'background.js' },
   side_panel: { default_path: 'sidepanel.html' },
-  permissions: ['storage', 'alarms', 'sidePanel', 'scripting'],
+  // NOTE: 'scripting' dropped (audit #7c) — injection is via static content_scripts, no chrome.scripting.* call
+  // exists, and dropping it shrinks the Chrome permission warning. (Re-add if an allowlist runtime toggle lands.)
+  permissions: ['storage', 'alarms', 'sidePanel'],
   host_permissions: [PROXY + '/*'],
   content_scripts: [{
     matches: DAPP_HOSTS,

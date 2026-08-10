@@ -40,23 +40,31 @@
     </div>
     <div class="meta">
       <a class="nav-login" href="./" title="Back to homepage">← Home</a>
-      <button class="dapps-btn" id="dappsBtn">⊞ dApps</button>
+      <button class="dapps-btn" id="dappsBtn" title="Toggle the tools panel">☰ Tools</button>
       <button class="dapps-btn" id="backupBtn" title="Back up / restore your local settings">⤓ Backup</button>
       <span class="badge" id="phaseBadge">Beta</span>
       <span class="ver" id="verTag">v0.32.0</span>
     </div>
   </header>
 
-  <main class="wrap">
-    <!-- The full wallet renders here: unlock · create · restore · hardware-wallet · dashboard. -->
-    <section class="card wallet-card" id="wallet">
-      <div class="card-h">
-        <h2>Your wallet</h2>
-        <span class="tag">keys never leave your browser</span>
-      </div>
-      <div id="walletBody"><div class="statusline load">Loading key engine…</div></div>
-    </section>
-  </main>
+  <div class="term-shell no-rail" id="termShell">
+    <!-- Docked tools rail (dApp dashboard) — first-party tooling + connections. Rendered by dapps.js. -->
+    <aside class="toolrail" id="toolRail" aria-label="Tools panel"></aside>
+
+    <main class="wrap">
+      <!-- The full wallet renders here: unlock · create · restore · hardware-wallet · dashboard. -->
+      <section class="card wallet-card" id="wallet">
+        <div class="card-h">
+          <h2>Your wallet</h2>
+          <span class="tag">keys never leave your browser</span>
+        </div>
+        <div id="walletBody"><div class="statusline load">Loading key engine…</div></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Scrim behind the rail when it opens as a drawer on mobile -->
+  <div class="rail-scrim" id="railScrim" hidden></div>
 
   <div id="modal" class="modal" hidden><div class="modal-card" id="modalCard"></div></div>
 

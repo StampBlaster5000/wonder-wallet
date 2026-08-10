@@ -25,7 +25,7 @@
       <p class="fine">The <b>Chrome Web Store</b> version is the easiest install — but power users can run the very latest unpacked build (newest multi-chain dApp features) here.</p>
       <a class="btn btn-gold" href="${STORE}" target="_blank" rel="noopener">Get it from the Chrome Web Store →</a>
       <p class="fine" style="margin-top:16px"><b>Or load the latest unpacked build:</b></p>
-      <a class="btn btn-ghost" href="wonder-wallet-b22.zip" download>⬇ Download the beta (.zip) — v0.51 · Testnet Mode</a>
+      <a class="btn btn-ghost" href="wonder-wallet-b22.zip" download>⬇ Download the beta (.zip) — v0.52 · ETH portfolio & CP re-issue</a>
       <div class="dl-steps">
         <div class="dl-step"><span class="dl-n">1</span><span>Unzip the download.</span></div>
         <div class="dl-step"><span class="dl-n">2</span><span>Open <code>chrome://extensions</code> and turn on <b>Developer mode</b> (top-right).</span></div>

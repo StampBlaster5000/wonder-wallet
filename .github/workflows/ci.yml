@@ -39,10 +39,15 @@ jobs:
       - name: Syntax check (server + browser scripts)
         run: |
           set -e
-          for f in server.js sources/*.js extension/src/*.js public/*.js; do
+          # audit #7: recurse into extension/src/provider/ (the dApp-provider stack was previously unchecked)
+          shopt -s globstar
+          for f in server.js sources/*.js extension/src/**/*.js public/*.js; do
             node --check "$f" || { echo "::error file=$f::Syntax error"; exit 1; }
           done
           echo "All server + browser scripts parsed cleanly."
+
+      - name: Dependency audit (audit #7)
+        run: npm audit --omit=dev --audit-level=high || echo "::warning::npm audit reported advisories (non-blocking)"
 
       - name: Run test suites
         # Pure logic/crypto tests — no server, no browser, no secrets. Covers BIP-322/EIP-712/

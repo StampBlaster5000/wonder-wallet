@@ -123,7 +123,7 @@
       const c = await fetch('api/src101/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dryRun: true, params: { op, ...params } }) }).then((r) => r.json());
       if (c && c.estimate) {
         const miner = Number(c.est_miner_fee || 0), dust = Number(c.total_dust_value || 0), total = Number(c.total_cost || miner + dust);
-        hostEl.innerHTML = `<div class="fine">Est. cost: <b>${total.toLocaleString('en-US')} sats</b> <span class="muted">(${miner.toLocaleString()} miner + ${dust.toLocaleString()} dust · ~${c.est_tx_size || '—'} vB)</span> + any registration price</div>`;
+        hostEl.innerHTML = `<div class="fine">Est. cost: <b>${total.toLocaleString('en-US')} sats</b> <span class="muted">(${miner.toLocaleString()} miner + ${dust.toLocaleString()} dust · ~${c.est_tx_size != null ? Number(c.est_tx_size) : '—'} vB)</span> + any registration price</div>`; // Number-coerce (audit #7b)
       } else hostEl.innerHTML = '';
     } catch (_) { hostEl.innerHTML = ''; }
   }

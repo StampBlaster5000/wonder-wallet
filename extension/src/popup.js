@@ -357,6 +357,10 @@
     if (acctKind === 'hardware' && HW) return hwRenderMain(); // a paired Ledger renders even with no seed vault
     try {
       var has = await C.hasVault();
+      // Locked or vault gone → tear down any open overlay (asset detail, Tools, compose…) so it
+      // can't float over the Unlock / setup screen. #pop-ov is a body sibling of #app, so the
+      // app re-render alone never removes it.
+      if (!has || !C.isUnlocked()) { var _ov = document.getElementById('pop-ov'); if (_ov) _ov.remove(); }
       if (!has) { if (HW) { acctKind = 'hardware'; return hwRenderMain(); } return renderNoVault(); } // hardware-only user → their Ledger
       if (!C.isUnlocked()) return renderLocked();
       refreshImported(); // imported accounts live in the (unlocked) core; refresh before rendering
@@ -536,6 +540,7 @@
       ? hwScanCache.results.filter(function (r) { return r.sum.has && r.index !== 0; }) : [];
     var html = '<div class="menu"><div class="menu-hd">🔐 Ledger · ' + esc(CH[chain].name) + '</div>';
     if (canScan) html += '<button class="menu-opt' + (hwAgg ? ' on' : '') + '" data-a="agg"><span>⊕ Portfolio · all addresses<br><span class="fine">combined balances &amp; assets</span></span></button>';
+    else if (chain === 'btc') html += '<div class="menu-opt" style="opacity:.6;cursor:default"><span>⊕ Portfolio unavailable<br><span class="fine">unpair &amp; reconnect the Ledger to enable the all-address scan</span></span></div>';
     if (chain === 'btc') {
       html += '<div class="menu-hd">Addresses</div>';
       html += '<button class="menu-opt' + (onMain ? ' on' : '') + '" data-a="idx" data-i="0" data-addr="' + esc(mainAddr || '') + '"><span>0/0 · ' + esc(short(mainAddr || '—')) + '<br><span class="fine">main receiving address</span></span></button>';
@@ -627,7 +632,9 @@
       + (b.nativeSegwit ? row('Native SegWit', b.nativeSegwit.address) : '') + (b.legacy ? row('Legacy · Counterparty/Stamps', b.legacy.address) : '') + (b.taproot ? row('Taproot', b.taproot.address) : '')
       + '<div class="actions" style="margin-top:10px"><button class="btn ghost" id="rvX">Close</button></div></div>');
     document.getElementById('rvX').onclick = closeOv;
-    app.querySelectorAll('[data-copy2]').forEach(function (el) { el.onclick = function () { copy(el.getAttribute('data-copy2'), el); }; });
+    // The Receive window is an overlay (#pop-ov is a body sibling of #app), so scope to the document —
+    // app.querySelectorAll would find none of these buttons and the copy would silently do nothing.
+    document.querySelectorAll('#pop-ov [data-copy2]').forEach(function (el) { el.onclick = function () { copy(el.getAttribute('data-copy2'), el); }; });
   }
   // Resolve the current source address's signing derivation (pub + relative path "0/i").
   function hwSourceEntry() {
@@ -717,16 +724,28 @@
   }
   async function hwSignBroadcast(built, to) {
     var s = document.getElementById('hcStatus'); s.className = 'p-hint'; s.textContent = 'Verifying transaction…';
+    var step = 'verify', nIn = 0;
     try {
       // SECURITY: the tx must pay ONLY the recipient you entered (+ change back to the source). Verify before signing.
       var outs = C.decodeTxOutputs(built.psbt) || [];
       if (!outs.some(function (o) { return o.address === to; })) throw new Error('Safety check failed — the transaction does not pay the address you entered. Aborted.');
+      try { nIn = (built.inputs && built.inputs.length) || (C.psbtInputs(built.psbt) || []).length; } catch (e) {}
+      step = 'load-device';
       var HWm = await hwLoadBundle();
       s.textContent = 'Unlock your Ledger with the Bitcoin app open…';
+      step = 'connect';
       await HWm.connect(); // reuse the paired grant — no picker
       s.textContent = 'Confirm on your Ledger — check the recipient & amount on the device…';
+      step = 'sign';
       var res = await HWm.signPsbt(built.psbt, HW.account || 0);
-      var fin = C.finalizeHwSend(built.psbt, res.signatures);
+      // The device returns one partial signature per input it recognises as its own. If it signed
+      // NONE (or fewer than the inputs), finalizing would blow up cryptically — surface it clearly.
+      var sigs = (res && res.signatures) || [];
+      if (!sigs.length) throw new Error('The Ledger returned no signatures — it didn’t recognise these ' + nIn + ' input(s) as its own. This usually means a fresh device grant is needed: re-pair from the Connect flow, then retry.');
+      if (nIn && sigs.length < nIn) throw new Error('The Ledger only signed ' + sigs.length + ' of ' + nIn + ' inputs — a consolidation across multiple addresses needs the device to sign every input. Re-pair and retry; if it persists, send from a single address instead.');
+      step = 'finalize';
+      var fin = C.finalizeHwSend(built.psbt, sigs);
+      step = 'broadcast';
       s.textContent = 'Broadcasting…';
       var r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: fin.txhex }) }).then(function (x) { return x.json(); });
       if (r.error) throw new Error(r.detail || r.error);
@@ -734,11 +753,15 @@
       s.className = 'p-hint'; s.innerHTML = '<span style="color:var(--green)">Sent ✓ — ' + esc(String(r.txid || fin.txid).slice(0, 20)) + '…</span>';
       setTimeout(hwRenderMain, 2200);
     } catch (err) {
+      try { console.error('[WonderHW] sign/broadcast failed at [' + step + ']:', err); } catch (e) {}
       var m = String(err && err.message || '');
       s.className = 'p-err';
-      s.textContent = /denied|rejected|0x6985|6985|user.*declin/i.test(m) ? 'Rejected on the Ledger.'
+      var friendly = /denied|rejected|0x6985|6985|user.*declin/i.test(m) ? 'Rejected on the Ledger.'
         : /No device selected|not connected|failed to open|open the .* app|INS_NOT_SUPPORTED|6d00|access denied|in use/i.test(m) ? 'Couldn’t reach the Ledger — unlock it with the Bitcoin app open. If nothing prompts, pair again from the Connect flow (a fresh device grant may be needed for signing).'
-        : ('Failed: ' + m);
+        : /no signatures|only signed/i.test(m) ? m // our own clear guidance — show as-is
+        : ('Failed at ' + step + ': ' + m);
+      s.innerHTML = '<div>' + esc(friendly) + '</div>'
+        + (/^Failed at/.test(friendly) ? '<div class="fine" style="margin-top:6px;opacity:.7;word-break:break-word">details: ' + esc((m || 'unknown').slice(0, 200)) + '</div>' : '');
     }
   }
   // Hardware-view settings (the gear): the globally-useful prefs + Ledger controls (no seed-only ops).
@@ -807,7 +830,7 @@
     var go = async function () {
       var e = document.getElementById('suErr'); e.className = 'p-err'; e.textContent = '';
       var p1 = document.getElementById('suPw1').value, p2 = document.getElementById('suPw2').value, pp = document.getElementById('suPp').value;
-      if (p1.length < 8) { e.textContent = 'Use at least 8 characters.'; return; }
+      if (p1.length < 12) { e.textContent = 'Use at least 12 characters.'; return; }
       if (p1 !== p2) { e.textContent = 'Passwords do not match.'; return; }
       document.getElementById('suGo').disabled = true; e.className = 'p-hint'; e.textContent = 'Encrypting…';
       try { await C.createVault(_draft.mnemonic, pp, p1); _draft = null; render(); }
@@ -819,21 +842,29 @@
   function restoreForm() {
     app.innerHTML = setupHead('Restore from seed', render)
       + '<div class="setup-scroll"><div class="p-card" style="display:flex;flex-direction:column;gap:10px">'
-      + '<div class="p-hint">Enter your <b>12 or 24-word</b> BIP-39 recovery phrase.</div>'
+      + '<div class="p-hint">Enter your <b>12 or 24-word</b> BIP-39 recovery phrase — or a <b>12-word Counterwallet / FreeWallet</b> passphrase (we detect it automatically).</div>'
       + '<textarea class="p-in" id="rSeed" rows="3" placeholder="word1 word2 word3 …" spellcheck="false" autocapitalize="off" style="resize:none;font-family:var(--mono);font-size:12px"></textarea>'
+      + '<div id="rCw" class="fine"></div>'
       + '<input class="p-in" id="rPw1" type="password" placeholder="New password (8+ characters)" autocomplete="new-password"/>'
       + '<input class="p-in" id="rPw2" type="password" placeholder="Confirm password" autocomplete="new-password"/>'
       + '<details class="p-adv"><summary>Advanced — passphrase (25th word)</summary><input class="p-in" id="rPp" type="password" placeholder="Optional BIP-39 passphrase" autocomplete="off"/></details>'
       + '<div class="p-err" id="rErr"></div><button class="btn" id="rGo">Restore wallet</button></div></div>';
+    var seedEl = document.getElementById('rSeed'), cwNote = document.getElementById('rCw');
+    seedEl.oninput = function () {
+      var m = seedEl.value.trim().toLowerCase().replace(/\s+/g, ' ');
+      if (m && !C.validateMnemonic(m) && C.isCwPhrase(m)) cwNote.innerHTML = '<span style="color:var(--gold2)">↩ Counterwallet / FreeWallet passphrase detected — restores your legacy 1… assets, plus fresh multi-chain accounts from the same seed.</span>';
+      else cwNote.textContent = '';
+    };
     var go = async function () {
       var e = document.getElementById('rErr'); e.className = 'p-err'; e.textContent = '';
-      var m = document.getElementById('rSeed').value.trim().toLowerCase().replace(/\s+/g, ' ');
-      if (!C.validateMnemonic(m)) { e.textContent = 'That phrase is not a valid BIP-39 mnemonic (check spelling & order).'; return; }
+      var m = seedEl.value.trim().toLowerCase().replace(/\s+/g, ' ');
+      var isCw = !C.validateMnemonic(m) && C.isCwPhrase(m);
+      if (!C.validateMnemonic(m) && !isCw) { e.textContent = 'That phrase is not a valid BIP-39 mnemonic or Counterwallet passphrase (check spelling & order).'; return; }
       var p1 = document.getElementById('rPw1').value, p2 = document.getElementById('rPw2').value;
-      if (p1.length < 8) { e.textContent = 'Use a password of at least 8 characters.'; return; }
+      if (p1.length < 12) { e.textContent = 'Use a password of at least 12 characters.'; return; }
       if (p1 !== p2) { e.textContent = 'Passwords do not match.'; return; }
       document.getElementById('rGo').disabled = true; e.className = 'p-hint'; e.textContent = 'Encrypting…';
-      try { await C.createVault(m, document.getElementById('rPp').value, p1); render(); }
+      try { await C.createVault(m, document.getElementById('rPp').value, p1); if (isCw) setAcctBtcType(0, 'legacy'); render(); } // CW assets live on legacy → default there
       catch (err) { document.getElementById('rGo').disabled = false; e.className = 'p-err'; e.textContent = err.message || 'Could not restore wallet.'; }
     };
     document.getElementById('rGo').onclick = go;
@@ -1024,10 +1055,64 @@
   }
 
   function acctMenu() {
-    overlay('<div class="menu"><button class="menu-opt" id="mAdd">＋ Add account</button><button class="menu-opt" id="mImport">🔑 Import address (private key)</button><button class="menu-opt" id="mWatch">👁 Add watch-only address</button></div>');
+    overlay('<div class="menu"><button class="menu-opt" id="mAdd">＋ Add account</button><button class="menu-opt" id="mImport">🔑 Import address (private key)</button><button class="menu-opt" id="mCw">↩ Import Counterparty / FreeWallet passphrase</button><button class="menu-opt" id="mWatch">👁 Add watch-only address</button></div>');
     document.getElementById('mAdd').onclick = function () { addAccountMenu(); };
     document.getElementById('mImport').onclick = function () { closeOv(); importAddressForm(); };
+    document.getElementById('mCw').onclick = function () { closeOv(); cwImportForm(); };
     document.getElementById('mWatch').onclick = function () { closeOv(); addWatch(); };
+  }
+  // Import a 12-word Counterwallet / FreeWallet passphrase (Electrum-v1, NOT BIP-39): derive its legacy
+  // 1… addresses (m/0'/0/i), scan the first 10 for Counterparty / Stamps / SRC-20 activity, and import
+  // the active ones as signable keys (encrypted in the vault, password re-auth). Assets sit on legacy.
+  function cwImportForm() {
+    overlay('<div class="menu" style="padding:13px;display:flex;flex-direction:column;gap:9px">'
+      + '<div class="p-title" style="font-size:15px">Import Counterparty / FreeWallet passphrase</div>'
+      + '<div class="p-hint">Paste your <b>12-word Counterwallet / FreeWallet passphrase</b>. Wonder derives your legacy <b>1…</b> addresses, scans them for Counterparty / Stamps / SRC-20 assets, and imports the active ones — signable like your own accounts. This is <b>not</b> a BIP-39 seed.</div>'
+      + '<textarea class="p-in" id="cwPhrase" rows="2" placeholder="twelve words separated by spaces" spellcheck="false" autocomplete="off" style="resize:vertical;font-family:var(--mono);font-size:12px"></textarea>'
+      + '<div id="cwPreview" class="fine"></div>'
+      + '<input class="p-in" id="cwPw" type="password" placeholder="Your wallet password" autocomplete="current-password"/>'
+      + '<div class="p-err" id="cwErr"></div>'
+      + '<div class="actions"><button class="btn ghost" id="cwCancel">Cancel</button><button class="btn" id="cwGo" disabled>Scan &amp; import</button></div></div>');
+    var ph = document.getElementById('cwPhrase'), pv = document.getElementById('cwPreview'), go = document.getElementById('cwGo');
+    ph.oninput = function () {
+      var p = ph.value.trim().replace(/\s+/g, ' '); pv.innerHTML = ''; go.disabled = true;
+      if (!p) return;
+      try {
+        if (C.isCwPhrase(p)) { var a0 = C.cwDeriveAddrs(p, 0, 1)[0].address; pv.innerHTML = 'Primary address: <span style="font-family:var(--mono);color:var(--gold2)">' + esc(a0) + '</span>'; go.disabled = false; }
+        else { var n = p.split(' ').filter(Boolean).length; pv.innerHTML = '<span style="color:var(--red)">' + (n === 12 ? 'Not a Counterwallet passphrase — unknown words (this is the 1626-word Counterwallet list, not BIP-39).' : n + ' words — a Counterwallet passphrase is 12.') + '</span>'; }
+      } catch (e) { pv.innerHTML = '<span style="color:var(--red)">Could not read that passphrase.</span>'; }
+    };
+    document.getElementById('cwCancel').onclick = closeOv;
+    go.onclick = async function () {
+      var err = document.getElementById('cwErr'); err.className = 'p-err'; err.textContent = '';
+      var p = ph.value.trim().replace(/\s+/g, ' '), pw = document.getElementById('cwPw').value;
+      if (!C.isCwPhrase(p)) { err.textContent = 'Enter a valid 12-word Counterwallet passphrase.'; return; }
+      if (!pw) { err.textContent = 'Enter your wallet password.'; return; }
+      go.disabled = true; err.className = 'p-hint'; err.textContent = 'Deriving & scanning your addresses…';
+      try {
+        var derived = C.cwDeriveAddrs(p, 0, 10); // legacy 1… addresses at m/0'/0/i
+        var active = [];
+        for (var i = 0; i < derived.length; i += 4) {
+          await Promise.all(derived.slice(i, i + 4).map(async function (d) {
+            try {
+              var r = await fetch('api/btc/' + d.address + '/assets').then(function (x) { return x.json(); });
+              var has = ((r.counterparty || []).length) + ((r.stamps || []).length) + ((r.src20 || []).length);
+              if (d.index === 0 || has > 0) active.push(d);
+            } catch (e) { if (d.index === 0) active.push(d); }
+          }));
+        }
+        active.sort(function (a, b) { return a.index - b.index; });
+        err.textContent = 'Importing ' + active.length + ' address' + (active.length === 1 ? '' : 'es') + '…';
+        var res = await C.importKeys(active.map(function (d) { return d.wif; }), pw, active.map(function (d) { return 'FreeWallet · 0/' + d.index; }));
+        // CP / Stamps assets live on the LEGACY address — default each import to legacy so they show.
+        res.forEach(function (r) { setImpBtcType(r.id, 'legacy'); });
+        refreshImported();
+        impId = res[0].id; acctKind = 'imported'; chain = 'btc'; closeOv(); render();
+      } catch (e2) {
+        go.disabled = false; err.className = 'p-err';
+        err.textContent = /wrong_password/.test(e2.message) ? 'Wrong wallet password.' : (e2.message || 'Import failed.');
+      }
+    };
   }
   // Import a WIF private key → restores its address; encrypted in the vault (password re-auth).
   function importAddressForm() {
@@ -1250,9 +1335,26 @@
   }
   function stampDetail(n) {
     overlay('<div class="p-hint" style="padding:18px;text-align:center">Loading stamp #' + esc(String(n.stamp)) + '…</div>');
-    fetch('api/stamp/' + encodeURIComponent(n.stamp)).then(function (r) { return r.json(); }).then(function (s) {
-      s.stamp = (s.stamp != null ? s.stamp : n.stamp); s.cpid = s.cpid || n.cpid;
-      s.held = (n.qty != null ? Number(n.qty) : null); // quantity this address holds (from the balance feed)
+    var cpid = n.cpid;
+    // Fetch the stamp (art/mime) AND the Counterparty asset state in parallel. The CP asset endpoint is
+    // the AUTHORITATIVE source for lock/supply/divisible/issuer — the stamp endpoint can be flaky or omit
+    // them, and defaulting "Locked: no" when the state failed to load is misleading (looked unlocked when
+    // it's actually locked). Unknown → shown as "—", never a false "no".
+    Promise.all([
+      fetch('api/stamp/' + encodeURIComponent(n.stamp)).then(function (r) { return r.json(); }).catch(function () { return {}; }),
+      cpid ? fetch('api/cp/asset/' + encodeURIComponent(cpid)).then(function (r) { return r.json(); }).catch(function () { return {}; }) : Promise.resolve({}),
+    ]).then(function (arr) {
+      var s = (arr[0] && !arr[0].error) ? arr[0] : {};
+      var cp = (arr[1] && !arr[1].error) ? arr[1] : {};
+      if (cp.locked != null) s.locked = cp.locked;
+      if (cp.supply != null) s.supply = cp.supply;
+      if (cp.divisible != null) s.divisible = cp.divisible;
+      if (cp.owner) s.owner = cp.owner;
+      if (!s.creator && cp.issuer) s.creator = cp.issuer;
+      if (!s.description && cp.description) s.description = cp.description;
+      s.stamp = (s.stamp != null ? s.stamp : n.stamp); s.cpid = s.cpid || cpid;
+      s.mime = s.mime || n.mime || null;
+      s.held = (n.qty != null ? Number(n.qty) : (s.held != null ? s.held : null)); // held by this address (balance feed)
       renderStampDetail(s);
     }).catch(function () { var pop = document.querySelector('#pop-ov .pop-pop'); if (pop) pop.innerHTML = '<div class="p-err" style="padding:18px">Could not load stamp details.</div>'; });
   }
@@ -1273,7 +1375,7 @@
     pop.innerHTML = '<div class="stamp-detail">'
       + (isHtml ? '<iframe class="sd-art sd-frame" id="sdFrame" sandbox="allow-scripts" scrolling="no"></iframe>' : '<img class="sd-art" loading="lazy" src="api/stamp/' + encodeURIComponent(s.stamp) + '/content"/>')
       + '<div class="sd-title">Stamp #' + esc(String(s.stamp)) + '</div>'
-      + '<div class="sd-grid">' + (s.held != null ? sdRow('You hold', fmt(s.held, 0)) : '') + sdRow('Supply', s.supply != null ? fmt(s.supply, 0) : '—') + sdRow('Locked', s.locked ? 'yes' : 'no') + sdRow('Divisible', s.divisible ? 'yes' : 'no') + sdRow('Type', s.mime || '—') + (s.fileSize ? sdRow('Size', fmtBytes(s.fileSize)) : '') + '</div>'
+      + '<div class="sd-grid">' + (s.held != null ? sdRow('You hold', fmt(s.held, 0)) : '') + sdRow('Supply', s.supply != null ? fmt(s.supply, s.divisible ? 8 : 0) : '—') + sdRow('Locked', s.locked === true ? 'yes 🔒' : s.locked === false ? 'no' : '—') + sdRow('Divisible', s.divisible === true ? 'yes' : s.divisible === false ? 'no' : '—') + sdRow('Type', s.mime || '—') + (s.fileSize ? sdRow('Size', fmtBytes(s.fileSize)) : '') + '</div>'
       + '<div class="sd-mono" data-copy="' + esc(s.cpid || '') + '" title="Copy CPID">CPID · ' + esc(s.cpid || '—') + '</div>'
       + '<div class="sd-sub">Creator <span data-copy="' + esc(s.creator || '') + '" title="Copy creator address" style="font-family:var(--mono);cursor:pointer">' + esc(s.creator ? (s.creator.length > 24 ? s.creator.slice(0, 12) + '…' + s.creator.slice(-8) : s.creator) : '—') + '</span></div>'
       + tools

@@ -1,4 +1,4 @@
-/* Wonder Wallet dApp provider — approval dialog styles. Phase 12 (v0.48), STAGED.
+/* Wonder Wallet dApp provider — approval dialog styles. Phase 12 (v0.48), ACTIVE — the dApp provider ships wired into every build and injects on all sites (universal, MetaMask/Phantom model, v0.48+). See STORE_LISTING.md + docs/DAPP_PROVIDER_PLAN.md (superseded).
    Reuses popup.css theme variables (--bg/--surface/--text/--gold/--border …). */
 body { width: 380px; }
 .ap-wrap { padding: 16px 16px 18px; display: flex; flex-direction: column; gap: 11px; }

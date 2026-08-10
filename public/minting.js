@@ -37,6 +37,10 @@
   }
   const STAMP_MAX = 100 * 1024; // hard cap: a stamp is paid for byte-by-byte in BTC; also keeps us under the 512KB JSON limit
   let ACCOUNT = 0, BTC = null, FEE = 10, HOLDINGS = null, _tickT = null, BTC_USD = 0;
+  // EXT = a connected/hardware signer ({address, name, signPsbt[, pushPsbt]}) when the wallet isn't a
+  // local seed. When set, the composed SRC-20 / Stamps PSBT is signed by that wallet/device, not locally.
+  let EXT = null;
+  const b64hex = (b) => { const bin = atob(b); let h = ''; for (let i = 0; i < bin.length; i++) h += (bin.charCodeAt(i) & 0xff).toString(16).padStart(2, '0'); return h; };
   const usdTag = (sats) => (BTC_USD && sats ? ` · ≈ $${((sats / 1e8) * BTC_USD).toLocaleString('en-US', { maximumFractionDigits: 2 })}` : '');
 
   // Inline validation: throw with a friendly message the catch blocks surface.
@@ -57,9 +61,11 @@
 
   // ── SRC-20 deploy / mint / transfer ──
   let PREFILL_TICK = null;
-  function src20(account, btcAddress) { ACCOUNT = account; BTC = btcAddress; PREFILL_TICK = null; loadFee().then(() => src20Form('deploy')); }
+  function src20(account, btcAddress) { EXT = null; ACCOUNT = account; BTC = btcAddress; PREFILL_TICK = null; loadFee().then(() => src20Form('deploy')); }
+  // Connected wallet / Ledger: compose here, that signer signs + broadcasts (same audited pipeline).
+  function src20Connected(conn) { EXT = conn; ACCOUNT = 0; BTC = conn.address; PREFILL_TICK = null; loadFee().then(() => src20Form('deploy')); }
   // Deep-link from the portfolio: open the Transfer tab pre-selected to a held token.
-  function sendSrc20(account, btcAddress, tick) { ACCOUNT = account; BTC = btcAddress; PREFILL_TICK = tick; loadFee().then(() => src20Form('transfer')); }
+  function sendSrc20(account, btcAddress, tick) { EXT = null; ACCOUNT = account; BTC = btcAddress; PREFILL_TICK = tick; loadFee().then(() => src20Form('transfer')); }
   function src20Form(op) {
     // Deploy/Mint: a typed ticker with a live ✓/✗ status chip. Transfer: a dropdown of the
     // wallet's own tokens (no typing — you can only send what you hold).
@@ -152,7 +158,7 @@
           else if (r.complete) { chk.className = 'tickchk bad'; chk.innerHTML = `${CROSS} fully minted`; if (info) { info.hidden = false; info.className = 'mintinfo done'; info.innerHTML = '100% minted · 0 mints left'; } }
           else {
             chk.className = 'tickchk good'; chk.innerHTML = `${CHECK} mintable`;
-            if (info) { info.hidden = false; info.className = 'mintinfo'; const left = r.mints_left != null ? Number(r.mints_left).toLocaleString('en-US') + ' mints left' : 'open'; info.innerHTML = `<b>${r.progress}%</b> minted · ${left} · limit ${Number(r.limit).toLocaleString('en-US')}/mint`; }
+            if (info) { info.hidden = false; info.className = 'mintinfo'; const left = r.mints_left != null ? Number(r.mints_left).toLocaleString('en-US') + ' mints left' : 'open'; info.innerHTML = `<b>${Number(r.progress) || 0}%</b> minted · ${left} · limit ${Number(r.limit).toLocaleString('en-US')}/mint`; } // Number-coerce (audit #7b)
             if (r.limit && !$('#s_amt').value) $('#s_amt').value = r.limit; // prefill the per-mint amount
           }
         }
@@ -178,7 +184,8 @@
   }
 
   // ── Bitcoin Stamp art ──
-  function stampArt(account, btcAddress) { ACCOUNT = account; BTC = btcAddress; loadFee().then(stampForm); }
+  function stampArt(account, btcAddress) { EXT = null; ACCOUNT = account; BTC = btcAddress; loadFee().then(stampForm); }
+  function stampArtConnected(conn) { EXT = conn; ACCOUNT = 0; BTC = conn.address; loadFee().then(stampForm); }
   let FILE = null;
   function stampForm() {
     modal(`<h3 class="m-title">Mint Stamp art</h3>
@@ -231,7 +238,7 @@
         <div><span class="k">Est. miner fee</span><span class="v">${sat(r.est_miner_fee)}</span></div>
         <div><span class="k">Est. dust</span><span class="v">${sat(r.est_dust_value)}</span></div>
         <div><span class="k">Est. total cost</span><span class="v">${sat(r.total_cost)}</span></div>
-        <div><span class="k">Est. size</span><span class="v">${r.est_tx_size} vB</span></div>
+        <div><span class="k">Est. size</span><span class="v">${r.est_tx_size != null ? Number(r.est_tx_size) : '—'} vB</span></div>
       </div>
       <div class="wbtns"><button class="ghost" id="m_back">Back</button><button class="primary" id="m_done">Done</button></div>`);
     $('#m_back').onclick = (typeof back === 'function') ? back : close;
@@ -254,14 +261,32 @@
     $('#m_back').onclick = (typeof back === 'function') ? back : close;
     if ($('#m_x')) $('#m_x').onclick = close;
     $('#m_go').onclick = async () => {
-      const s = $('#m_status'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Signing locally & broadcasting…';
+      const s = $('#m_status'); s.hidden = false; s.className = 'statusline load';
       try {
-        // Imported accounts sign with their own WIF (synthetic active account carries importedId).
-        const importedId = (window.__activeAccount && window.__activeAccount.importedId) || null;
-        const signed = C.signStamp(r.hex, ACCOUNT, 'nativeSegwit', {}, importedId);
-        const b = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then((x) => x.json());
-        if (b.error) throw new Error(b.detail || b.error);
-        s.className = 'statusline load'; s.innerHTML = `Broadcast ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(b.txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(b.txid).slice(0, 18))}…</a>`;
+        let txid;
+        if (EXT) {
+          // Connected wallet / Ledger: it signs the composed PSBT, then we broadcast. UniSat/OKX want
+          // hex; the Wonder/Ledger adapter returns { txhex } which we broadcast via our server (one prompt).
+          s.textContent = 'Waiting for approval in ' + (EXT.name || 'your wallet') + '…';
+          const hex = /^[0-9a-fA-F]+$/.test(r.hex) ? r.hex : b64hex(r.hex);
+          const signed = await EXT.signPsbt(hex, { autoFinalized: true });
+          s.textContent = 'Broadcasting…';
+          if (signed && typeof signed === 'object' && signed.txhex) {
+            const b = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then((x) => x.json());
+            if (b.error) throw new Error(b.detail || b.error); txid = b.txid || signed.txid;
+          } else {
+            const signedStr = typeof signed === 'string' ? signed : (signed && (signed.psbt || signed.hex)) || hex;
+            const tid = await EXT.pushPsbt(signedStr); txid = typeof tid === 'string' ? tid : (tid && (tid.txid || tid.result)) || String(tid);
+          }
+        } else {
+          s.textContent = 'Signing locally & broadcasting…';
+          // Imported accounts sign with their own WIF (synthetic active account carries importedId).
+          const importedId = (window.__activeAccount && window.__activeAccount.importedId) || null;
+          const signed = C.signStamp(r.hex, ACCOUNT, 'nativeSegwit', {}, importedId);
+          const b = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then((x) => x.json());
+          if (b.error) throw new Error(b.detail || b.error); txid = b.txid;
+        }
+        s.className = 'statusline load'; s.innerHTML = `Broadcast ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(txid).slice(0, 18))}…</a>`;
         // Broadcast done — the tx is irreversible, so swap the actions for a single Done that closes.
         const bs = $('#m_back'), gs = $('#m_go');
         if (bs) bs.remove();
@@ -270,5 +295,5 @@
     };
   }
 
-  window.MintingModules = { src20, sendSrc20, stampArt };
+  window.MintingModules = { src20, sendSrc20, stampArt, src20Connected, stampArtConnected };
 })();

@@ -1,5 +1,5 @@
 /*
- * Wonder Wallet dApp provider — Solana (Wallet Standard). Phase 12 (v0.48). STAGED.
+ * Wonder Wallet dApp provider — Solana (Wallet Standard). Phase 12 (v0.48). ACTIVE — the dApp provider ships wired into every build and injects on all sites (universal, MetaMask/Phantom model, v0.48+). See STORE_LISTING.md + docs/DAPP_PROVIDER_PLAN.md (superseded).
  * Registers a Wallet-Standard wallet so @solana/wallet-adapter dApps (e.g. emblemvault.ai) auto-list
  * "Wonder Wallet" with NO site changes. Marshals connect/sign to the shared page↔background bridge.
  * NOTE: validate against a live wallet-adapter dApp at activation — the Wallet Standard surface is finicky.
