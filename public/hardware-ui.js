@@ -57,7 +57,7 @@
         const m = String(e && e.message || '');
         const msg = /No device selected|cancelled|user gesture/i.test(m) ? 'Connection cancelled or no device selected.'
           : /open the .* app|INS_NOT_SUPPORTED|0x6d00|6d00|6511|6e00/i.test(m) ? 'Couldn’t read the Bitcoin app — make sure the Ledger is unlocked with the Bitcoin app open, then use Reconnect below.'
-          : /locked|0x5515|5515/i.test(m) ? 'Your Ledger is locked — unlock it and open the Bitcoin app, then use Reconnect below.'
+          : /locked|0x5515|5515|0x6a87|6a87|0x6b0c|6b0c/i.test(m) ? 'Your Ledger is locked — unlock it (enter your PIN) and open the Bitcoin app, then use Reconnect below.'
           : ('Couldn’t connect: ' + m);
         // Offer a fresh-picker reconnect: the reliable recovery when a reused grant is stale.
         // Surface the RAW device error (+ console) so a failing attempt is diagnosable from a screenshot.

@@ -468,7 +468,7 @@
       var m = String(e && e.message || '');
       var msg = /No device selected|cancelled|user gesture/i.test(m) ? 'Connection cancelled or no device selected.'
         : /open the .* app|INS_NOT_SUPPORTED|0x6d00|6d00|6511|6e00/i.test(m) ? 'Couldn’t read the Bitcoin app — unlock the Ledger with the Bitcoin app open, then Reconnect.'
-        : /locked|0x5515|5515/i.test(m) ? 'Your Ledger is locked — unlock it, open the Bitcoin app, then Reconnect.'
+        : /locked|0x5515|5515|0x6a87|6a87|0x6b0c|6b0c/i.test(m) ? 'Your Ledger is locked — unlock it (enter your PIN) and open the Bitcoin app, then Reconnect.'
         : ('Couldn’t connect: ' + m);
       try { console.error('[WonderHW] connect failed:', e); } catch (x) {}
       if (err) { err.className = 'p-err'; err.innerHTML = esc(msg) + '<div class="fine" style="margin-top:6px;opacity:.7;word-break:break-word">details: ' + esc((m || 'unknown').slice(0, 200)) + '</div>'; }
