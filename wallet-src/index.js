@@ -1086,17 +1086,23 @@ async function unlock(password) {
 // it to the extension context. On a normal webpage chrome.runtime.id is undefined → these are inert, so
 // a future in-origin script can't call getSessionSecret() to lift the whole wallet with one bare call.
 const _extCtx = () => { try { return typeof chrome !== 'undefined' && !!(chrome.runtime && chrome.runtime.id); } catch (_) { return false; } };
-// Restore an unlocked session from a secret the caller already holds — NO password needed. Extension-only.
+// On the public Terminal these stay INERT by default (audit #2 hardening). They open ONLY when the user
+// EXPLICITLY enables "stay signed in" on the web — the Auto-lock timer setting sets ww:persist='1', which
+// lets the Terminal persist the unlocked session in sessionStorage across refreshes. No opt-in → memory-only,
+// so a random in-origin script still can't lift the secret with a bare call.
+const _webPersist = () => { try { return typeof localStorage !== 'undefined' && localStorage.getItem('ww:persist') === '1'; } catch (_) { return false; } };
+const _sessionOk = () => _extCtx() || _webPersist();
+// Restore an unlocked session from a secret the caller already holds — NO password needed.
 function resumeSession(secret) {
-  if (!_extCtx()) return false;
+  if (!_sessionOk()) return false;
   if (!secret || !secret.mnemonic) return false;
   SESSION = { mnemonic: secret.mnemonic, passphrase: secret.passphrase || '', imported: secret.imported || [] };
   armAutoLock();
   fireLock(true);
   return true;
 }
-// The current in-memory secret (unlocked only) — so the extension can persist it across surfaces. Extension-only.
-function getSessionSecret() { if (!_extCtx()) return null; return SESSION ? { mnemonic: SESSION.mnemonic, passphrase: SESSION.passphrase, imported: SESSION.imported || [] } : null; }
+// The current in-memory secret (unlocked only) — so the session can be persisted across surfaces/refreshes.
+function getSessionSecret() { if (!_sessionOk()) return null; return SESSION ? { mnemonic: SESSION.mnemonic, passphrase: SESSION.passphrase, imported: SESSION.imported || [] } : null; }
 
 function lock() {
   const was = !!SESSION;
