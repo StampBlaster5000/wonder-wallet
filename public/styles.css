@@ -60,7 +60,8 @@ body {
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(8px);
 }
-.brand { display: flex; align-items: center; gap: 13px; }
+.brand { display: flex; align-items: center; gap: 13px; text-decoration: none; color: inherit; cursor: pointer; }
+.brand:hover { opacity: 0.9; }
 .seal { filter: drop-shadow(0 2px 8px rgba(224,180,83,0.35)); display: flex; }
 .wordmark { display: flex; flex-direction: column; line-height: 1.15; }
 .wordmark .name {
@@ -529,6 +530,20 @@ button.achip:hover { border-color: var(--gold); filter: none; color: var(--gold2
 .mini.acct-x:hover { color: #fca5a5; border-color: #f0685a; }
 .mini.btctype-chip { color: var(--gold2); font-weight: 600; }
 .mini.btctype-chip:hover { border-color: var(--gold); }
+/* Account switcher button + "Pro" account picker (mirrors the extension) */
+.acct-switch { display: inline-flex; align-items: center; gap: 8px; max-width: 260px; background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 9px; padding: 7px 11px; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.acct-switch:hover { border-color: var(--gold); }
+.acct-switch-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acct-switch .chev, .chev { color: var(--muted); font-size: 11px; }
+.acct-picker { display: flex; flex-direction: column; gap: 4px; max-height: 360px; overflow-y: auto; margin: 6px 0; }
+.acct-grp { font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 8px 2px 2px; }
+.acct-item { display: flex; align-items: center; gap: 6px; }
+.acct-pick { flex: 1; display: flex; align-items: center; gap: 9px; text-align: left; background: var(--surface2); border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; color: var(--text); font-family: inherit; font-size: 13px; cursor: pointer; }
+.acct-pick:hover { border-color: var(--gold); }
+.acct-pick.on { border-color: var(--gold); color: var(--gold2); }
+.adot { width: 7px; height: 7px; border-radius: 50%; background: var(--gold); flex: none; }
+.acct-kebab { flex: none; display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; background: var(--surface2); border: 1px solid var(--border); border-radius: 9px; color: var(--muted); cursor: pointer; padding: 0; }
+.acct-kebab:hover { border-color: var(--gold); color: var(--gold2); }
 .adv-opt.on { border-color: var(--gold); }
 .adv-opt.on b { color: var(--gold2); }
 .adv-opt .vmono { margin-top: 3px; word-break: break-all; }
@@ -541,6 +556,9 @@ button.primary { background: linear-gradient(180deg, var(--gold2), var(--gold));
 button.ghost { background: var(--surface3); color: var(--text); }
 button.ghost:hover { filter: brightness(1.25); }
 button.sm { font-size: 12.5px; padding: 9px 14px; }
+/* Icon-only button (e.g. the privacy/mask eye in the wallet header) — square-ish, centered glyph. */
+button.ic-btn { padding: 8px 10px; display: inline-flex; align-items: center; justify-content: center; }
+button.ic-btn.on { color: var(--gold2); }
 .link { background: transparent; color: var(--muted); font-size: 12.5px; padding: 4px 2px; }
 .link.danger:hover { color: var(--red); filter: none; }
 .wlinks { margin-top: 6px; }
@@ -838,6 +856,30 @@ a.dapp-name:hover { text-decoration: underline; }
   .nav-login, .badge { display: none; }
 }
 
+/* ── Wallet dashboard on phones — keep the account bar, portfolio and controls tidy at ~360–640px ── */
+@media (max-width: 640px) {
+  .wrap { padding-left: 12px; padding-right: 12px; gap: 16px; }
+  /* Account bar wraps: the account name + type chip take their own row; the tool buttons flow below. */
+  .dash-head { flex-wrap: wrap; }
+  .dash-head .acct-sel { flex: 1 1 100%; min-width: 0; flex-wrap: wrap; }
+  .dash-head-r { flex: 1 1 100%; flex-wrap: wrap; justify-content: flex-start; }
+  .acct-switch { flex: 1 1 auto; max-width: none; }
+  /* Portfolio: the three chains in a compact row, with the Total spanning full-width below (prominent,
+     not jammed in as a 4th cell). */
+  .pf-strip { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .pf-card { padding: 10px; min-width: 0; overflow: hidden; }
+  .pf-card .pf-ch, .pf-card .pf-usd, .pf-card .pf-nat { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pf-ch { font-size: 9.5px; }
+  .pf-usd { font-size: 15px; }
+  .pf-nat { font-size: 10px; }
+  .pf-total { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; border-left: none; border-top: 1px solid var(--border); padding: 10px 4px 2px; }
+  .pf-total-v { font-size: 20px; }
+  /* Slightly tighter controls so nothing overflows the viewport. */
+  .ghost.sm, .primary.sm { padding: 8px 12px; font-size: 12px; }
+  .dctab, .datab { padding: 7px 11px; }
+  .topbar { padding-left: 12px; padding-right: 12px; }
+}
+
 /* Send-to-dispenser detection */
 .disp-panel { margin: 4px 0 2px; padding: 11px 13px; border-radius: 10px; background: rgba(74,222,128,0.07); border: 1px solid rgba(74,222,128,0.3); }
 .disp-hit { font-size: 12.5px; color: var(--muted2); line-height: 1.5; }
@@ -852,10 +894,16 @@ a.dapp-name:hover { text-decoration: underline; }
 .disp-cost b { color: var(--gold2); }
 
 /* ── Password reveal (eye toggle wrapping password inputs) ── */
-.pw-wrap { position: relative; display: block; flex: 1; }
-.pw-wrap input { width: 100%; padding-right: 40px; }
+.pw-wrap { position: relative; display: flex; flex: 1; }
+/* input fills the wrap's height — so when the wrap is stretched by a taller sibling (e.g. the Unlock
+   button in the lock-screen row), the eye stays vertically centered on the field, not dropped below it. */
+.pw-wrap input { width: 100%; padding-left: 13px; padding-right: 40px; }
 .pw-eye { position: absolute; top: 50%; right: 7px; transform: translateY(-50%); width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; padding: 0; border: none; background: transparent; color: var(--muted); cursor: pointer; }
 .pw-eye:hover { color: var(--gold2); }
+/* Hide the browser's built-in password reveal/clear control (Edge/IE) — we render our own .pw-eye
+   toggle, and the native control otherwise sits beside ours and looks like a misaligned second icon. */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear { display: none; }
 
 /* ── Activity / transaction history ── */
 .ac-filters { display: flex; gap: 6px; margin: 6px 0 12px; }

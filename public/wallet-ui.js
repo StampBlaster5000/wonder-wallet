@@ -126,7 +126,6 @@
   async function render() {
     const card = $('#wallet');
     if (!card) return;
-    ensurePrivacyBtn(); // inject the topbar privacy toggle once
     window.__activeAccount = null; // cleared on lock/none; set by renderUnlocked
     window.__connectedWallet = null; // set by renderConnected — the external-wallet session for the tools rail
     window.__hardwareWallet = null; // set by renderHardware — Ledger session (read-only in the Terminal for now)
@@ -134,6 +133,7 @@
     // owns its own network, and Ledger-testnet isn't validated — so hide the badge for those.
     if (acctKind === 'connected' && CONN) { setTopbarTools(true); syncNetBadge(true, false); return renderConnected(); } // external wallet (UniSat/OKX/Wonder) — no vault
     if (acctKind === 'hardware') { if (HW) { setTopbarTools(true); syncNetBadge(true, false); return renderHardware(); } acctKind = 'hd'; } // Ledger dashboard — rail shows (read-only state), tools await on-device signing
+    tryResumeSession(); // restore a persisted session (opt-in) so a page refresh doesn't force a re-login
     let state = 'none';
     try { if (C.isUnlocked()) state = 'unlocked'; else if (await C.hasVault()) state = 'locked'; } catch (_) {}
     setTopbarTools(state === 'unlocked'); // dApps / Backup / privacy only make sense once a wallet is open — hide on the create/restore/unlock screens
@@ -221,7 +221,7 @@
     body().innerHTML = `
       <div class="dash-head">
         <div class="acct-sel"><div class="hw-acct">🔌 ${esc(CONN.name)} · connected</div></div>
-        <div class="dash-head-r"><button class="ghost sm" id="connDisc">Disconnect</button></div>
+        <div class="dash-head-r">${walletToolsHtml()}<button class="ghost sm" id="dappsBtn" title="Open the tools panel">☰ Tools</button><button class="ghost sm" id="connDisc">Disconnect</button></div>
       </div>
       <div class="pf-strip" id="pfStrip">
         <button class="pf-card on solo" data-ch="btc"><span class="pf-ch">Bitcoin · ${esc(CONN.name)}</span>
@@ -236,6 +236,7 @@
       <div class="dash-actions wbtns" id="dashActions"></div>
       <div class="fine" style="margin-top:8px;opacity:.85">🔌 Connected via ${esc(CONN.name)} — you compose here, ${esc(CONN.name)} signs &amp; broadcasts. Keys never leave your wallet.</div>`;
     $('#connDisc').onclick = () => { try { CONN && CONN.disconnect(); } catch (_) {} try { WalletConnect.forget(); } catch (_) {} CONN = null; acctKind = 'hd'; render(); };
+    wireWalletTools();
     body().querySelectorAll('[data-copy]').forEach((el) => (el.onclick = () => copy(el.dataset.copy, el)));
     body().querySelectorAll('.datab').forEach((b) => (b.onclick = () => { dashTab = b.dataset.tab; body().querySelectorAll('.datab').forEach((x) => x.classList.toggle('on', x === b)); renderDashAssets(null); }));
     const bar = $('#dashActions');
@@ -468,7 +469,7 @@
     $('#unlockForm').onsubmit = async (e) => {
       e.preventDefault();
       const s = $('#unlockStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Decrypting…';
-      try { await C.unlock($('#unlockPw').value); renderUnlocked(); }
+      try { await C.unlock($('#unlockPw').value); refreshImported(); try { restoreLastAcct(); } catch (_) {} renderUnlocked(); }
       catch (err) { s.className = 'statusline err'; s.textContent = err.message === 'wrong_password' ? 'Wrong password.' : 'Unlock failed.'; }
     };
     $('#bForget').onclick = async () => { if (confirm('Remove the encrypted wallet from this browser? You can only restore it from your seed phrase.')) { await C.destroyVault(); render(); } };
@@ -509,16 +510,25 @@
   }
   function togglePrivacy() {
     PRIVACY = !PRIVACY; try { localStorage.setItem('ww:privacy', PRIVACY ? '1' : '0'); } catch (_) {}
-    const b = $('#privacyBtn'); if (b) { b.classList.toggle('on', PRIVACY); b.title = PRIVACY ? 'Privacy view ON — show balances' : 'Privacy view — hide balances'; b.innerHTML = PRIVACY ? EYE_OFF_SVG : EYE_SVG; }
+    const b = $('#bPrivacy'); if (b) { b.classList.toggle('on', PRIVACY); b.title = PRIVACY ? 'Privacy view ON — show balances' : 'Privacy view — hide balances'; b.innerHTML = PRIVACY ? EYE_OFF_SVG : EYE_SVG; }
     paintPortfolio(); if (DASH_ASSETS) renderDashAssets(DASH_ACC); // repaint token amounts from cache
+  }
+  // Wallet-only tools — privacy (mask balances) + settings backup. These belong INSIDE the wallet card
+  // header (beside Advanced / Lock), not in the site topbar, since they only make sense for an open wallet.
+  function walletToolsHtml() {
+    return '<button class="ghost sm ic-btn' + (PRIVACY ? ' on' : '') + '" id="bPrivacy" title="' + (PRIVACY ? 'Privacy view ON — show balances' : 'Privacy view — hide balances') + '">' + (PRIVACY ? EYE_OFF_SVG : EYE_SVG) + '</button>';
+    // Backup lives in the Advanced menu now (header de-clutter).
+  }
+  function wireWalletTools() {
+    const p = $('#bPrivacy'); if (p) { p.classList.toggle('on', PRIVACY); p.onclick = togglePrivacy; }
+    const d = $('#dappsBtn'); if (d) d.onclick = () => window.DappDashboard && window.DappDashboard.toggle(); // Tools now lives in the wallet card
   }
   // Inject the privacy toggle into the topbar once (works for both the web /app and the extension expanded view).
   // Show/hide the wallet-only topbar tools (dApps, Backup, privacy eye). They're meaningless before a
   // wallet is open, so they stay hidden on the create / restore / connect / unlock screens.
   function setTopbarTools(show, showRail) {
     if (showRail === undefined) showRail = show;
-    // Backup + privacy are available whenever any wallet is open (including read-only Ledger).
-    ['backupBtn', 'privacyBtn'].forEach((id) => { const el = document.getElementById(id); if (el) el.style.display = show ? '' : 'none'; });
+    // Backup + privacy now live INSIDE the wallet card header (walletToolsHtml), not the topbar.
     // The ☰ Tools button + docked rail track showRail — hidden on the create/restore/unlock landing AND
     // for a Ledger (read-only in the Terminal: Counterparty/send signing on hardware isn't wired yet, so
     // the signing-tool rail would be dead). Ledger uses its own account/portfolio view instead.
@@ -539,6 +549,49 @@
   }
   const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} };
+
+  // ── Web session persistence + idle auto-lock (opt-in). OFF by default: the seed stays memory-only and a
+  //    refresh re-locks (the audit-hardened default). When the user picks a timer, the unlocked session is
+  //    kept in sessionStorage (cleared on tab close) so a refresh restores it, and it auto-locks after the
+  //    chosen idle time. The IDLE setting drives ww:persist, which is what opens the core's resume gate. ──
+  const SESS_KEY = 'ww:session';
+  const IDLE_KEY = 'ww:idlemins'; // 'off'(default) | '1' | '5' | '15' | '30' | '60' | 'never'
+  function idleSetting() { try { return localStorage.getItem(IDLE_KEY) || 'off'; } catch (_) { return 'off'; } }
+  function persistOn() { return idleSetting() !== 'off'; }
+  function idleMs() { const v = idleSetting(); if (v === 'off' || v === 'never') return null; const n = parseInt(v, 10); return n > 0 ? n * 60000 : null; }
+  const FOREVER = 3650 * 24 * 60 * 60 * 1000;
+  function saveSession() {
+    if (!persistOn()) return;
+    try { const sec = C.getSessionSecret && C.getSessionSecret(); if (sec && sec.mnemonic) sessionStorage.setItem(SESS_KEY, JSON.stringify({ sec, at: Date.now() })); } catch (_) {}
+  }
+  function clearSession() { try { sessionStorage.removeItem(SESS_KEY); } catch (_) {} }
+  function armIdle() {
+    if (!C.isUnlocked()) return;
+    if (idleSetting() === 'off') return; // leave the core's default idle timer as-is
+    const ms = idleMs(); C.armAutoLock(ms != null ? ms : FOREVER); // a timer, or 'never' → effectively no idle lock
+  }
+  function setIdleSetting(v) {
+    try { localStorage.setItem(IDLE_KEY, v); localStorage.setItem('ww:persist', v !== 'off' ? '1' : '0'); } catch (_) {}
+    if (v === 'off') clearSession(); else saveSession();
+    armIdle();
+  }
+  let _bumpAt = 0;
+  function bumpActivity() {
+    if (!persistOn() || !C.isUnlocked()) return;
+    const now = Date.now();
+    try { const raw = sessionStorage.getItem(SESS_KEY); if (raw) { const o = JSON.parse(raw); o.at = now; sessionStorage.setItem(SESS_KEY, JSON.stringify(o)); } } catch (_) {}
+    if (now - _bumpAt > 4000) { _bumpAt = now; armIdle(); } // re-arm the idle countdown on activity (throttled)
+  }
+  function tryResumeSession() {
+    if (C.isUnlocked() || !persistOn()) return false;
+    try {
+      const raw = sessionStorage.getItem(SESS_KEY); if (!raw) return false;
+      const o = JSON.parse(raw); const ms = idleMs();
+      if (ms != null && Date.now() - (o.at || 0) > ms) { clearSession(); return false; } // idled out while the tab was away
+      if (o.sec && C.resumeSession && C.resumeSession(o.sec)) { armIdle(); return true; }
+    } catch (_) {}
+    return false;
+  }
   const CHAIN_OF = { bitcoin: 'btc', ethereum: 'eth', solana: 'sol' };
   const watchList = () => lsGet('ww:watch', []);
   // Account LIST (shared ww:accts with the extension popup) — removable, gap-friendly.
@@ -566,7 +619,7 @@
   let hwViewAddr = null, hwViewIndex = null; // when browsing a derived receiving address (≠ index 0), the address being viewed
   let hwAggregate = false, hwAgg = null; // Phase 2: aggregate ALL used receiving addresses into one portfolio (hwAgg caches the last scan)
   const hwAddr = (t) => (HW && HW.bitcoin && HW.bitcoin[t] ? HW.bitcoin[t].address : (HW && HW.bitcoin ? HW.bitcoin.nativeSegwit.address : null));
-  function refreshImported() { try { IMPORTED = C.isUnlocked() ? C.importedAccounts() : []; } catch (_) { IMPORTED = []; } }
+  function refreshImported() { try { IMPORTED = C.isUnlocked() ? C.importedAccounts() : []; } catch (_) { IMPORTED = []; } saveSession(); /* keep the persisted session snapshot in sync with imported keys — so a refresh doesn't lose freshly-imported accounts */ }
   const currentImported = () => (acctKind === 'imported' ? IMPORTED.find((x) => x.id === impId) : null);
   const impBtcType = (id) => loadMap('ww:imptype')[id] || 'nativeSegwit';
   function setImpBtcType(id, t) { const m = loadMap('ww:imptype'); if (t === 'nativeSegwit') delete m[id]; else m[id] = t; lsSet('ww:imptype', m); }
@@ -583,6 +636,7 @@
   }
 
   function renderUnlocked() {
+    saveLastAcct(); // remember the current account + chain so a refresh returns here
     setTopbarTools(true); // local unlocked wallet → show the tools rail + Backup/privacy. Idempotent, but
     // essential: renderUnlocked() is called DIRECTLY after unlock / create / restore (bypassing render(),
     // which is the only other place setTopbarTools runs) — without this the rail stays hidden until reload.
@@ -604,9 +658,11 @@
     const chains = (isW || isImp) ? [dashChain] : ['btc', 'eth', 'sol'];
     body().innerHTML = `
       <div class="dash-head">
-        <div class="acct-sel">${acctSelectHtml(acctNames)}${isW ? '<button class="mini acct-x" id="acctRemove" title="Remove watch-only address">×</button>' : isImp ? `<button class="mini acct-x" id="acctRemove" title="Remove imported address">×</button><button class="mini" id="acctAdd" title="Add account / import / watch-only">＋</button>${dashChain === 'btc' ? `<button class="mini btctype-chip" id="btcTypeBtn" title="Bitcoin address type">${BTC_LABEL[impBtcType(impId)]} ▾</button>` : ''}` : `<button class="mini" id="acctRename" title="Name this account">✎</button>${acctRemovable(curAccount) ? '<button class="mini acct-x" id="acctRemove" title="Remove this account">×</button>' : ''}<button class="mini" id="acctAdd" title="Add account / import / watch-only">＋</button>${dashChain === 'btc' ? `<button class="mini btctype-chip" id="btcTypeBtn" title="Bitcoin address type">${BTC_LABEL[acctBtcType(curAccount)]} ▾</button>` : ''}`}</div>
+        <div class="acct-sel">${acctBtnHtml()}${dashChain === 'btc' && !isW ? `<button class="mini btctype-chip" id="btcTypeBtn" title="Bitcoin address type">${BTC_LABEL[isImp ? impBtcType(impId) : acctBtcType(curAccount)]} ▾</button>` : ''}</div>
         <button class="pname-chip" id="pnameChip" hidden title="Your primary Bitcoin Stamps name"></button>
         <div class="dash-head-r">
+          ${walletToolsHtml()}
+          <button class="ghost sm" id="dappsBtn" title="Open the tools panel">☰ Tools</button>
           ${isW ? '' : '<button class="ghost sm" id="bAdvanced">Advanced ▾</button>'}
           <button class="ghost sm" id="bLock">Lock</button>
         </div>
@@ -624,15 +680,11 @@
       </div>
       <div id="dashAssets" class="dash-assets"><div class="fine">Loading ${esc(DCH[dashChain].name)} assets…</div></div>
       <div class="dash-actions wbtns" id="dashActions"></div>`;
-    wireAcctSelect();
-    if ($('#acctAdd')) $('#acctAdd').onclick = acctAddMenu; // absent in watch-only view — must guard
-    if ($('#acctRemove')) $('#acctRemove').onclick = () => (acctKind === 'imported' ? importedRemoveFlow() : acctKind === 'watch' ? removeWatchFlow() : removeAccountFlow(curAccount));
+    if ($('#acctBtn')) $('#acctBtn').onclick = accountPicker;
     if ($('#btcTypeBtn')) $('#btcTypeBtn').onclick = () => btcTypeMenu();
     $('#bLock').onclick = () => { C.lock(); render(); };
     if ($('#bAdvanced')) $('#bAdvanced').onclick = () => dashAdvancedMenu(acc);
-    if ($('#acctRename')) $('#acctRename').onclick = () => namePrompt(`Name account ${curAccount}`, acctNames[curAccount] || '', (v) => {
-      const m = loadMap(ACCT_NAMES); if (v) m[curAccount] = v; else delete m[curAccount]; saveMap(ACCT_NAMES, m);
-    });
+    wireWalletTools();
     $('#pfStrip').querySelectorAll('.pf-card').forEach((b) => (b.onclick = () => { if (isW) return; dashChain = b.dataset.ch; dashTab = 'tokens'; DASH_ASSETS = null; renderUnlocked(); }));
     body().querySelectorAll('.dctab').forEach((b) => (b.onclick = () => { if (isW) return; dashChain = b.dataset.ch; dashTab = 'tokens'; DASH_ASSETS = null; renderUnlocked(); }));
     body().querySelectorAll('.datab').forEach((b) => (b.onclick = () => { dashTab = b.dataset.tab; body().querySelectorAll('.datab').forEach((x) => x.classList.toggle('on', x === b)); renderDashAssets(acc); }));
@@ -784,7 +836,7 @@
         <div class="acct-sel"><div class="hw-acct">🔐 Ledger · Bitcoin${agg ? ' · All addresses' : viewing ? ' · 0/' + hwViewIndex : ''}</div>
           <button class="mini btctype-chip" id="btcTypeBtn" title="Bitcoin address type">${BTC_LABEL[bt]} ▾</button></div>
         <button class="pname-chip" id="pnameChip" hidden title="Your primary Bitcoin Stamps name"></button>
-        <div class="dash-head-r"><button class="ghost sm" id="hwDisc">Disconnect</button></div>
+        <div class="dash-head-r">${walletToolsHtml()}<button class="ghost sm" id="dappsBtn" title="Open the tools panel">☰ Tools</button><button class="ghost sm" id="hwDisc">Disconnect</button></div>
       </div>
       <div class="pf-strip" id="pfStrip">
         <button class="pf-card on solo" data-ch="btc"><span class="pf-ch">Bitcoin · Ledger${agg ? ' · aggregate' : ''}</span>
@@ -802,6 +854,7 @@
       <div class="fine" style="margin-top:8px;opacity:.85">🔐 Keys stay on your Ledger — this is a read view. On-device signing for sends &amp; Counterparty is being validated with hardware.</div>`;
     $('#btcTypeBtn').onclick = hwBtcTypeMenu;
     $('#hwDisc').onclick = hwDisconnect;
+    wireWalletTools();
     const hwMainBtn = $('#hwMain'); if (hwMainBtn) hwMainBtn.onclick = () => { hwViewAddr = null; hwViewIndex = null; renderHardware(); };
     const hwSingleBtn = $('#hwSingle'); if (hwSingleBtn) hwSingleBtn.onclick = () => { hwAggregate = false; DASH_ASSETS = null; renderHardware(); };
     body().querySelectorAll('[data-copy]').forEach((el) => (el.onclick = () => copy(el.dataset.copy, el)));
@@ -946,18 +999,87 @@
   }
 
   // Account selector: HD accounts + watch-only entries (shared localStorage with the extension popup).
-  function acctSelectHtml(acctNames) {
-    let opts = '<optgroup label="My accounts">';
-    acctList().forEach((i) => { let lbl = `Account ${i}${acctNames[i] ? ' · ' + esc(acctNames[i]) : ''}`; if (dashChain === 'btc' && acctBtcType(i) !== 'nativeSegwit') lbl += ' · ' + BTC_LABEL[acctBtcType(i)]; opts += `<option value="hd:${i}"${acctKind === 'hd' && i === curAccount ? ' selected' : ''}>${lbl}</option>`; });
-    opts += '</optgroup>';
-    if (IMPORTED.length) { opts += '<optgroup label="Imported">'; IMPORTED.forEach((im) => { opts += `<option value="imp:${esc(im.id)}"${acctKind === 'imported' && impId === im.id ? ' selected' : ''}>${esc(im.label || ((im.bitcoin.nativeSegwit || {}).address || im.id).slice(0, 12))} · imported</option>`; }); opts += '</optgroup>'; }
-    const wl = watchList();
-    if (wl.length) { opts += '<optgroup label="Watching">'; wl.forEach((w) => { opts += `<option value="watch:${esc(w.id)}"${acctKind === 'watch' && watchId === w.id ? ' selected' : ''}>${esc(w.label || w.address.slice(0, 10))} · ${esc((DCH[CHAIN_OF[w.chain]] || {}).sym || '?')}</option>`; }); opts += '</optgroup>'; }
-    return `<select id="acctIdx" class="acct-dd">${opts}</select>`;
+  // ── Account picker (extension "Pro" format): a name button that opens a grouped Accounts modal with
+  //    per-account rename/delete and an add entry — replaces the old native <select>. ──
+  const KEBAB_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>';
+  function acctDisplayName(kind, key, obj) {
+    if (kind === 'hd') { const nm = loadMap(ACCT_NAMES); let s = `Account ${key}${nm[key] ? ' · ' + nm[key] : ''}`; if (dashChain === 'btc' && acctBtcType(key) !== 'nativeSegwit') s += ' · ' + BTC_LABEL[acctBtcType(key)]; return s; }
+    if (kind === 'imp') { const im = obj || IMPORTED.find((x) => x.id === key); return loadMap('ww:impnames')[key] || (im && im.label) || shortA((im && im.bitcoin && im.bitcoin.nativeSegwit && im.bitcoin.nativeSegwit.address) || key); }
+    if (kind === 'watch') { const w = obj || watchList().find((x) => x.id === key); return loadMap('ww:watchnames')[key] || (w && w.label) || shortA(w && w.address); }
+    if (kind === 'hw') return '🔐 Ledger';
+    return String(key);
   }
-  function wireAcctSelect() {
-    const sel = $('#acctIdx'); if (!sel) return;
-    sel.onchange = () => { const v = sel.value; if (v.indexOf('hd:') === 0) { acctKind = 'hd'; curAccount = Number(v.slice(3)); } else if (v.indexOf('watch:') === 0) { acctKind = 'watch'; watchId = v.slice(6); } else if (v.indexOf('imp:') === 0) { acctKind = 'imported'; impId = v.slice(4); dashChain = 'btc'; } DASH_ASSETS = null; renderUnlocked(); };
+  function currentAccountName() {
+    if (acctKind === 'imported') return acctDisplayName('imp', impId) + ' · imported';
+    if (acctKind === 'watch') return acctDisplayName('watch', watchId);
+    if (acctKind === 'hardware') return '🔐 Ledger';
+    return acctDisplayName('hd', curAccount);
+  }
+  function acctBtnHtml() {
+    return `<button class="acct-switch" id="acctBtn" title="Switch account"><span class="acct-switch-name">${esc(currentAccountName())}</span><span class="chev">▾</span></button>`;
+  }
+  function acctPickerRow(kind, key, label, sel, hasMenu) {
+    return `<div class="acct-item"><button class="acct-pick${sel ? ' on' : ''}" data-sw="${kind}:${esc(String(key))}">${sel ? '<span class="adot"></span>' : ''}${esc(label)}</button>${hasMenu ? `<button class="acct-kebab" data-menu="${kind}:${esc(String(key))}" title="Rename / delete">${KEBAB_SVG}</button>` : ''}</div>`;
+  }
+  function accountPicker() {
+    let rows = '<div class="acct-grp">My accounts</div>';
+    acctList().forEach((i) => { rows += acctPickerRow('hd', i, acctDisplayName('hd', i), acctKind === 'hd' && i === curAccount, true); });
+    if (IMPORTED.length) { rows += '<div class="acct-grp">Imported</div>'; IMPORTED.forEach((im) => { rows += acctPickerRow('imp', im.id, acctDisplayName('imp', im.id, im) + ' · imported', acctKind === 'imported' && impId === im.id, true); }); }
+    const wl = watchList();
+    if (wl.length) { rows += '<div class="acct-grp">Watching</div>'; wl.forEach((w) => { rows += acctPickerRow('watch', w.id, acctDisplayName('watch', w.id, w) + ' · ' + ((DCH[CHAIN_OF[w.chain]] || {}).sym || '?'), acctKind === 'watch' && watchId === w.id, true); }); }
+    if (HW) { rows += '<div class="acct-grp">Hardware</div>' + acctPickerRow('hw', 'hw', '🔐 Ledger', acctKind === 'hardware', false); }
+    modal(`<h3 class="m-title">Accounts</h3><div class="acct-picker">${rows}</div>
+      <div class="wbtns"><button class="ghost" id="apAdd">＋ Add account · import · watch-only</button><button class="ghost" id="apClose">Close</button></div>`);
+    $('#apClose').onclick = closeModal;
+    $('#apAdd').onclick = () => { closeModal(); acctAddMenu(); };
+    $('#wmodalCard').querySelectorAll('[data-sw]').forEach((b) => (b.onclick = () => switchAcctRef(b.dataset.sw)));
+    $('#wmodalCard').querySelectorAll('[data-menu]').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); acctItemMenu(b.dataset.menu); }));
+  }
+  function switchAcctRef(ref) {
+    const p = ref.split(':'), kind = p[0], key = p.slice(1).join(':');
+    if (kind === 'hw') { if (HW) { acctKind = 'hardware'; dashChain = 'btc'; } }
+    else if (kind === 'hd') { acctKind = 'hd'; curAccount = parseInt(key, 10) || 0; }
+    else if (kind === 'watch') { acctKind = 'watch'; watchId = key; }
+    else if (kind === 'imp') { acctKind = 'imported'; impId = key; dashChain = 'btc'; }
+    DASH_ASSETS = null; closeModal(); render();
+  }
+  function acctItemMenu(ref) {
+    const p = ref.split(':'), kind = p[0], key = p.slice(1).join(':');
+    const canDelete = kind === 'imp' || kind === 'watch' || (kind === 'hd' && Number(key) >= DEFAULT_ACCTS);
+    modal(`<h3 class="m-title">${esc(acctDisplayName(kind, key))}</h3>
+      <div class="adv-menu">
+        <button class="adv-opt" data-a="rename"><b>✎ Rename / nickname</b><span>Give this account a label</span></button>
+        ${canDelete ? '<button class="adv-opt danger" data-a="delete"><b>🗑 Delete</b><span>Remove from this device (nothing on-chain changes)</span></button>' : ''}
+      </div><div class="wbtns"><button class="ghost" id="aimBack">Back</button></div>`);
+    $('#aimBack').onclick = accountPicker;
+    $('#wmodalCard').querySelectorAll('[data-a]').forEach((b) => (b.onclick = () => { if (b.dataset.a === 'rename') acctItemRename(kind, key); else acctItemDelete(kind, key); }));
+  }
+  function acctItemRename(kind, key) {
+    const map = kind === 'hd' ? ACCT_NAMES : kind === 'imp' ? 'ww:impnames' : 'ww:watchnames';
+    namePrompt('Rename / nickname', loadMap(map)[key] || '', (v) => { const m = loadMap(map); if (v) m[key] = v; else delete m[key]; saveMap(map, m); accountPicker(); });
+  }
+  function acctItemDelete(kind, key) {
+    closeModal();
+    if (kind === 'hd') removeAccountFlow(Number(key));
+    else if (kind === 'imp') { impId = key; acctKind = 'imported'; importedRemoveFlow(); }
+    else if (kind === 'watch') { watchId = key; acctKind = 'watch'; removeWatchFlow(); }
+  }
+  // Remember the last-selected account + chain so a refresh returns to where you were (not Account 0).
+  function saveLastAcct() {
+    try {
+      localStorage.setItem('ww:lastacct', acctKind === 'hardware' ? 'hw' : acctKind === 'watch' ? 'watch:' + watchId : acctKind === 'imported' ? 'imp:' + impId : 'hd:' + curAccount);
+      localStorage.setItem('ww:lastchain', dashChain);
+    } catch (_) {}
+  }
+  function restoreLastAcct() {
+    let v = null, lc = null;
+    try { v = localStorage.getItem('ww:lastacct'); lc = localStorage.getItem('ww:lastchain'); } catch (_) {}
+    if (v) {
+      if (v.indexOf('watch:') === 0) { const id = v.slice(6); if (watchList().some((w) => w.id === id)) { acctKind = 'watch'; watchId = id; } }
+      else if (v.indexOf('imp:') === 0) { const iid = v.slice(4); if (IMPORTED.some((x) => x.id === iid)) { acctKind = 'imported'; impId = iid; dashChain = 'btc'; } }
+      else if (v.indexOf('hd:') === 0) { const i = parseInt(v.slice(3), 10); if (acctList().indexOf(i) >= 0) { acctKind = 'hd'; curAccount = i; } }
+    }
+    if (acctKind !== 'watch' && lc && DCH[lc]) dashChain = lc; // watch-only is single-chain
   }
   function acctAddMenu() {
     modal(`<h3 class="m-title">Add account</h3>
@@ -965,7 +1087,7 @@
       <div class="adv-menu">
         ${BTC_TYPES.map(([t, l, p]) => `<button class="adv-opt" data-add="${t}"><b>${l} · ${p}</b><span>New Bitcoin account</span></button>`).join('')}
         <button class="adv-opt" data-add="import"><b>🔑 Import address (private key)</b><span>Restore & sign from a WIF private key</span></button>
-        <button class="adv-opt" data-add="cw"><b>↩ Import Counterparty / FreeWallet passphrase</b><span>Restore your legacy 1… addresses + Counterparty assets</span></button>
+        <button class="adv-opt" data-add="cw"><b>↩ Import a Counterwallet / FreeWallet</b><span>Add its legacy 1… addresses (Stamps · Counterparty · SRC-20) to this wallet — imports keys, not a new seed</span></button>
         <button class="adv-opt" data-add="watch"><b>👁 Add watch-only</b><span>Track any BTC / ETH / SOL address — no keys</span></button>
       </div><div class="wbtns"><button class="ghost" id="aamClose">Close</button></div>`);
     $('#aamClose').onclick = closeModal;
@@ -1005,8 +1127,8 @@
   // 1… addresses (m/0'/0/i), scan the first 10 for Counterparty / Stamps / SRC-20 activity, import the
   // active ones as signable keys, and default them to the legacy type (where the assets live).
   function cwImportFlow() {
-    modal(`<h3 class="m-title">Import Counterparty / FreeWallet passphrase</h3>
-      <p class="fine">Paste your <b>12-word Counterwallet / FreeWallet passphrase</b>. Wonder derives your legacy <b>1…</b> addresses, scans them for Counterparty / Stamps / SRC-20 assets, and imports the active ones — signable like your own accounts. This is <b>not</b> a BIP-39 seed.</p>
+    modal(`<h3 class="m-title">Import a Counterwallet / FreeWallet</h3>
+      <p class="fine">Bring an <b>old Counterwallet / FreeWallet</b> into <b>this</b> wallet — it does <b>not</b> replace your seed. Paste its <b>12-word passphrase</b>; Wonder derives the legacy <b>1…</b> addresses, scans them for Counterparty / Stamps / SRC-20, and imports the active ones' <b>keys</b> — signable alongside your own accounts (just like importing a private key). This is <b>not</b> a BIP-39 seed. <i>To use a Counterwallet as your MAIN wallet instead, forget this wallet and Restore it from the sign-in screen.</i></p>
       <textarea id="cwPhrase" class="m-in" rows="2" placeholder="twelve words separated by spaces" spellcheck="false" autocomplete="off" style="resize:vertical;font-family:var(--mono);font-size:12px"></textarea>
       <div id="cwPrev" class="fine"></div>
       <input id="cwPw" class="m-in" type="password" placeholder="Your wallet password" autocomplete="current-password"/>
@@ -1039,7 +1161,7 @@
         }
         active.sort((a, b) => a.index - b.index);
         e.textContent = `Importing ${active.length} address${active.length === 1 ? '' : 'es'}…`;
-        const res = await C.importKeys(active.map((d) => d.wif), pw, active.map((d) => 'FreeWallet · 0/' + d.index));
+        const res = await C.importKeys(active.map((d) => d.wif), pw, active.map((d) => 'Counterparty · 0/' + d.index));
         res.forEach((r) => setImpBtcType(r.id, 'legacy')); // CP/Stamps assets live on the legacy address
         impId = res[0].id; acctKind = 'imported'; dashChain = 'btc'; DASH_ASSETS = null; closeModal(); refreshImported(); renderUnlocked();
       } catch (err) { go.disabled = false; e.className = 'statusline err'; e.textContent = /wrong_password/.test(err.message) ? 'Wrong wallet password.' : (err.message || 'Import failed.'); }
@@ -1203,7 +1325,7 @@
           <div class="at-amt" style="font-weight:600;font-size:13px;margin-top:4px;word-break:break-all;opacity:.92">${esc(mask(String(t.amount)))}</div></div>`;
       }).join('')}</div></div>
         ${nTok > 20 ? `<button class="ghost sm" id="tokExpand" style="margin-top:8px;width:100%">Show all ${nTok}</button>` : ''}`;
-      const assetFrom = acctKind === 'imported' ? impBtcAddr() : (acc && acc.bitcoin ? acc.bitcoin.nativeSegwit.address : null);
+      const assetFrom = acctKind === 'imported' ? impBtcAddr() : (acc && acc.bitcoin ? acctBtcAddr(acc) : null); // the CURRENTLY-SELECTED btc type (Legacy/Taproot/…), not hardcoded native segwit — matches the loaded assets
       box.querySelectorAll('[data-send]').forEach((b) => (b.onclick = () => { const t = DASH_ASSETS.tokens[+b.dataset.send]; if (!t) return; if (acctKind === 'connected') renderConnectedSrc20Send(t.tick, t.amount); else if (window.MintingModules) window.MintingModules.sendSrc20(acc.account, assetFrom, t.tick); }));
       const openCp = (i) => { const t = DASH_ASSETS.tokens[+i]; if (t) cpTokenDetailModal(t, acc); };
       box.querySelectorAll('[data-cp]').forEach((b) => (b.onclick = () => openCp(b.dataset.cp)));
@@ -1515,13 +1637,12 @@
     if (acctKind === 'imported') {
       // Imported keys sign with their own WIF — full BTC toolset (Counterparty, SRC-20, stamps via dApps).
       // Emblem bridge is omitted (it needs an ETH address the imported BTC key doesn't have).
-      bar.innerHTML = [`<button class="primary sm" data-a="send">Send BTC</button>`, `<button class="ghost sm" data-a="receive">Receive</button>`, `<button class="primary sm" data-a="cp">Counterparty</button>`, `<button class="ghost sm" data-a="coincontrol">Coin Control</button>`, `<button class="ghost sm" data-a="activity">⧗ Activity</button>`, (window.DappDashboard ? `<button class="ghost sm" data-a="dapps">dApps</button>` : ``)].join('');
+      bar.innerHTML = [`<button class="primary sm" data-a="send">Send BTC</button>`, `<button class="ghost sm" data-a="receive">Receive</button>`, `<button class="ghost sm" data-a="coincontrol">Coin Control</button>`, `<button class="ghost sm" data-a="activity">⧗ Activity</button>`].join(''); // Counterparty · dApps live in the Tools rail
       bar.querySelectorAll('[data-a]').forEach((btn) => (btn.onclick = () => dashAction(btn.dataset.a, acc)));
       return;
     }
     const b = [`<button class="primary sm" data-a="send">Send ${DCH[dashChain].sym}</button>`, `<button class="ghost sm" data-a="receive">Receive</button>`];
-    if (dashChain === 'btc') { b.push(`<button class="primary sm" data-a="cp">Counterparty</button>`, `<button class="ghost sm" data-a="coincontrol">Coin Control</button>`, `<button class="ghost sm" data-a="activity">⧗ Activity</button>`, (window.DappDashboard ? `<button class="ghost sm" data-a="dapps">dApps</button>` : ``), `<button class="ghost sm" data-a="emblem">Emblem bridge</button>`); }
-    else if (dashChain === 'eth') { b.push((window.DappDashboard ? `<button class="ghost sm" data-a="dapps">dApps</button>` : ``), `<button class="ghost sm" data-a="emblem">Emblem bridge</button>`); }
+    if (dashChain === 'btc') { b.push(`<button class="ghost sm" data-a="coincontrol">Coin Control</button>`, `<button class="ghost sm" data-a="activity">⧗ Activity</button>`); } // Counterparty · Emblem bridge · dApps all live in the Tools rail
     bar.innerHTML = b.join('');
     bar.querySelectorAll('[data-a]').forEach((btn) => (btn.onclick = () => dashAction(btn.dataset.a, acc)));
   }
@@ -1596,6 +1717,8 @@
         <button class="adv-opt" data-adv="hw"><b>Hardware wallet</b><span>Connect a Ledger / signing device</span></button>
         <button class="adv-opt" data-adv="custom"><b>Custom derivation path</b><span>Derive an address at a specific path</span></button>
         <button class="adv-opt" data-adv="theme"><b>Appearance</b><span>Dark or light wallet skin</span></button>
+        <button class="adv-opt" data-adv="autolock"><b>Auto-lock &amp; stay signed in</b><span>Keep the wallet unlocked across refreshes; set an idle timer</span></button>
+        <button class="adv-opt" data-adv="backup"><b>Back up / restore settings</b><span>Export or import labels, watch-list &amp; flags — never keys</span></button>
         <button class="adv-opt danger" data-adv="reveal"><b>Reveal seed phrase</b><span>Show your 12/24-word recovery phrase</span></button>
         <button class="adv-opt danger" data-adv="secrets"><b>Export private keys</b><span>Export raw keys for this account</span></button>
       </div>
@@ -1607,10 +1730,26 @@
       else if (a === 'sign') flowSignMessage();
       else if (a === 'hw') window.HardwareWallet && window.HardwareWallet.connectFlow();
       else if (a === 'theme') themeMenu();
+      else if (a === 'autolock') autoLockMenu();
+      else if (a === 'backup') { if (window.WonderBackup) window.WonderBackup.open(); }
       else if (a === 'custom') customPath();
       else if (a === 'reveal') gatedRevealSeed();
       else if (a === 'secrets') gatedSecrets(curAccount);
     }));
+  }
+  function autoLockMenu() {
+    const cur = idleSetting();
+    const opts = [['off', 'Lock on refresh', 'Most secure — re-enter your password after every reload'],
+      ['1', '1 minute', 'Stay signed in; auto-lock after 1 min idle'], ['5', '5 minutes', 'Stay signed in; auto-lock after 5 min idle'],
+      ['15', '15 minutes', 'Stay signed in; auto-lock after 15 min idle'], ['30', '30 minutes', 'Stay signed in; auto-lock after 30 min idle'],
+      ['60', '1 hour', 'Stay signed in; auto-lock after 1 hr idle'], ['never', 'Never', 'Stay unlocked until you lock it or close the tab']];
+    const rows = opts.map(([v, label, sub]) => `<button class="adv-opt${v === cur ? ' on' : ''}${v === 'never' ? ' danger' : ''}" data-al="${v}"><b>${esc(label)}${v === cur ? ' ✓' : ''}</b><span>${esc(sub)}</span></button>`).join('');
+    modal(`<h3 class="m-title">Auto-lock &amp; stay signed in</h3>
+      <p class="fine">Keep the Terminal unlocked across page refreshes and auto-lock it after inactivity. While enabled, your unlocked session is kept in this tab's storage (wiped when you close the tab) — a small convenience-for-security tradeoff. <b>Lock on refresh</b> keeps your seed memory-only.</p>
+      <div class="adv-menu">${rows}</div>
+      <div class="wbtns"><button class="ghost" id="alClose">Close</button></div>`);
+    $('#alClose').onclick = closeModal;
+    $('#wmodalCard').querySelectorAll('[data-al]').forEach((b) => (b.onclick = () => { setIdleSetting(b.dataset.al); autoLockMenu(); }));
   }
 
   // ── Create flow ──
@@ -1676,7 +1815,7 @@
     $('#bCreate2').onclick = async () => {
       const p1 = $('#pw1').value, p2 = $('#pw2').value, pp = $('#pp').value;
       const s = $('#pwStatus'); s.hidden = false; s.className = 'statusline err';
-      if (p1.length < 12) return (s.textContent = 'Password must be at least 12 characters.');
+      if (p1.length < 8) return (s.textContent = 'Password must be at least 8 characters.');
       if (p1 !== p2) return (s.textContent = 'Passwords do not match.');
       s.className = 'statusline load'; s.textContent = 'Encrypting (Argon2id)…';
       try { await C.createVault(draft.mnemonic, pp, p1); draft = null; closeModal(); renderUnlocked(); }
@@ -1707,7 +1846,7 @@
       const s = $('#rStatus'); s.hidden = false; s.className = 'statusline err';
       const isCw = !C.validateMnemonic(m) && C.isCwPhrase(m);
       if (!C.validateMnemonic(m) && !isCw) return (s.textContent = 'That phrase is not a valid BIP-39 mnemonic or Counterwallet passphrase (check spelling & order).');
-      if ($('#rPw1').value.length < 12) return (s.textContent = 'Password must be at least 12 characters.');
+      if ($('#rPw1').value.length < 8) return (s.textContent = 'Password must be at least 8 characters.');
       if ($('#rPw1').value !== $('#rPw2').value) return (s.textContent = 'Passwords do not match.');
       s.className = 'statusline load'; s.textContent = 'Encrypting…';
       try { await C.createVault(m, $('#rPp').value, $('#rPw1').value); if (isCw) setAcctBtcType(0, 'legacy'); closeModal(); renderUnlocked(); } // CW assets live on legacy → default there
@@ -2002,7 +2141,14 @@
   function showHardware(accts) { HW = accts; hwBtcType = 'nativeSegwit'; acctKind = 'hardware'; dashChain = 'btc'; dashTab = 'tokens'; DASH_ASSETS = null; render(); }
 
   // boot
-  if (document.readyState !== 'loading') render(); else document.addEventListener('DOMContentLoaded', render);
+  // Session persistence + idle auto-lock (opt-in). Save the session on unlock; on lock (manual or idle),
+  // wipe it and re-render to the lock screen. Reset the idle countdown on user activity.
+  try { C.onLockChange((unlocked) => { if (unlocked) saveSession(); else { clearSession(); render(); } }); } catch (_) {}
+  ['mousemove', 'keydown', 'mousedown', 'touchstart', 'scroll'].forEach((e) => window.addEventListener(e, bumpActivity, { passive: true }));
+
+  // Boot: resume a persisted session (opt-in), restore the last-selected account, then render.
+  function boot() { try { tryResumeSession(); refreshImported(); if (C.isUnlocked()) restoreLastAcct(); } catch (_) {} render(); }
+  if (document.readyState !== 'loading') boot(); else document.addEventListener('DOMContentLoaded', boot);
   // Switching network from the in-wallet badge re-renders so balances/addresses re-derive for the
   // new network (clear cached assets first so mainnet holdings don't flash under a testnet address).
   if (window.WWNet && window.WWNet.onChange) window.WWNet.onChange(() => { DASH_ASSETS = null; DASH_PRICES = {}; render(); });

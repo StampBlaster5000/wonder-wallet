@@ -60,12 +60,12 @@
   async function loadFee() { try { FEE = (await fetch('api/btc/fees').then((r) => r.json())).halfHourFee || 10; } catch (_) {} if (!BTC_USD) { try { BTC_USD = (await fetch('api/prices').then((r) => r.json())).bitcoin || 0; } catch (_) {} } }
 
   // ── SRC-20 deploy / mint / transfer ──
-  let PREFILL_TICK = null;
-  function src20(account, btcAddress) { EXT = null; ACCOUNT = account; BTC = btcAddress; PREFILL_TICK = null; loadFee().then(() => src20Form('deploy')); }
+  let PREFILL_TICK = null, TRANSFER_ONLY = false; // TRANSFER_ONLY hides Deploy/Mint (token-row Send → Transfer only)
+  function src20(account, btcAddress) { EXT = null; ACCOUNT = account; BTC = btcAddress; PREFILL_TICK = null; TRANSFER_ONLY = false; loadFee().then(() => src20Form('deploy')); }
   // Connected wallet / Ledger: compose here, that signer signs + broadcasts (same audited pipeline).
-  function src20Connected(conn) { EXT = conn; ACCOUNT = 0; BTC = conn.address; PREFILL_TICK = null; loadFee().then(() => src20Form('deploy')); }
-  // Deep-link from the portfolio: open the Transfer tab pre-selected to a held token.
-  function sendSrc20(account, btcAddress, tick) { EXT = null; ACCOUNT = account; BTC = btcAddress; PREFILL_TICK = tick; loadFee().then(() => src20Form('transfer')); }
+  function src20Connected(conn) { EXT = conn; ACCOUNT = 0; BTC = conn.address; PREFILL_TICK = null; TRANSFER_ONLY = false; loadFee().then(() => src20Form('deploy')); }
+  // Deep-link from the portfolio token-row Send: Transfer ONLY (Deploy/Mint stay in the side-panel suite).
+  function sendSrc20(account, btcAddress, tick) { EXT = null; ACCOUNT = account; BTC = btcAddress; PREFILL_TICK = tick; TRANSFER_ONLY = true; loadFee().then(() => src20Form('transfer')); }
   function src20Form(op) {
     // Deploy/Mint: a typed ticker with a live ✓/✗ status chip. Transfer: a dropdown of the
     // wallet's own tokens (no typing — you can only send what you hold).
@@ -85,9 +85,9 @@
         <label class="cpf"><span>To address or name.btc</span><input id="s_to" class="m-in" spellcheck="false" autocapitalize="off"/></label>
         <div id="s_nameres" class="name-resolve" hidden></div>`,
     };
-    modal(`<h3 class="m-title">SRC-20 token</h3>
+    modal(`<h3 class="m-title">${TRANSFER_ONLY ? 'Send SRC-20 token' : 'SRC-20 token'}</h3>
       <div class="cp-src">from ${esc(BTC)}</div>
-      <div class="cp-filters" style="margin:8px 0">${['deploy', 'mint', 'transfer'].map((o) => `<button class="ccf ${o === op ? 'on' : ''}" data-op="${o}">${o}</button>`).join('')}</div>
+      ${TRANSFER_ONLY ? '' : `<div class="cp-filters" style="margin:8px 0">${['deploy', 'mint', 'transfer'].map((o) => `<button class="ccf ${o === op ? 'on' : ''}" data-op="${o}">${o}</button>`).join('')}</div>`}
       ${fields[op]}
       <label class="cpf"><span>Fee (sat/vB) <span class="fine">custom · sub-sat ok (e.g. 0.8)</span></span><input id="s_fee" class="m-in" type="number" min="0.1" step="0.1" value="${FEE}"/></label>
       <div id="s_status" class="statusline" hidden></div>
