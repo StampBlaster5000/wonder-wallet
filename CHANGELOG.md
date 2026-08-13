@@ -3,6 +3,35 @@
 Notable changes to Wonder Wallet. The project is pre-1.0 and in active development; the extension and
 the hosted Terminal version independently. Dates are approximate to the release window.
 
+## Terminal UX & mobile polish — Terminal v0.33 (2026-08-13)
+
+- **Stay signed in + idle auto-lock** (Advanced → *Auto-lock & stay signed in*). Opt-in: a refresh no
+  longer forces a re-login. Choose **Lock on refresh** (default, memory-only), **1/5/15/30/60 min**, or
+  **Never**. The unlocked session is kept in `sessionStorage` (cleared on tab close) *only* when enabled;
+  the core's no-password session-restore stays hard-gated to the extension unless the user opts in
+  (`ww:persist`), so the audit-hardened default is preserved.
+- **Refresh returns to your last account + chain** (`ww:lastacct` / `ww:lastchain`) instead of jumping to
+  Account 0 — for HD, imported, and watch-only accounts.
+- **"Pro" account picker** — the native `<select>` is replaced by a grouped **Accounts** modal
+  (My accounts / Imported / Watching / Hardware), a selected-state dot, per-account rename/delete kebab
+  menu, and an add entry — mirroring the extension.
+- **Counterwallet import** relabeled to *"Import a Counterwallet / FreeWallet"* (it imports the old
+  addresses' **keys** into this wallet — not a seed). Imported accounts are now labeled **Counterparty**.
+  Fixed imported accounts disappearing after a refresh (the persisted-session snapshot re-syncs on
+  import/remove).
+- **SRC-20 send fixes** — the token-row **Send** now uses the currently-selected address type (e.g.
+  Legacy), matching the loaded assets (was hardcoded to native SegWit). Quick-send from a token is
+  **Transfer-only**; Deploy/Mint remain in the side-panel suite.
+- **Header de-clutter** — Backup moved into Advanced; the ☰ Tools toggle moved out of the site header into
+  the wallet card; Home link (no arrow) + clickable logo. Privacy (mask balances) stays in the wallet header.
+- **Mobile** — account bar wraps cleanly; the three chain balances render in a compact row with the Total
+  spanning full-width below; tighter controls and less edge padding.
+- **No-hard-refresh dev loop** — the Terminal HTML is served `no-cache` and auto-stamps each local
+  `.js`/`.css` with its file mtime, so edits appear on a normal refresh (Cloudflare was pinning a 4-hour
+  browser cache TTL on assets).
+- Password floor unified to **8** on create/restore; password-field padding + lock-screen eye-toggle
+  alignment; the browser's native password-reveal control is hidden (we render our own).
+
 ## Testnet Mode — extension v0.51 / Terminal v0.32 (2026-08)
 
 - **Global Mainnet ⇄ Testnet toggle** across the key engine, server proxy, Terminal, and extension.

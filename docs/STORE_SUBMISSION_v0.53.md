@@ -5,22 +5,20 @@ substantial update, so expect a closer review (see the reviewer note — the per
 
 ---
 
-## "What's new" (release-notes field)
+## ⚠️ There is NO "What's new" / release-notes field on the Chrome Web Store
 
-> **Hardware wallet + Counterwallet migration + your own reader.**
->
-> - **Ledger on-device signing** for Bitcoin sends — single address *and* portfolio mode (spend across
->   all your receiving addresses). You approve the exact recipient, amount, and fee on the device; keys
->   never leave the Ledger.
-> - **Restore a Counterwallet / FreeWallet passphrase** — import your old seed, or restore it as a
->   modern multi-chain account (legacy address front-and-centre).
-> - **Live USD value** on the Send screen as you type.
-> - **Custom reader endpoint** (Advanced → Reader endpoint): point the wallet's read/broadcast backend
->   at your *own* server for privacy — no rebuild.
-> - **Independent infrastructure** — reads/broadcasts now go through the project's own `wonder-wallet.com`.
-> - Testnet mode (BTC testnet4 / ETH Sepolia / SOL devnet), RBF/CPFP fee bumps, and a hardened SSRF-safe
->   image proxy.
-> - Numerous reliability and clarity fixes (clearer Ledger errors, safer broadcast handling).
+Unlike the Play Store, CWS has no per-version changelog field. A version update = **upload the new package
+and re-submit**; the **Store listing** fields (Name / Summary / Description / Category) **persist from the
+prior submission** — leave them as-is. They are tuned to avoid the earlier Spam rejection (see
+STORE_LISTING.md): Name is `Wonder Wallet` only (NO descriptors), Category is `Tools` (NOT Privacy &
+Security). Only touch the Description if a field is blank; paste from STORE_LISTING.md.
+
+The change highlights below are **for your own reference / the reviewer note only** — not a store field:
+
+> - **Ledger on-device signing** — single address *and* portfolio mode; approve recipient/amount/fee on-device.
+> - **Restore a Counterwallet / FreeWallet passphrase** — import, or restore as a modern multi-chain account.
+> - **Live USD value** on the Send screen. **Custom reader endpoint** (self-host your backend, no rebuild).
+> - **Independent infrastructure** via `wonder-wallet.com`. Testnet mode, RBF/CPFP, SSRF-hardened image proxy.
 
 ---
 
