@@ -9,6 +9,7 @@
 
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
 const rateLimit = require('express-rate-limit');
 const dns = require('dns').promises;
 const netmod = require('net');
@@ -870,7 +871,24 @@ app.post('/api/emblem/unvault', limitMoney, wrap(async (req, res) => {
 
 // Clean URL for the Wonder Terminal (the wallet lives on its own page). Served WITHOUT a trailing
 // slash so the page's relative asset URLs (styles.css, wallet-core.js …) resolve against the app root.
-app.get('/app', (req, res) => res.sendFile(path.join(__dirname, 'public', 'app.html')));
+// Serve an HTML entry page with automatic per-asset cache-busting. Cloudflare rewrites the browser-facing
+// Cache-Control on .js/.css to its 4h Browser Cache TTL (its edge stays fresh — cf-cache-status:REVALIDATED —
+// but browsers would hold a stale copy for 4h). The HTML itself is served no-cache (CF passes it through), so
+// we append each LOCAL asset's mtime as ?v=… — a changed file gets a fresh URL and loads immediately, while
+// unchanged files keep their cache. Fully automatic: no manual version bumps, no hard refresh.
+function serveVersionedHtml(res, fileRel) {
+  let html;
+  try { html = fs.readFileSync(path.join(__dirname, 'public', fileRel), 'utf8'); }
+  catch (_) { res.status(404).send('Not found'); return; }
+  html = html.replace(/(src|href)="([^"?:]+\.(?:js|css))"/g, (m, attr, asset) => {
+    try { const st = fs.statSync(path.join(__dirname, 'public', asset)); return attr + '="' + asset + '?v=' + Math.floor(st.mtimeMs) + '"'; }
+    catch (_) { return m; }
+  });
+  res.setHeader('Cache-Control', 'no-cache');
+  res.type('html').send(html);
+}
+app.get(['/', '/index.html'], (req, res) => serveVersionedHtml(res, 'index.html'));
+app.get(['/app', '/app.html'], (req, res) => serveVersionedHtml(res, 'app.html'));
 app.get('/app/', (req, res) => res.redirect(301, 'app'));
 // RFC 9116 security.txt — points researchers at our responsible-disclosure process (express.static
 // ignores dotfiles, so serve it explicitly; also answer the legacy /security.txt path).
@@ -883,5 +901,15 @@ app.get(['/.well-known/security.txt', '/security.txt'], (req, res) => {
     'Expires: 2027-07-28T00:00:00.000Z\n'
   );
 });
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  etag: true,
+  lastModified: true,
+  setHeaders: (res, filePath) => {
+    // App code (HTML/JS/CSS): always REVALIDATE so an edit shows on a normal refresh. With ETag/Last-Modified
+    // the server returns a cheap 304 when nothing changed, so this stays fast while never serving stale UI.
+    if (/\.(html|js|mjs|css|json|map|svg)$/i.test(filePath)) res.setHeader('Cache-Control', 'no-cache');
+    // Immutable-ish assets (fonts, raster images, icons, the downloadable zips): safe to cache a while.
+    else res.setHeader('Cache-Control', 'public, max-age=3600');
+  },
+}));
 app.listen(PORT, () => console.log(`[wonder-wallet] ${PHASE} listening on ${PORT}`));
