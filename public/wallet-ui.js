@@ -40,7 +40,11 @@
   const aggNum = (v) => { const n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.eE+-]/g, '')); return isFinite(n) ? n : 0; };
   const shortA = (a) => { a = String(a || ''); return a.length > 16 ? a.slice(0, 7) + '…' + a.slice(-6) : a; };
   // Per-chain dashboard metadata + address resolver.
-  const DCH = { btc: { name: 'Bitcoin', sym: 'BTC', price: 'bitcoin' }, eth: { name: 'Ethereum', sym: 'ETH', price: 'ethereum' }, sol: { name: 'Solana', sym: 'SOL', price: 'solana' } };
+  // Chain glyphs mirror the extension popup (cs-ic) so the Terminal's blockchain switcher matches it.
+  const BTC_IC = '<svg viewBox="0 0 32 32" width="16" height="16" fill="currentColor"><path d="M21 14c1.5-.8 2-2.3 1.6-4-.5-2.2-2.4-3-5-3.2V3h-2.4v3.6h-1.9V3H11v3.8H6.5v2.6h1.7c.9 0 1.2.5 1.2 1v9.2c0 .5-.3.8-.8.8H6.2L6 23H11v3.8h2.4V23h1.9v3.8H17V23c4-.2 6.6-1.2 7-4.7.3-2.2-.8-3.5-2-4.3zM13.4 9.3c1.3 0 4.6-.4 4.6 1.6s-3.3 1.5-4.6 1.5zm0 11v-3.5c1.6 0 5.4-.4 5.4 1.7s-3.8 1.8-5.4 1.8z"/></svg>';
+  const ETH_IC = '<svg viewBox="0 0 32 32" width="14" height="14" fill="currentColor"><path d="M16 3l-8 13 8 4.5L24 16 16 3zM8 17.6L16 29l8-11.4-8 4.6-8-4.6z"/></svg>';
+  const SOL_IC = '<svg viewBox="0 0 32 32" width="14" height="14" fill="currentColor"><path d="M7 9h17l-4 4H3l4-4zm0 7h17l-4 4H3l4-4zm-4 7h17l4-4H7l-4 4z"/></svg>';
+  const DCH = { btc: { name: 'Bitcoin', sym: 'BTC', price: 'bitcoin', ic: BTC_IC }, eth: { name: 'Ethereum', sym: 'ETH', price: 'ethereum', ic: ETH_IC }, sol: { name: 'Solana', sym: 'SOL', price: 'solana', ic: SOL_IC } };
   const chAddr = (acc, ch) => (ch === 'btc' ? acc.bitcoin.nativeSegwit.address : ch === 'eth' ? acc.ethereum.address : acc.solana.address);
 
   let draft = null; // { mnemonic, words, account }
@@ -103,7 +107,9 @@
   function syncNetBadge(open, withChip) {
     if (!window.WWNet) return;
     const card = $('#wallet');
-    const head = document.querySelector('#wallet .card-h');
+    // The toggle chip mounts into the top row of the open wallet (#wwNetMount, alongside Advanced/Lock);
+    // falls back to the card header if that mount isn't present.
+    const head = document.getElementById('wwNetMount') || document.querySelector('#wallet .card-h');
     const existing = document.getElementById('wwNetInWallet');
     let bMount = document.getElementById('wwBannerMount');
     // toggle chip
@@ -111,7 +117,6 @@
       if (!existing) {
         const span = document.createElement('span');
         span.id = 'wwNetInWallet';
-        span.style.marginLeft = '8px';
         span.appendChild(window.WWNet.chip());
         head.appendChild(span);
       }
@@ -640,7 +645,7 @@
     setTopbarTools(true); // local unlocked wallet → show the tools rail + Backup/privacy. Idempotent, but
     // essential: renderUnlocked() is called DIRECTLY after unlock / create / restore (bypassing render(),
     // which is the only other place setTopbarTools runs) — without this the rail stays hidden until reload.
-    syncNetBadge(true, true); // local vault: banner + toggle chip inside the open wallet (mounted into the card header)
+    // (syncNetBadge runs after the head is built so the Mainnet/Testnet chip mounts into the top row.)
     // Resolve the active account: HD (own keys) or watch-only (read-only, no signing).
     let watch = null;
     if (acctKind === 'watch') { watch = currentWatch(); if (!watch) acctKind = 'hd'; else dashChain = CHAIN_OF[watch.chain] || dashChain; }
@@ -655,39 +660,45 @@
     if (acc) { acc.btcType = curBtcType(); acc.btcAddress = activeAddr(acc, 'btc'); }
     const acctNames = loadMap(ACCT_NAMES);
     const isW = acctKind === 'watch', isImp = acctKind === 'imported';
-    const chains = (isW || isImp) ? [dashChain] : ['btc', 'eth', 'sol'];
+    const chainSwitchable = acctKind === 'hd'; // HD accounts span BTC/ETH/SOL; watch/imported are single-chain
     body().innerHTML = `
+      <div class="wallet-topbar">
+        <div class="wt-left">${chainBtnHtml(chainSwitchable)}</div>
+        <div class="wt-center"><span class="net-mount" id="wwNetMount"></span></div>
+        <div class="wt-right"><button class="ghost sm" id="bLock">Lock</button></div>
+      </div>
       <div class="dash-head">
-        <div class="acct-sel">${acctBtnHtml()}${dashChain === 'btc' && !isW ? `<button class="mini btctype-chip" id="btcTypeBtn" title="Bitcoin address type">${BTC_LABEL[isImp ? impBtcType(impId) : acctBtcType(curAccount)]} ▾</button>` : ''}</div>
+        <div class="dash-head-l">
+          <div class="acct-sel">${acctBtnHtml()}${dashChain === 'btc' && !isW ? `<button class="mini btctype-chip" id="btcTypeBtn" title="Bitcoin address type">${BTC_LABEL[isImp ? impBtcType(impId) : acctBtcType(curAccount)]} ▾</button>` : ''}</div>
+        </div>
         <button class="pname-chip" id="pnameChip" hidden title="Your primary Bitcoin Stamps name"></button>
         <div class="dash-head-r">
           ${walletToolsHtml()}
           <button class="ghost sm" id="dappsBtn" title="Open the tools panel">☰ Tools</button>
           ${isW ? '' : '<button class="ghost sm" id="bAdvanced">Advanced ▾</button>'}
-          <button class="ghost sm" id="bLock">Lock</button>
         </div>
       </div>
-      <div class="pf-strip" id="pfStrip">
-        ${chains.map((ch) => `<button class="pf-card${ch === dashChain ? ' on' : ''}${isW ? ' solo' : ''}" data-ch="${ch}">
-          <span class="pf-ch">${esc(DCH[ch].name)}${isW ? ' · watching' : ''}</span>
-          <span class="pf-usd" id="pfUsd-${ch}">…</span>
-          <span class="pf-nat" id="pfNat-${ch}">—</span></button>`).join('')}
-        ${isW ? '' : '<div class="pf-total"><span class="pf-total-l">Total value</span><span class="pf-total-v" id="pfTotal">…</span></div>'}
+      <div class="bal-strip" id="pfStrip">
+        <div class="bal-main">
+          <span class="bal-usd" id="pfUsd-${dashChain}">…</span>
+          <span class="bal-nat" id="pfNat-${dashChain}">—</span>
+        </div>
+        <div class="bal-actions" id="balActions"></div>
       </div>
+      <div class="dash-actions wbtns" id="dashActions"></div>
       <div class="dash-tabs">
-        <div class="dash-chaintabs">${chains.map((ch) => `<button class="dctab${ch === dashChain ? ' on' : ''}" data-ch="${ch}"${isW ? ' disabled' : ''}>${esc(DCH[ch].name)}</button>`).join('')}</div>
         <div class="dash-assettabs"><button class="datab${dashTab === 'tokens' ? ' on' : ''}" data-tab="tokens">Tokens</button><button class="datab${dashTab === 'collectibles' ? ' on' : ''}" data-tab="collectibles">Collectibles</button></div>
       </div>
-      <div id="dashAssets" class="dash-assets"><div class="fine">Loading ${esc(DCH[dashChain].name)} assets…</div></div>
-      <div class="dash-actions wbtns" id="dashActions"></div>`;
+      <div id="dashAssets" class="dash-assets"><div class="fine">Loading ${esc(DCH[dashChain].name)} assets…</div></div>`;
+    if ($('#chainBtn')) $('#chainBtn').onclick = chainPicker;
     if ($('#acctBtn')) $('#acctBtn').onclick = accountPicker;
     if ($('#btcTypeBtn')) $('#btcTypeBtn').onclick = () => btcTypeMenu();
     $('#bLock').onclick = () => { C.lock(); render(); };
     if ($('#bAdvanced')) $('#bAdvanced').onclick = () => dashAdvancedMenu(acc);
     wireWalletTools();
-    $('#pfStrip').querySelectorAll('.pf-card').forEach((b) => (b.onclick = () => { if (isW) return; dashChain = b.dataset.ch; dashTab = 'tokens'; DASH_ASSETS = null; renderUnlocked(); }));
-    body().querySelectorAll('.dctab').forEach((b) => (b.onclick = () => { if (isW) return; dashChain = b.dataset.ch; dashTab = 'tokens'; DASH_ASSETS = null; renderUnlocked(); }));
+    syncNetBadge(true, true); // mount the Mainnet/Testnet toggle chip into the top row (dash-head), plus the testnet banner
     body().querySelectorAll('.datab').forEach((b) => (b.onclick = () => { dashTab = b.dataset.tab; body().querySelectorAll('.datab').forEach((x) => x.classList.toggle('on', x === b)); renderDashAssets(acc); }));
+    renderBalanceActions(acc);
     renderDashActions(acc);
     loadPortfolio(acc);
     loadDashAssets(acc);
@@ -749,8 +760,11 @@
   function openActivity(addr) {
     if (!addr) return;
     ACT_T = { addr, items: null, filter: 'all' };
-    modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Activity</h3><div class="cc-addr">${esc(addr)}</div></div><button class="mini" id="acX">Close</button></div><div id="acBody"><div class="statusline load">Loading activity…</div></div>`, true);
+    // Coin Control lives inside Activity now (they share one entry point, mirroring the extension).
+    const ccBtn = canSignBtc() ? `<button class="mini" id="acCoin" title="Coin Control — UTXO management (freeze / protect asset-bearing coins)">▦ Coin Control</button>` : '';
+    modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Activity</h3><div class="cc-addr">${esc(addr)}</div></div><div class="cc-head-r">${ccBtn}<button class="mini" id="acX">Close</button></div></div><div id="acBody"><div class="statusline load">Loading activity…</div></div>`, true);
     $('#acX').onclick = closeModal;
+    const acCoin = $('#acCoin'); if (acCoin) acCoin.onclick = () => { closeModal(); if (window.CoinControl) window.CoinControl.open(addr); };
     loadActT();
   }
   async function loadActT() {
@@ -1018,6 +1032,20 @@
   function acctBtnHtml() {
     return `<button class="acct-switch" id="acctBtn" title="Switch account"><span class="acct-switch-name">${esc(currentAccountName())}</span><span class="chev">▾</span></button>`;
   }
+  // Blockchain switcher (top-left) — the whole wallet is dedicated to the chosen chain. Interactive for HD
+  // accounts (BTC/ETH/SOL); watch-only / imported are single-chain so it renders as a static chip.
+  function chainBtnHtml(interactive) {
+    const c = DCH[dashChain];
+    // Logo-only (no name label), matching the extension's chain switcher.
+    return `<button class="chain-btn${interactive ? '' : ' static'}" ${interactive ? 'id="chainBtn"' : 'disabled'} title="${interactive ? 'Switch blockchain · ' + esc(c.name) : esc(c.name)}"><span class="cs-ic ${dashChain}">${c.ic}</span>${interactive ? '<span class="chev">▾</span>' : ''}</button>`;
+  }
+  function chainPicker() {
+    modal(`<h3 class="m-title">Choose blockchain</h3>
+      <div class="chain-menu">${['btc', 'eth', 'sol'].map((k) => `<button class="chain-opt${k === dashChain ? ' on' : ''}" data-ch="${k}"><span class="cs-ic ${k}">${DCH[k].ic}</span><span class="chain-opt-nm">${esc(DCH[k].name)}</span><span class="chain-opt-sym">${DCH[k].sym}</span>${k === dashChain ? '<span class="adot"></span>' : ''}</button>`).join('')}</div>
+      <div class="wbtns"><button class="ghost" id="chClose">Close</button></div>`);
+    $('#chClose').onclick = closeModal;
+    $('#wmodalCard').querySelectorAll('[data-ch]').forEach((b) => (b.onclick = () => { dashChain = b.dataset.ch; dashTab = 'tokens'; DASH_ASSETS = null; closeModal(); renderUnlocked(); }));
+  }
   function acctPickerRow(kind, key, label, sel, hasMenu) {
     return `<div class="acct-item"><button class="acct-pick${sel ? ' on' : ''}" data-sw="${kind}:${esc(String(key))}">${sel ? '<span class="adot"></span>' : ''}${esc(label)}</button>${hasMenu ? `<button class="acct-kebab" data-menu="${kind}:${esc(String(key))}" title="Rename / delete">${KEBAB_SVG}</button>` : ''}</div>`;
   }
@@ -1230,7 +1258,7 @@
   // Portfolio strip — native balance + USD per chain (or the single watched chain), plus a grand total.
   async function loadPortfolio(acc) {
     try { if (!isTN() && !DASH_PRICES.bitcoin) DASH_PRICES = await fetch('api/prices').then((r) => r.json()); } catch (_) {}
-    const chains = (acctKind === 'watch' || acctKind === 'imported' || acctKind === 'hardware' || acctKind === 'connected') ? [dashChain] : ['btc', 'eth', 'sol'];
+    const chains = [dashChain]; // the wallet is dedicated to the switched-to chain — only its balance is shown
     const natOf = (ch, addr) => {
       if (!addr) return Promise.resolve(0);
       if (ch === 'btc') return fetch('api/btc/' + encodeURIComponent(addr)).then((r) => r.json()).then((d) => (d.balanceSats || 0) / 1e8).catch(() => 0);
@@ -1625,6 +1653,16 @@
     };
   }
 
+  // Send / Receive now live inside the balance module. HD & imported accounts can sign; watch-only can't.
+  function renderBalanceActions(acc) {
+    const bar = $('#balActions'); if (!bar) return;
+    if (acctKind === 'watch') { bar.innerHTML = ''; return; } // read-only, no keys to sign
+    const sym = acctKind === 'imported' ? 'BTC' : DCH[dashChain].sym;
+    bar.innerHTML = `<button class="primary sm" data-a="send">Send ${sym}</button><button class="ghost sm" data-a="receive">Receive</button>`;
+    bar.querySelectorAll('[data-a]').forEach((btn) => (btn.onclick = () => dashAction(btn.dataset.a, acc)));
+  }
+  // Below-balance row: only BTC keeps an Activity entry — Coin Control is reached from inside Activity
+  // (mirrors the extension, where the two share one entry point). Send/Receive moved into the balance module.
   function renderDashActions(acc) {
     const bar = $('#dashActions'); if (!bar) return;
     if (acctKind === 'watch') {
@@ -1632,19 +1670,17 @@
       bar.innerHTML = `<div class="watch-note">👁 Watch-only — read-only, no keys to sign. <button class="mini" data-copy2="${esc(w ? w.address : '')}">copy address</button></div>${isBtc ? '<div style="margin-top:8px"><button class="ghost sm" data-a="activity">⧗ Activity</button></div>' : ''}`;
       const c = bar.querySelector('[data-copy2]'); if (c) c.onclick = () => copy(c.dataset.copy2, c);
       bar.querySelectorAll('[data-a]').forEach((btn) => (btn.onclick = () => dashAction(btn.dataset.a, acc)));
+      bar.style.display = '';
       return;
     }
-    if (acctKind === 'imported') {
-      // Imported keys sign with their own WIF — full BTC toolset (Counterparty, SRC-20, stamps via dApps).
-      // Emblem bridge is omitted (it needs an ETH address the imported BTC key doesn't have).
-      bar.innerHTML = [`<button class="primary sm" data-a="send">Send BTC</button>`, `<button class="ghost sm" data-a="receive">Receive</button>`, `<button class="ghost sm" data-a="coincontrol">Coin Control</button>`, `<button class="ghost sm" data-a="activity">⧗ Activity</button>`].join(''); // Counterparty · dApps live in the Tools rail
+    const isBtc = acctKind === 'imported' || dashChain === 'btc';
+    if (isBtc) {
+      bar.innerHTML = `<button class="ghost sm" data-a="activity">⧗ Activity</button>`;
       bar.querySelectorAll('[data-a]').forEach((btn) => (btn.onclick = () => dashAction(btn.dataset.a, acc)));
-      return;
+      bar.style.display = '';
+    } else {
+      bar.innerHTML = ''; bar.style.display = 'none'; // ETH/SOL: no Activity/Coin Control to show here
     }
-    const b = [`<button class="primary sm" data-a="send">Send ${DCH[dashChain].sym}</button>`, `<button class="ghost sm" data-a="receive">Receive</button>`];
-    if (dashChain === 'btc') { b.push(`<button class="ghost sm" data-a="coincontrol">Coin Control</button>`, `<button class="ghost sm" data-a="activity">⧗ Activity</button>`); } // Counterparty · Emblem bridge · dApps all live in the Tools rail
-    bar.innerHTML = b.join('');
-    bar.querySelectorAll('[data-a]').forEach((btn) => (btn.onclick = () => dashAction(btn.dataset.a, acc)));
   }
   function dashAction(a, acc) {
     if (a === 'send') { if (dashChain === 'btc') flowSend(acc); else if (dashChain === 'eth') window.EvmActions && window.EvmActions.open(acc.account, acc.ethereum.address, 'ethereum'); else window.SolActions && window.SolActions.open(acc.account, acc.solana.address); }

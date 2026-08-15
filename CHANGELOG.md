@@ -3,6 +3,26 @@
 Notable changes to Wonder Wallet. The project is pre-1.0 and in active development; the extension and
 the hosted Terminal version independently. Dates are approximate to the release window.
 
+## Blockchain switcher & top-row redesign — Terminal v0.34 (2026-08-15)
+
+- **Blockchain switcher, extension-style.** A logo-only coin button (solid brand-colored Bitcoin /
+  Ethereum / Solana marks) at the top-left opens a **Choose blockchain** picker. The whole wallet is now
+  *dedicated to the selected chain* — balance, assets, and actions all reflect only that chain. Watch-only
+  and imported (single-chain) accounts show a static coin instead of a switcher.
+- **Per-chain chain tabs removed** — the switcher replaces the old BTC/ETH/SOL tab row above the assets.
+- **Single-chain balance module** — one panel shows just the active chain's balance (no more 3-card strip
+  + total), and only that chain's balance is fetched.
+- **Send / Receive moved into the balance module** (`Send BTC`/`Send ETH`/`Send SOL` + Receive), adapting
+  per chain. The old separate action row is gone.
+- **Coin Control folded into Activity** — the standalone Coin Control button is removed; it's now reached
+  from a button inside the Activity view, sharing one entry point (mirrors the extension).
+- **Top-row redesign.** A dedicated top strip holds the **blockchain toggle (left) · Mainnet/Testnet
+  toggle (centered) · Lock (right)**, divided by a hairline from the account row (account selector +
+  address-type on the left, privacy toggle + Advanced on the right). The Mainnet toggle relocated here
+  from the old header.
+- **"keys never leave your browser" header removed** — the wallet no longer opens with a security-ad line.
+- Trimmed the top padding so the strip sits compactly at the top of the card. Version → v0.34.0.
+
 ## Terminal UX & mobile polish — Terminal v0.33 (2026-08-13)
 
 - **Stay signed in + idle auto-lock** (Advanced → *Auto-lock & stay signed in*). Opt-in: a refresh no
