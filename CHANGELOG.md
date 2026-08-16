@@ -3,6 +3,30 @@
 Notable changes to Wonder Wallet. The project is pre-1.0 and in active development; the extension and
 the hosted Terminal version independently. Dates are approximate to the release window.
 
+## Extension v0.53.9 (2026-08-16)
+
+- **Password floor lowered 12 → 8** on Create and Restore, matching the "8+ characters" placeholders and
+  the Terminal. (No core-side floor existed; these two UI checks were the only enforcement.)
+- **FreeWallet → Counterparty relabel** — imported Counterwallet accounts now label as `Counterparty · 0/i`;
+  the import flow consistently calls the input a "Counterwallet / FreeWallet passphrase" (matching the Terminal).
+
+## Send/Receive parity & dashboard polish — Terminal v0.35 (2026-08-16)
+
+- **Send Bitcoin** — dropped the in-modal "From address" picker; Send is now paired to the account's
+  selected address type (shown as a subtitle) and set on the dashboard. RBF and dispenser detection kept.
+- **Receive** — a clean single-address view scoped to the current chain + account (big QR + address).
+  Tap/click the address to copy (icon reveals on hover, "✓ Copied" confirmation; corner ✕ closes — no
+  button row). The full multi-type/all-chains list moved to **Advanced → All addresses**.
+- **Auto-lock status footer** beneath the assets: live "auto-locks in M:SS" countdown · "keys never leave
+  this device" · version — mirroring the extension. The idle timer now resets on activity in all modes.
+- **Top row & balance module** — Advanced moved up beside Lock; the privacy (mask) toggle moved into the
+  balance module beside the amount; the ▾ dropped from the Advanced label.
+- **Mobile Tools toggle** relocated into the Activity row (left of Activity) so the balance tucks directly
+  under the account; it collapses on desktop where the rail is docked.
+- **Stamp detail** — file **Size** now sits beside **Type** (fmtBytes B/KB/MB), matching the extension;
+  the Creator line is centered and shows the full creator address.
+- **Activity** — removed the duplicate "Close" button (the corner ✕ is sufficient); Coin Control clears it.
+
 ## Blockchain switcher & top-row redesign — Terminal v0.34 (2026-08-15)
 
 - **Blockchain switcher, extension-style.** A logo-only coin button (solid brand-colored Bitcoin /

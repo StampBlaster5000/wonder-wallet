@@ -139,6 +139,9 @@ body {
 /* The ☰ Tools toggle is redundant on desktop (rail is docked with its own collapse control) —
    keep it only as the mobile drawer opener. */
 @media (min-width: 901px) { #dappsBtn { display: none !important; } }
+/* When the Activity row holds only the (mobile-only) Tools button, collapse it entirely on desktop. */
+@media (min-width: 901px) { .dash-actions.tools-only { display: none !important; } }
+.dash-actrow { display: flex; gap: 8px; margin-top: 8px; }
 
 /* Mobile → off-canvas drawer (ignore icon-collapse) */
 @media (max-width: 900px) {
@@ -495,6 +498,8 @@ button.achip:hover { border-color: var(--gold); filter: none; color: var(--gold2
 /* Single-chain balance module — the wallet is dedicated to the switched-to chain. */
 .bal-strip { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--surface2); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; margin-bottom: 14px; }
 .bal-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.bal-top { display: flex; align-items: center; gap: 6px; }
+.bal-top .ic-btn { padding: 4px 6px; color: var(--muted); }
 .bal-usd { font-size: 27px; font-weight: 700; font-family: 'Fraunces', serif; color: var(--gold2); line-height: 1.05; }
 .bal-nat { font-family: var(--mono); font-size: 12.5px; color: var(--muted2); }
 .bal-actions { display: flex; gap: 8px; flex: none; }
@@ -503,6 +508,14 @@ button.achip:hover { border-color: var(--gold); filter: none; color: var(--gold2
 .dctab, .datab { background: transparent; border: none; color: var(--muted2); font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 7px 13px; border-radius: 8px; cursor: pointer; }
 .dctab.on, .datab.on { background: var(--surface3); color: var(--gold2); }
 .dash-assets { min-height: 90px; margin-bottom: 12px; }
+/* Status footer beneath the assets: live auto-lock countdown · reassurance · version (mirrors the extension). */
+.wallet-foot { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px 12px; margin-top: 6px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--muted); }
+.wf-lock { font-family: var(--mono); color: var(--muted2); min-width: 0; }
+.wf-lock:empty { display: none; }
+.wf-sec { display: inline-flex; align-items: center; gap: 6px; }
+.wf-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px rgba(74,222,128,0.55); flex: none; }
+.wf-ver { font-family: var(--mono); color: var(--muted); }
+.wf-ver:empty { display: none; }
 .dash-empty { color: var(--muted); font-size: 12.5px; padding: 20px 4px; text-align: center; }
 .asset-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .asset-table thead th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--border); }
@@ -585,8 +598,13 @@ button.achip:hover { border-color: var(--gold); filter: none; color: var(--gold2
 button.primary.danger { background: linear-gradient(180deg, #f0685a, #c73f34); color: #fff; }
 .qr-wrap { display: flex; justify-content: center; margin: 4px 0 12px; }
 .qr-wrap img { width: 230px; height: 230px; background: #fff; border-radius: 14px; padding: 12px; image-rendering: pixelated; box-shadow: 0 8px 26px -10px rgba(0,0,0,0.7); }
-.recv-addr { font-family: var(--mono); font-size: 12px; color: var(--gold2); word-break: break-all; background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 11px; cursor: pointer; text-align: center; }
+.recv-addr { display: flex; align-items: center; justify-content: center; gap: 8px; font-family: var(--mono); font-size: 12px; color: var(--gold2); background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 11px; cursor: pointer; text-align: center; }
 .recv-addr:hover { border-color: var(--gold); }
+.recv-addr .ra-text { word-break: break-all; min-width: 0; }
+.recv-addr .ra-copy { flex: none; display: inline-flex; align-items: center; gap: 3px; color: var(--muted); opacity: 0; transition: opacity .12s; font-family: inherit; font-size: 11px; font-weight: 600; }
+.recv-addr:hover .ra-copy { opacity: .8; }
+.recv-addr.copied { border-color: var(--green); color: var(--green); }
+.recv-addr.copied .ra-copy { opacity: 1; color: var(--green); }
 button.primary { background: linear-gradient(180deg, var(--gold2), var(--gold)); color: #1a1305; }
 button.ghost { background: var(--surface3); color: var(--text); }
 button.ghost:hover { filter: brightness(1.25); }
@@ -655,7 +673,8 @@ textarea.m-in { font-family: var(--mono); resize: vertical; }
 
 .cc-card { max-width: 720px; }
 .cc-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
-.cc-head-r { display: flex; gap: 6px; flex: none; }
+.cc-head-r { display: flex; gap: 6px; flex: none; margin-right: 28px; }
+.cc-head-r:empty { margin-right: 0; }
 .cc-addr { font-family: var(--mono); font-size: 11px; color: var(--muted); word-break: break-all; margin-top: 4px; }
 .cc-summary { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
 .cc-counts { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 9px; font-size: 11.5px; align-items: center; }
@@ -702,7 +721,9 @@ textarea.m-in { font-family: var(--mono); resize: vertical; }
 #ccmini { z-index: 60; }
 
 /* ── Send / sign ── */
-.send-from { font-family: var(--mono); font-size: 11.5px; color: var(--gold2); background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 11px; margin: 10px 0; word-break: break-all; }
+.send-from { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 11px; margin: 6px 0 10px; }
+.send-from .sf-type { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); flex: none; }
+.send-from .sf-addr { font-family: var(--mono); font-size: 11.5px; color: var(--gold2); word-break: break-all; min-width: 0; }
 .send-amt { display: flex; gap: 10px; align-items: center; }
 .send-amt .m-in { flex: 1; }
 .send-max { font-size: 12.5px; color: var(--muted2); display: flex; align-items: center; gap: 5px; white-space: nowrap; }

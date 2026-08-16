@@ -29,7 +29,7 @@ const netctx = require('./sources/netctx');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const VERSION = '0.34.0';
+const VERSION = '0.35.0';
 const PHASE = 'Beta';
 
 // Stateless proxy — Wonder Wallet holds NO user data server-side. All user state

@@ -36,6 +36,8 @@
   const STAR = '<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" style="vertical-align:-1px"><path d="M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 17.8 5.9 20.4l1.5-6.8L2.2 9l6.9-.7z"/></svg>';
   const fmt2 = (n) => Number(n).toLocaleString('en-US', { maximumFractionDigits: 2 });
   const fmtN = (n, d = 6) => Number(n).toLocaleString('en-US', { maximumFractionDigits: d });
+  // Human file size (B / KB / MB), matching the extension's fmtBytes.
+  const fmtBytes = (n) => { n = Number(n); if (!isFinite(n) || n <= 0) return '—'; if (n < 1024) return n + ' B'; if (n < 1048576) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB'; return (n / 1048576).toFixed(1) + ' MB'; };
   // Parse a possibly pre-formatted amount ("1,249,078.1518") back to a Number for summing.
   const aggNum = (v) => { const n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.eE+-]/g, '')); return isFinite(n) ? n : 0; };
   const shortA = (a) => { a = String(a || ''); return a.length > 16 ? a.slice(0, 7) + '…' + a.slice(-6) : a; };
@@ -570,10 +572,14 @@
     try { const sec = C.getSessionSecret && C.getSessionSecret(); if (sec && sec.mnemonic) sessionStorage.setItem(SESS_KEY, JSON.stringify({ sec, at: Date.now() })); } catch (_) {}
   }
   function clearSession() { try { sessionStorage.removeItem(SESS_KEY); } catch (_) {} }
+  let _lockAt = 0; // wall-clock ms when the wallet will auto-lock (0 = none/unknown) — drives the footer countdown
+  // Effective idle window across all modes: chosen minutes, or the core's 10-min default in 'off' mode; null = 'never'.
+  function effIdleMs() { const v = idleSetting(); if (v === 'never') return null; const n = parseInt(v, 10); return n > 0 ? n * 60000 : 10 * 60000; }
   function armIdle() {
-    if (!C.isUnlocked()) return;
-    if (idleSetting() === 'off') return; // leave the core's default idle timer as-is
-    const ms = idleMs(); C.armAutoLock(ms != null ? ms : FOREVER); // a timer, or 'never' → effectively no idle lock
+    if (!C.isUnlocked()) { _lockAt = 0; return; }
+    const ms = effIdleMs();
+    if (ms == null) { C.armAutoLock(FOREVER); _lockAt = 0; return; } // 'never' → effectively no idle lock
+    C.armAutoLock(ms); _lockAt = Date.now() + ms; // re-arm the core timer + record the deadline for the countdown
   }
   function setIdleSetting(v) {
     try { localStorage.setItem(IDLE_KEY, v); localStorage.setItem('ww:persist', v !== 'off' ? '1' : '0'); } catch (_) {}
@@ -582,10 +588,29 @@
   }
   let _bumpAt = 0;
   function bumpActivity() {
-    if (!persistOn() || !C.isUnlocked()) return;
+    if (!C.isUnlocked()) return;
     const now = Date.now();
-    try { const raw = sessionStorage.getItem(SESS_KEY); if (raw) { const o = JSON.parse(raw); o.at = now; sessionStorage.setItem(SESS_KEY, JSON.stringify(o)); } } catch (_) {}
-    if (now - _bumpAt > 4000) { _bumpAt = now; armIdle(); } // re-arm the idle countdown on activity (throttled)
+    if (persistOn()) { try { const raw = sessionStorage.getItem(SESS_KEY); if (raw) { const o = JSON.parse(raw); o.at = now; sessionStorage.setItem(SESS_KEY, JSON.stringify(o)); } } catch (_) {} }
+    if (now - _bumpAt > 4000) { _bumpAt = now; armIdle(); } // reset the idle countdown (+ core timer) on activity, throttled
+  }
+  // ── Footer auto-lock countdown (mirrors the extension's status strip) ──
+  let _footCd = null;
+  function stopFootCd() { if (_footCd) { clearInterval(_footCd); _footCd = null; } }
+  function startFootCountdown() {
+    stopFootCd();
+    if (!$('#wfLock')) return;
+    if (C.isUnlocked() && idleSetting() !== 'never' && _lockAt <= Date.now()) armIdle(); // ensure a live deadline exists
+    const tick = () => {
+      const el = $('#wfLock'); if (!el) { stopFootCd(); return; }
+      if (!C.isUnlocked()) { el.textContent = ''; return; }
+      if (idleSetting() === 'never') { el.textContent = '🔓 auto-lock off'; return; }
+      if (!_lockAt) { el.textContent = ''; return; }
+      const rem = _lockAt - Date.now();
+      if (rem <= 0) { el.textContent = 'locking…'; return; }
+      const m = Math.floor(rem / 60000), s = Math.floor((rem % 60000) / 1000);
+      el.textContent = 'auto-locks in ' + m + ':' + (s < 10 ? '0' : '') + s;
+    };
+    tick(); _footCd = setInterval(tick, 1000);
   }
   function tryResumeSession() {
     if (C.isUnlocked() || !persistOn()) return false;
@@ -665,22 +690,17 @@
       <div class="wallet-topbar">
         <div class="wt-left">${chainBtnHtml(chainSwitchable)}</div>
         <div class="wt-center"><span class="net-mount" id="wwNetMount"></span></div>
-        <div class="wt-right"><button class="ghost sm" id="bLock">Lock</button></div>
+        <div class="wt-right">${isW ? '' : '<button class="ghost sm" id="bAdvanced">Advanced</button>'}<button class="ghost sm" id="bLock">Lock</button></div>
       </div>
       <div class="dash-head">
         <div class="dash-head-l">
           <div class="acct-sel">${acctBtnHtml()}${dashChain === 'btc' && !isW ? `<button class="mini btctype-chip" id="btcTypeBtn" title="Bitcoin address type">${BTC_LABEL[isImp ? impBtcType(impId) : acctBtcType(curAccount)]} ▾</button>` : ''}</div>
         </div>
         <button class="pname-chip" id="pnameChip" hidden title="Your primary Bitcoin Stamps name"></button>
-        <div class="dash-head-r">
-          ${walletToolsHtml()}
-          <button class="ghost sm" id="dappsBtn" title="Open the tools panel">☰ Tools</button>
-          ${isW ? '' : '<button class="ghost sm" id="bAdvanced">Advanced ▾</button>'}
-        </div>
       </div>
       <div class="bal-strip" id="pfStrip">
         <div class="bal-main">
-          <span class="bal-usd" id="pfUsd-${dashChain}">…</span>
+          <div class="bal-top"><span class="bal-usd" id="pfUsd-${dashChain}">…</span>${walletToolsHtml()}</div>
           <span class="bal-nat" id="pfNat-${dashChain}">—</span>
         </div>
         <div class="bal-actions" id="balActions"></div>
@@ -689,7 +709,12 @@
       <div class="dash-tabs">
         <div class="dash-assettabs"><button class="datab${dashTab === 'tokens' ? ' on' : ''}" data-tab="tokens">Tokens</button><button class="datab${dashTab === 'collectibles' ? ' on' : ''}" data-tab="collectibles">Collectibles</button></div>
       </div>
-      <div id="dashAssets" class="dash-assets"><div class="fine">Loading ${esc(DCH[dashChain].name)} assets…</div></div>`;
+      <div id="dashAssets" class="dash-assets"><div class="fine">Loading ${esc(DCH[dashChain].name)} assets…</div></div>
+      <div class="wallet-foot" id="walletFoot">
+        <span class="wf-lock" id="wfLock"></span>
+        <span class="wf-sec"><span class="wf-dot"></span>keys never leave this device</span>
+        <span class="wf-ver" id="wfVer"></span>
+      </div>`;
     if ($('#chainBtn')) $('#chainBtn').onclick = chainPicker;
     if ($('#acctBtn')) $('#acctBtn').onclick = accountPicker;
     if ($('#btcTypeBtn')) $('#btcTypeBtn').onclick = () => btcTypeMenu();
@@ -700,6 +725,8 @@
     body().querySelectorAll('.datab').forEach((b) => (b.onclick = () => { dashTab = b.dataset.tab; body().querySelectorAll('.datab').forEach((x) => x.classList.toggle('on', x === b)); renderDashAssets(acc); }));
     renderBalanceActions(acc);
     renderDashActions(acc);
+    const vf = $('#wfVer'); if (vf) vf.textContent = (document.getElementById('verTag') || {}).textContent || '';
+    startFootCountdown();
     loadPortfolio(acc);
     loadDashAssets(acc);
     if (!isW && !isImp && acc) checkVaultDeepLink(acc); // Emblem vaulting needs an ETH address imported keys lack
@@ -762,8 +789,7 @@
     ACT_T = { addr, items: null, filter: 'all' };
     // Coin Control lives inside Activity now (they share one entry point, mirroring the extension).
     const ccBtn = canSignBtc() ? `<button class="mini" id="acCoin" title="Coin Control — UTXO management (freeze / protect asset-bearing coins)">▦ Coin Control</button>` : '';
-    modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Activity</h3><div class="cc-addr">${esc(addr)}</div></div><div class="cc-head-r">${ccBtn}<button class="mini" id="acX">Close</button></div></div><div id="acBody"><div class="statusline load">Loading activity…</div></div>`, true);
-    $('#acX').onclick = closeModal;
+    modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Activity</h3><div class="cc-addr">${esc(addr)}</div></div><div class="cc-head-r">${ccBtn}</div></div><div id="acBody"><div class="statusline load">Loading activity…</div></div>`, true);
     const acCoin = $('#acCoin'); if (acCoin) acCoin.onclick = () => { closeModal(); if (window.CoinControl) window.CoinControl.open(addr); };
     loadActT();
   }
@@ -1471,9 +1497,10 @@
             <div><span class="k">Locked</span><span class="v">${s.locked === true ? 'yes 🔒' : s.locked === false ? 'no' : '—'}</span></div>
             <div><span class="k">Divisible</span><span class="v">${s.divisible === true ? 'yes' : s.divisible === false ? 'no' : '—'}</span></div>
             <div><span class="k">Type</span><span class="v">${esc(s.mime || '—')}</span></div>
+            ${s.fileSize ? `<div><span class="k">Size</span><span class="v">${esc(fmtBytes(s.fileSize))}</span></div>` : ''}
           </div>
           <div class="m-row" data-copy="${esc(cpid)}" title="Copy CPID"><span class="k">CPID</span><span class="vmono">${esc(cpid || '—')}</span></div>
-          <div class="fine">Creator ${esc(shortA(s.creator || '—'))}${s.fileSize ? ' · ' + fmtN(s.fileSize, 0) + ' B' : ''}</div>
+          <div class="fine" style="text-align:center;word-break:break-all">Creator ${esc(s.creator || '—')}</div>
           ${(acc || isConn()) ? `<div class="m-actions">
             <button class="m-act" data-act="send">Send</button>
             <button class="m-act" data-act="dispenser">Dispenser</button>
@@ -1665,22 +1692,25 @@
   // (mirrors the extension, where the two share one entry point). Send/Receive moved into the balance module.
   function renderDashActions(acc) {
     const bar = $('#dashActions'); if (!bar) return;
+    // ☰ Tools is the mobile drawer toggle (hidden on desktop, where the rail is docked). It lives here,
+    // to the LEFT of Activity, so the balance module tucks straight under the account row.
+    const tools = '<button class="ghost sm" id="dappsBtn" title="Open the tools panel">☰ Tools</button>';
+    const wireBar = () => {
+      bar.querySelectorAll('[data-a]').forEach((btn) => (btn.onclick = () => dashAction(btn.dataset.a, acc)));
+      const d = bar.querySelector('#dappsBtn'); if (d) d.onclick = () => window.DappDashboard && window.DappDashboard.toggle();
+    };
     if (acctKind === 'watch') {
       const w = currentWatch(); const isBtc = w && CHAIN_OF[w.chain] === 'btc';
-      bar.innerHTML = `<div class="watch-note">👁 Watch-only — read-only, no keys to sign. <button class="mini" data-copy2="${esc(w ? w.address : '')}">copy address</button></div>${isBtc ? '<div style="margin-top:8px"><button class="ghost sm" data-a="activity">⧗ Activity</button></div>' : ''}`;
+      bar.innerHTML = `<div class="watch-note">👁 Watch-only — read-only, no keys to sign. <button class="mini" data-copy2="${esc(w ? w.address : '')}">copy address</button></div><div class="dash-actrow">${tools}${isBtc ? '<button class="ghost sm" data-a="activity">⧗ Activity</button>' : ''}</div>`;
       const c = bar.querySelector('[data-copy2]'); if (c) c.onclick = () => copy(c.dataset.copy2, c);
-      bar.querySelectorAll('[data-a]').forEach((btn) => (btn.onclick = () => dashAction(btn.dataset.a, acc)));
-      bar.style.display = '';
+      bar.classList.remove('tools-only'); bar.style.display = ''; wireBar();
       return;
     }
     const isBtc = acctKind === 'imported' || dashChain === 'btc';
-    if (isBtc) {
-      bar.innerHTML = `<button class="ghost sm" data-a="activity">⧗ Activity</button>`;
-      bar.querySelectorAll('[data-a]').forEach((btn) => (btn.onclick = () => dashAction(btn.dataset.a, acc)));
-      bar.style.display = '';
-    } else {
-      bar.innerHTML = ''; bar.style.display = 'none'; // ETH/SOL: no Activity/Coin Control to show here
-    }
+    const activity = isBtc ? '<button class="ghost sm" data-a="activity">⧗ Activity</button>' : '';
+    bar.innerHTML = tools + activity;
+    bar.classList.toggle('tools-only', !activity); // ETH/SOL: only the mobile Tools btn → collapse the row on desktop
+    bar.style.display = ''; wireBar();
   }
   function dashAction(a, acc) {
     if (a === 'send') { if (dashChain === 'btc') flowSend(acc); else if (dashChain === 'eth') window.EvmActions && window.EvmActions.open(acc.account, acc.ethereum.address, 'ethereum'); else window.SolActions && window.SolActions.open(acc.account, acc.solana.address); }
@@ -1693,7 +1723,30 @@
   }
 
   // Receive / all-addresses — keeps every BTC address type reachable (Legacy for CP/Stamps, etc.).
+  // Clean, extension-style Receive: the ONE address for the chain + account you're on — big QR + copy.
   function receiveView(acc) {
+    const ch = dashChain;
+    const addr = acctKind === 'imported' ? impBtcAddr() : activeAddr(acc, ch);
+    if (!addr) return;
+    const url = window.qrcode ? qrUrl(addr) : null;
+    const typeLabel = ch === 'btc' ? (BTC_LABEL[curBtcType()] || '') + ' · ' : '';
+    const COPY_IC = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+    // No button row — the corner ✕ closes; tap/click the address to copy (icon reveals on hover, confirms on tap).
+    modal(`<h3 class="m-title">Receive ${esc(DCH[ch].sym)}</h3>
+      <p class="fine">Your ${esc(typeLabel)}${esc(DCH[ch].name)} address. Only send ${esc(DCH[ch].name)} assets here.</p>
+      ${url ? `<div class="qr-wrap"><img src="${url}" alt="address QR" width="230" height="230"/></div>` : '<div class="fine">QR unavailable.</div>'}
+      <div class="recv-addr" role="button" tabindex="0" title="Tap to copy"><span class="ra-text">${esc(addr)}</span><span class="ra-copy" aria-hidden="true">${COPY_IC}</span></div>`);
+    const ra = $('#wmodalCard').querySelector('.recv-addr'), rc = ra.querySelector('.ra-copy'), orig = rc.innerHTML;
+    const doCopy = async () => {
+      try { await navigator.clipboard.writeText(addr); } catch (_) {}
+      ra.classList.add('copied'); rc.innerHTML = '✓ Copied';
+      clearTimeout(ra._t); ra._t = setTimeout(() => { ra.classList.remove('copied'); rc.innerHTML = orig; }, 1300);
+    };
+    ra.onclick = doCopy;
+    ra.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doCopy(); } };
+  }
+  // Advanced → All addresses: every derived address (all BTC types + ETH + SOL), with copy / QR / UTXO / nickname.
+  function allAddressesView(acc) {
     const addrNames = loadMap(ADDR_NAMES);
     const row = (label, addr, hint, cc) => {
       const nick = addrNames[addr] || '';
@@ -1741,7 +1794,7 @@
       <div class="wbtns"><button class="ghost" id="qrBack">Back</button></div>`);
     const c = $('#wmodalCard');
     c.querySelectorAll('[data-copy]').forEach((b) => (b.onclick = () => copy(b.dataset.copy, b)));
-    $('#qrBack').onclick = () => receiveView(acc);
+    $('#qrBack').onclick = () => allAddressesView(acc);
   }
 
   // Advanced ▾ — the power tools tucked out of the main view.
@@ -1762,7 +1815,7 @@
     $('#advClose').onclick = closeModal;
     $('#wmodalCard').querySelectorAll('[data-adv]').forEach((b) => (b.onclick = () => {
       const a = b.dataset.adv; closeModal();
-      if (a === 'addresses') receiveView(acc);
+      if (a === 'addresses') allAddressesView(acc);
       else if (a === 'sign') flowSignMessage();
       else if (a === 'hw') window.HardwareWallet && window.HardwareWallet.connectFlow();
       else if (a === 'theme') themeMenu();
@@ -1959,7 +2012,6 @@
   }
 
   // ── Send BTC (asset-safe; signs client-side, broadcasts via server) ──
-  const SRC_LABEL = { nativeSegwit: 'Native SegWit · bc1q', legacy: 'Legacy · 1… (OG Counterparty / Stamps)', taproot: 'Taproot · bc1p', nestedSegwit: 'Nested SegWit · 3…' };
   // Legacy (P2PKH) inputs need the full previous tx (nonWitnessUtxo) to sign — fetch them.
   async function fetchPrevTxs(type, txids, statusEl) {
     if (type !== 'legacy') return {};
@@ -1976,8 +2028,7 @@
     let fees = { fastestFee: 10, halfHourFee: 6, hourFee: 3, economyFee: 2 };
     try { fees = await fetch('api/btc/fees').then((r) => r.json()); } catch (_) {}
     const c = modal(`<h3 class="m-title">Send Bitcoin</h3>
-      <label class="cpf"><span>From address</span><select id="sFrom" class="m-in">${Object.keys(SRC_LABEL).map((t) => `<option value="${t}"${t === sendType ? ' selected' : ''}>${SRC_LABEL[t]}</option>`).join('')}</select></label>
-      <div class="send-from" id="sFromAddr">${from}</div>
+      <div class="send-from" id="sFromAddr" title="Sending from your ${esc(BTC_LABEL[sendType] || 'Bitcoin')} address — set the address type on the wallet dashboard"><span class="sf-type">${esc(BTC_LABEL[sendType] || 'Bitcoin')}</span><span class="sf-addr">${esc(from)}</span></div>
       <div class="fine">Only <b>spendable</b> UTXOs are used — asset-bearing, frozen &amp; time-locked outputs are never spent.</div>
       <input id="sTo" class="m-in" placeholder="Address or name (bc1q… / 1… / bc1p… / satoshi.btc)" spellcheck="false" autocapitalize="off" />
       <div id="nameResolve" class="name-resolve" hidden></div>
@@ -1993,7 +2044,7 @@
       <div id="sStatus" class="statusline" hidden></div>
       <div class="wbtns"><button class="ghost" id="mc">Cancel</button><button class="primary" id="bReview">Review</button></div>`);
     let feeRate = fees.halfHourFee || 6;
-    $('#sFrom').onchange = () => { sendType = $('#sFrom').value; from = isImp ? (currentImported().bitcoin[sendType] || {}).address : acc.bitcoin[sendType].address; if (isImp) setImpBtcType(impId, sendType); $('#sFromAddr').textContent = from; };
+    // Send is paired to the account's currently-selected address type (set on the dashboard) — no in-modal picker.
     const feeHint = (r) => { const h = $('#feeHint'); if (!h) return; if (r > 0 && r < 1) { h.hidden = false; h.textContent = '⚠ Below 1 sat/vB may not relay on all nodes — best when the mempool is near-empty.'; } else { h.hidden = true; } };
     c.querySelectorAll('.feeopt').forEach((b) => (b.onclick = () => { c.querySelectorAll('.feeopt').forEach((x) => x.classList.remove('on')); b.classList.add('on'); feeRate = Number(b.dataset.r); $('#sFee').value = ''; feeHint(feeRate); }));
     $('#sFee').oninput = (e) => { if (e.target.value !== '') { const r = Number(e.target.value); if (r > 0) { feeRate = r; c.querySelectorAll('.feeopt').forEach((x) => x.classList.remove('on')); feeHint(r); } } };
