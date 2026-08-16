@@ -8,6 +8,7 @@ public/wallet-hw.js
 # Packaged extension + its assembled output dir:
 extension/dist/
 public/wonder-wallet-extension.zip
+public/build-info.json
 
 # ── Secrets — never commit (config is injected via env at runtime) ──
 .env

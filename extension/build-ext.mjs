@@ -169,3 +169,9 @@ const { makeZip } = await import('./make-zip.mjs');
 const ZIP_OUT = join(PUB, 'wonder-wallet-extension.zip');
 const z = makeZip(DIST, ZIP_OUT, 'wonder-wallet-extension');
 console.log('✓ repackaged ' + ZIP_OUT.replace(ROOT + '/', '') + ' (' + z.files + ' files, ' + Math.round(z.bytes / 1024) + ' KB)');
+
+// 7. Stamp build-info.json so the site's "latest build" download shows the live version + freshness.
+let commit = '';
+try { commit = execSync('git rev-parse --short HEAD', { cwd: ROOT }).toString().trim(); } catch (_) {}
+writeFileSync(join(PUB, 'build-info.json'), JSON.stringify({ version: PKG.version, builtAt: new Date().toISOString(), commit, zip: 'wonder-wallet-extension.zip' }, null, 2) + '\n');
+console.log('✓ wrote public/build-info.json (v' + PKG.version + (commit ? ' · ' + commit : '') + ')');
