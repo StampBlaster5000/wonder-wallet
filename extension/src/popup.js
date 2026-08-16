@@ -842,7 +842,7 @@
     var go = async function () {
       var e = document.getElementById('suErr'); e.className = 'p-err'; e.textContent = '';
       var p1 = document.getElementById('suPw1').value, p2 = document.getElementById('suPw2').value, pp = document.getElementById('suPp').value;
-      if (p1.length < 12) { e.textContent = 'Use at least 12 characters.'; return; }
+      if (p1.length < 8) { e.textContent = 'Use at least 8 characters.'; return; }
       if (p1 !== p2) { e.textContent = 'Passwords do not match.'; return; }
       document.getElementById('suGo').disabled = true; e.className = 'p-hint'; e.textContent = 'Encrypting…';
       try { await C.createVault(_draft.mnemonic, pp, p1); _draft = null; render(); }
@@ -873,7 +873,7 @@
       var isCw = !C.validateMnemonic(m) && C.isCwPhrase(m);
       if (!C.validateMnemonic(m) && !isCw) { e.textContent = 'That phrase is not a valid BIP-39 mnemonic or Counterwallet passphrase (check spelling & order).'; return; }
       var p1 = document.getElementById('rPw1').value, p2 = document.getElementById('rPw2').value;
-      if (p1.length < 12) { e.textContent = 'Use a password of at least 12 characters.'; return; }
+      if (p1.length < 8) { e.textContent = 'Use a password of at least 8 characters.'; return; }
       if (p1 !== p2) { e.textContent = 'Passwords do not match.'; return; }
       document.getElementById('rGo').disabled = true; e.className = 'p-hint'; e.textContent = 'Encrypting…';
       try { await C.createVault(m, document.getElementById('rPp').value, p1); if (isCw) setAcctBtcType(0, 'legacy'); render(); } // CW assets live on legacy → default there
@@ -1067,7 +1067,7 @@
   }
 
   function acctMenu() {
-    overlay('<div class="menu"><button class="menu-opt" id="mAdd">＋ Add account</button><button class="menu-opt" id="mImport">🔑 Import address (private key)</button><button class="menu-opt" id="mCw">↩ Import Counterparty / FreeWallet passphrase</button><button class="menu-opt" id="mWatch">👁 Add watch-only address</button></div>');
+    overlay('<div class="menu"><button class="menu-opt" id="mAdd">＋ Add account</button><button class="menu-opt" id="mImport">🔑 Import address (private key)</button><button class="menu-opt" id="mCw">↩ Import a Counterwallet / FreeWallet passphrase</button><button class="menu-opt" id="mWatch">👁 Add watch-only address</button></div>');
     document.getElementById('mAdd').onclick = function () { addAccountMenu(); };
     document.getElementById('mImport').onclick = function () { closeOv(); importAddressForm(); };
     document.getElementById('mCw').onclick = function () { closeOv(); cwImportForm(); };
@@ -1078,7 +1078,7 @@
   // the active ones as signable keys (encrypted in the vault, password re-auth). Assets sit on legacy.
   function cwImportForm() {
     overlay('<div class="menu" style="padding:13px;display:flex;flex-direction:column;gap:9px">'
-      + '<div class="p-title" style="font-size:15px">Import Counterparty / FreeWallet passphrase</div>'
+      + '<div class="p-title" style="font-size:15px">Import a Counterwallet / FreeWallet passphrase</div>'
       + '<div class="p-hint">Paste your <b>12-word Counterwallet / FreeWallet passphrase</b>. Wonder derives your legacy <b>1…</b> addresses, scans them for Counterparty / Stamps / SRC-20 assets, and imports the active ones — signable like your own accounts. This is <b>not</b> a BIP-39 seed.</div>'
       + '<textarea class="p-in" id="cwPhrase" rows="2" placeholder="twelve words separated by spaces" spellcheck="false" autocomplete="off" style="resize:vertical;font-family:var(--mono);font-size:12px"></textarea>'
       + '<div id="cwPreview" class="fine"></div>'
@@ -1115,7 +1115,7 @@
         }
         active.sort(function (a, b) { return a.index - b.index; });
         err.textContent = 'Importing ' + active.length + ' address' + (active.length === 1 ? '' : 'es') + '…';
-        var res = await C.importKeys(active.map(function (d) { return d.wif; }), pw, active.map(function (d) { return 'FreeWallet · 0/' + d.index; }));
+        var res = await C.importKeys(active.map(function (d) { return d.wif; }), pw, active.map(function (d) { return 'Counterparty · 0/' + d.index; }));
         // CP / Stamps assets live on the LEGACY address — default each import to legacy so they show.
         res.forEach(function (r) { setImpBtcType(r.id, 'legacy'); });
         refreshImported();
