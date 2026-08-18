@@ -42,10 +42,12 @@
     const raw = toRaw(S.amount, p.giveDiv); if (!raw) return;
     _qt = setTimeout(async () => {
       const q = document.getElementById('mktQuote'); if (q) q.innerHTML = '<span class="fine">Quoting…</span>';
+      S.quoteErr = false;
       try {
-        const j = await fetch(`api/cp/pool/${encodeURIComponent(p.give)}/${encodeURIComponent(p.get)}/quote?quantity=${raw}`).then((r) => r.json());
+        const r = await fetch(`api/cp/pool/${encodeURIComponent(p.give)}/${encodeURIComponent(p.get)}/quote?quantity=${raw}`); const j = await r.json();
+        if (!r.ok || j.error) throw new Error('upstream');
         S.quote = j.result || null;
-      } catch (_) { S.quote = null; }
+      } catch (_) { S.quote = null; S.quoteErr = true; }
       paintQuote();
     }, 280);
   }
@@ -56,6 +58,7 @@
   function paintQuote() {
     const box = document.getElementById('mktQuote'); const out = document.getElementById('mktGet'); if (!box) return;
     const p = pair(), q = S.quote;
+    if (S.quoteErr) { box.innerHTML = `<div class="ob-err">Couldn't reach the Counterparty indexer to price this — retry in a moment.</div>`; if (out) out.value = ''; return; }
     if (!q) { box.innerHTML = ''; if (out) out.value = ''; return; }
     if (!q.pool_exists && !(q.estimated_output > 0)) { box.innerHTML = '<span class="warn" style="display:block">No pool or order-book liquidity for this pair yet.</span>'; if (out) out.value = ''; return; }
     const estHuman = fromRaw(q.estimated_output, p.getDiv);
@@ -122,7 +125,14 @@
     const box = $('#limBook'); if (!box) return;
     box.innerHTML = '<div class="fine">Loading order book…</div>';
     let orders = [];
-    try { const j = await fetch(`api/cp/book/${encodeURIComponent(L.token)}/XCP`).then((r) => r.json()); orders = j.orders || []; } catch (_) {}
+    try {
+      const r = await fetch(`api/cp/book/${encodeURIComponent(L.token)}/XCP`); const j = await r.json();
+      if (!r.ok || j.error) throw new Error('upstream');
+      orders = j.orders || [];
+    } catch (_) {
+      box.innerHTML = `<div class="acct-grp">Order book · ${esc(L.token)} / XCP</div><div class="ob-err">Couldn't reach the Counterparty indexer. <button class="mini" id="obRetry">Retry</button></div>`;
+      const rb = $('#obRetry'); if (rb) rb.onclick = loadBook; return;
+    }
     const bids = [], asks = [];
     for (const o of orders) {
       const gq = Number(o.give_quantity_normalized), tq = Number(o.get_quantity_normalized); // fixed order rate
@@ -286,11 +296,17 @@
     const el = $('#dispAsset'); S.dispAsset = (el.value || '').trim().toUpperCase(); el.value = S.dispAsset;
     if (!RE_ASSET.test(S.dispAsset)) return;
     const list = $('#dispList'); if (list) list.innerHTML = '<div class="fine">Finding dispensers…</div>';
-    try { const j = await fetch('api/cp/asset-dispensers/' + encodeURIComponent(S.dispAsset)).then((r) => r.json()); S.dispensers = j.dispensers || []; } catch (_) { S.dispensers = []; }
+    S.dispErr = false;
+    try {
+      const r = await fetch('api/cp/asset-dispensers/' + encodeURIComponent(S.dispAsset)); const j = await r.json();
+      if (!r.ok || j.error) throw new Error('upstream');
+      S.dispensers = j.dispensers || [];
+    } catch (_) { S.dispensers = []; S.dispErr = true; }
     S.dispPick = 0; S.dispCount = 1; paintDispensers();
   }
   function paintDispensers() {
     const list = $('#dispList'); if (!list) return;
+    if (S.dispErr) { list.innerHTML = `<div class="ob-err">Couldn't reach the Counterparty indexer — this is a connection issue, not a definitive "none." <button class="mini" id="dispRetry">Retry</button></div>`; const rb = $('#dispRetry'); if (rb) rb.onclick = findDispensers; const b = $('#dispBuy'); if (b) b.innerHTML = ''; return; }
     if (!S.dispensers || !S.dispensers.length) { list.innerHTML = `<div class="dash-empty">No open dispensers for ${esc(S.dispAsset)} right now. A dispenser sends you this asset when you pay BTC to its address — none are open for it at the moment (oracle-priced dispensers are hidden here). You can also check the AMM pool + DEX via <b>Swap</b>.</div>`; const b = $('#dispBuy'); if (b) b.innerHTML = ''; return; }
     list.innerHTML = `<div class="acct-grp">Dispensers · cheapest first</div>` + S.dispensers.slice(0, 6).map((d, i) => `
       <button class="disp-opt${i === S.dispPick ? ' on' : ''}" data-i="${i}">

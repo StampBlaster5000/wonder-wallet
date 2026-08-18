@@ -614,12 +614,14 @@ app.get('/api/cp/book/:a1/:a2', wrap(async (req, res) => {
   const a1 = String(req.params.a1).toUpperCase(), a2 = String(req.params.a2).toUpperCase();
   if (!RE.cpasset.test(a1) || !RE.cpasset.test(a2)) { const e = new Error('bad_asset'); e.status = 400; throw e; }
   try {
-    const j = await (await fetch(`${cp.BASE}/assets/${encodeURIComponent(a1)}/orders?status=open&limit=200&verbose=true`, { headers: { Accept: 'application/json' } })).json();
+    const r = await fetch(`${cp.BASE}/assets/${encodeURIComponent(a1)}/orders?status=open&limit=200&verbose=true`, { headers: { Accept: 'application/json' } });
+    if (!r.ok) throw new Error('upstream ' + r.status);
+    const j = await r.json();
     const orders = (Array.isArray(j.result) ? j.result : [])
       .filter((o) => (o.give_asset === a1 && o.get_asset === a2) || (o.give_asset === a2 && o.get_asset === a1))
       .map(slimOrder);
     res.json({ orders });
-  } catch (_) { res.json({ orders: [] }); }
+  } catch (_) { res.status(502).json({ error: 'upstream', orders: [] }); }
 }));
 // Open order book for a SINGLE asset — every pair it trades in (both directions).
 app.get('/api/cp/assetbook/:asset', wrap(async (req, res) => {
@@ -663,6 +665,7 @@ app.get('/api/cp/myorders/:address', wrap(async (req, res) => {
 const cpLossless = (text) => JSON.parse(String(text).replace(/:\s*(-?\d{16,})(?=\s*[,}\]])/g, ':"$1"'));
 async function cpGetRaw(path) {
   const r = await fetch(`${cp.BASE}/${path}`, { headers: { Accept: 'application/json' } });
+  if (r.status >= 500) throw new Error('upstream ' + r.status); // 5xx = indexer broken; 4xx = genuine not-found (parses to empty)
   return cpLossless(await r.text());
 }
 // Fair-launch pools in a given phase (filter to XCP-69 client-side); paginated by cursor.
@@ -696,7 +699,7 @@ app.get('/api/cp/pool/:a/:b', limitProxy, wrap(async (req, res) => {
   const a = String(req.params.a).toUpperCase(), b = String(req.params.b).toUpperCase();
   if (!RE.cpasset.test(a) || !RE.cpasset.test(b)) { const e = new Error('bad_asset'); e.status = 400; throw e; }
   try { const j = await cpGetRaw(`pools/${a}/${b}?verbose=true`); res.json({ result: j.result || null }); }
-  catch (_) { res.json({ result: null }); }
+  catch (_) { res.status(502).json({ error: 'upstream', result: null }); }
 }));
 // Open dispensers SELLING a given asset, cheapest-first (for buying). Excludes oracle-priced
 // dispensers (their price floats) from the simple buy path. `address` is the dispenser to pay.
@@ -704,7 +707,9 @@ app.get('/api/cp/asset-dispensers/:asset', limitProxy, wrap(async (req, res) => 
   const a = String(req.params.asset).toUpperCase();
   if (!RE.cpasset.test(a)) { const e = new Error('bad_asset'); e.status = 400; throw e; }
   try {
-    const j = await (await fetch(`${cp.BASE}/assets/${encodeURIComponent(a)}/dispensers?status=open&limit=30&verbose=true`, { headers: { Accept: 'application/json' } })).json();
+    const r = await fetch(`${cp.BASE}/assets/${encodeURIComponent(a)}/dispensers?status=open&limit=30&verbose=true`, { headers: { Accept: 'application/json' } });
+    if (!r.ok) throw new Error('upstream ' + r.status);
+    const j = await r.json();
     const dispensers = (Array.isArray(j.result) ? j.result : [])
       .filter((x) => Number(x.give_remaining) > 0 && Number(x.satoshirate) > 0 && !x.oracle_address)
       .map((x) => ({
@@ -715,7 +720,7 @@ app.get('/api/cp/asset-dispensers/:asset', limitProxy, wrap(async (req, res) => 
       }))
       .sort((p, q) => p.satoshirate - q.satoshirate);
     res.json({ dispensers });
-  } catch (_) { res.json({ dispensers: [] }); }
+  } catch (_) { res.status(502).json({ error: 'upstream', dispensers: [] }); }
 }));
 // Combined AMM pool + order-book swap quote — core routes both venues; we don't build a router.
 app.get('/api/cp/pool/:a/:b/quote', limitProxy, wrap(async (req, res) => {
@@ -723,7 +728,7 @@ app.get('/api/cp/pool/:a/:b/quote', limitProxy, wrap(async (req, res) => {
   if (!RE.cpasset.test(a) || !RE.cpasset.test(b)) { const e = new Error('bad_asset'); e.status = 400; throw e; }
   const q = String(req.query.quantity || ''); if (!/^\d{1,20}$/.test(q)) { const e = new Error('bad_qty'); e.status = 400; throw e; }
   try { const j = await cpGetRaw(`pools/${a}/${b}/quote?quantity=${q}`); res.json({ result: j.result || null }); }
-  catch (_) { res.json({ result: null }); }
+  catch (_) { res.status(502).json({ error: 'upstream', result: null }); }
 }));
 
 // ── Attach / Detach (move CP assets between an address balance and a UTXO) ──
