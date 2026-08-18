@@ -21,7 +21,8 @@
   const close = () => { const m = $('#mktModal'); if (m) m.hidden = true; };
 
   // Swap state: one side is always XCP (XCP-69 pools are TOKEN/XCP); `dir` = which way.
-  const S = { dir: 'buy', token: '', tokenDiv: true, amount: '', quote: null, slippage: 'auto', feeRate: 6, dispMode: 'buy', dispAsset: '', dispensers: null, dispPick: 0, dispCount: 1, sellAsset: '', sellComp: null };
+  const S = { dir: 'buy', token: '', tokenDiv: true, amount: '', quote: null, slippage: 'auto', feeRate: 6, dispMode: 'buy', dispAsset: '', dispensers: null, dispPick: 0, dispCount: 1, dispRecv: '', sellAsset: '', sellComp: null };
+  const DISP_TX_VB = 154; // ~vsize of one dispense tx (1-2 inputs, dispenser payment + change) for miner-fee estimates
   const DIVCACHE = { XCP: true, BTC: true };
   let TABS = 'swap', BTCUSD = 0;
   const nfmt = (n) => Number(n).toLocaleString('en-US');
@@ -227,7 +228,7 @@
     $('#dispModeBody').innerHTML = `
       <div class="mkt-side"><div class="mkt-lbl">Buy from dispensers</div>
         <div class="mkt-in"><input id="dispAsset" class="mkt-tokenin" style="width:150px;text-align:left;font-size:15px" placeholder="ASSET name" spellcheck="false" value="${esc(S.dispAsset)}"/><button class="ghost sm" id="dispFind">Find</button></div></div>
-      <div id="dispList"></div><div id="dispBuy"></div>`;
+      <div class="disp-cols"><div id="dispBuy"></div><div id="dispList"></div></div>`;
     const el = $('#dispAsset');
     $('#dispFind').onclick = findDispensers;
     el.onkeydown = (e) => { if (e.key === 'Enter') findDispensers(); };
@@ -304,59 +305,127 @@
     } catch (_) { S.dispensers = []; S.dispErr = true; }
     S.dispPick = 0; S.dispCount = 1; paintDispensers();
   }
-  function paintDispensers() {
-    const list = $('#dispList'); if (!list) return;
-    if (S.dispErr) { list.innerHTML = `<div class="ob-err">Couldn't reach the Counterparty indexer — this is a connection issue, not a definitive "none." <button class="mini" id="dispRetry">Retry</button></div>`; const rb = $('#dispRetry'); if (rb) rb.onclick = findDispensers; const b = $('#dispBuy'); if (b) b.innerHTML = ''; return; }
-    if (!S.dispensers || !S.dispensers.length) { list.innerHTML = `<div class="dash-empty">No open dispensers for ${esc(S.dispAsset)} right now. A dispenser sends you this asset when you pay BTC to its address — none are open for it at the moment (oracle-priced dispensers are hidden here). You can also check the AMM pool + DEX via <b>Swap</b>.</div>`; const b = $('#dispBuy'); if (b) b.innerHTML = ''; return; }
-    list.innerHTML = `<div class="acct-grp">Dispensers · cheapest first</div>` + S.dispensers.slice(0, 6).map((d, i) => `
-      <button class="disp-opt${i === S.dispPick ? ' on' : ''}" data-i="${i}">
-        <span class="disp-give">${esc(d.giveQty)} ${esc(S.dispAsset)}</span>
-        <span class="disp-rate">${nfmt(d.satoshirate)} sats${usd(d.satoshirate)}</span>
-        <span class="disp-rem">${esc(d.remaining)} left</span></button>`).join('');
-    list.querySelectorAll('[data-i]').forEach((b) => (b.onclick = () => { S.dispPick = Number(b.dataset.i); paintDispensers(); }));
-    paintDispBuy();
-  }
-  function paintDispBuy() {
-    const box = $('#dispBuy'); if (!box) return;
-    const d = S.dispensers[S.dispPick]; if (!d) { box.innerHTML = ''; return; }
-    const maxN = Math.max(1, Math.floor(Number(d.remaining) / Number(d.giveQty)) || 1);
-    box.innerHTML = `<div class="lp-mintrow" style="margin-top:10px"><input id="dispN" class="m-in" type="number" min="1" max="${maxN}" value="${S.dispCount || 1}"/><span class="lp-lotslbl">dispenses · ${esc(d.giveQty)} ${esc(S.dispAsset)} each</span></div>
-      <div class="lp-cost" id="dispCost"></div>
-      <div class="fine">Deep-route note: cheapest-first shown; you buy from the selected dispenser. Miner fees can make a deep cheap route beat a shallow one.</div>
-      <div class="wbtns" style="margin-top:8px"><button class="primary" id="dispGo">Review buy</button></div>`;
-    const nEl = $('#dispN');
-    const cost = () => { const n = Math.max(1, parseInt(nEl.value, 10) || 1); const el = $('#dispCost'); if (el) el.innerHTML = `<b>${n}</b> dispense${n === 1 ? '' : 's'} → receive <b>${(Number(d.giveQty) * n).toLocaleString('en-US', { maximumFractionDigits: 8 })} ${esc(S.dispAsset)}</b> · costs <b>${nfmt(n * d.satoshirate)} sats</b> BTC${usd(n * d.satoshirate)} + miner fee`; };
-    nEl.oninput = () => { S.dispCount = nEl.value; cost(); }; cost();
-    $('#dispGo').onclick = () => doDispense(d, Math.max(1, Math.min(maxN, parseInt(nEl.value, 10) || 1)));
-  }
-  async function doDispense(d, n) {
-    const s = $('#mktStatus'); if (!s) return;
-    s.hidden = false; s.className = 'statusline load'; s.textContent = 'Composing & verifying…';
-    try {
-      const sats = n * d.satoshirate;
-      const { compose, report } = await window.WonderCpFlow.composeVerify('dispense', { dispenser: d.address, quantity: sats, sat_per_vbyte: S.feeRate }, { dests: [d.address], allowed: [d.address], feeRatePerVb: S.feeRate });
-      const feeSats = compose.btc_fee != null ? nfmt(compose.btc_fee) : '—';
-      modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Confirm buy</h3><div class="cp-addr">${esc(S.dispAsset)} · from dispenser</div></div></div>
-        <div class="m-rows">
-          <div class="m-row"><span class="k">Receive</span><span class="v">${(Number(d.giveQty) * n).toLocaleString('en-US', { maximumFractionDigits: 8 })} ${esc(S.dispAsset)}</span></div>
-          <div class="m-row"><span class="k">Pay</span><span class="v">${nfmt(sats)} sats${usd(sats)}</span></div>
-          <div class="m-row" style="flex-direction:column;align-items:flex-start;gap:3px"><span class="k">Dispenser</span><span class="v vmono" style="font-size:11px;word-break:break-all">${esc(d.address)}</span></div>
-          <div class="m-row"><span class="k">Miner fee</span><span class="v">${feeSats} sats</span></div>
-        </div>
-        ${window.WonderVerify.bannerHtml(report)}
-        <div id="dispcStatus" class="statusline" hidden></div>
-        <div class="wbtns"><button class="ghost" id="dispcBack">Back</button><button class="primary" id="dispcGo">Sign &amp; buy</button></div>`);
-      $('#dispcBack').onclick = () => render();
-      $('#dispcGo').onclick = async () => {
-        const cs = $('#dispcStatus'); cs.hidden = false; cs.className = 'statusline load'; cs.textContent = 'Signing & broadcasting…';
-        try { const { txid } = await window.WonderCpFlow.sign(compose);
-          cs.className = 'statusline'; cs.innerHTML = `Bought ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(txid).slice(0, 18))}…</a> · the dispenser sends your asset.`;
-        } catch (e) { cs.className = 'statusline err'; cs.textContent = 'Failed: ' + (e.message || 'sign/broadcast error'); }
-      };
-    } catch (e) {
-      s.className = 'statusline err';
-      s.textContent = /insufficient|funds|utxo/i.test(e.message || '') ? 'Not enough BTC on this address to buy that many (dispensing pays the dispenser in BTC).' : (e.message || 'Compose/verify failed.');
+  // Cheapest-first routing across open dispensers (they ARE the order book). Fill a target receive
+  // amount by taking whole dispenses from the lowest per-unit price up, and report the effective
+  // average price + "% over floor" (the slippage) the way a Uniswap route would.
+  function routeBuy(dispensers, target) {
+    const ds = (dispensers || []).map((d) => ({ address: d.address, rate: Number(d.satoshirate), give: Number(d.giveQty), remaining: Number(d.remaining) }))
+      .filter((d) => d.give > 0 && d.rate > 0 && d.remaining >= d.give)
+      .map((d) => ({ ...d, unit: d.rate / d.give, wholeRem: Math.floor(d.remaining / d.give + 1e-9) * d.give }))
+      .sort((a, b) => a.unit - b.unit || a.rate - b.rate);
+    let need = Number(target) || 0; const slices = [];
+    for (const d of ds) {
+      if (need <= 1e-9) break;
+      const avail = Math.floor(d.remaining / d.give + 1e-9); if (avail < 1) continue;
+      const take = Math.min(avail, Math.max(1, Math.ceil((need - 1e-9) / d.give)));
+      slices.push({ address: d.address, rate: d.rate, give: d.give, dispenses: take, filled: take * d.give, sats: take * d.rate });
+      need -= take * d.give;
     }
+    const totalFilled = slices.reduce((s, x) => s + x.filled, 0);
+    const totalSats = slices.reduce((s, x) => s + x.sats, 0);
+    const floorUnit = ds.length ? ds[0].unit : null;
+    const avgUnit = totalFilled > 0 ? totalSats / totalFilled : null;
+    const overFloorPct = (avgUnit != null && floorUnit) ? (avgUnit / floorUnit - 1) * 100 : null;
+    const bookDepth = ds.reduce((s, d) => s + d.wholeRem, 0);
+    return { slices, totalFilled, totalSats, floorUnit, avgUnit, overFloorPct, txs: slices.length, shortfall: Math.max(0, need), bookDepth, sorted: ds };
+  }
+  function roundStep(v, step) { return step > 0 ? Math.max(step, Math.floor(v / step) * step) : v; }
+  function paintDispensers() {
+    const list = $('#dispList'), card = $('#dispBuy'); if (!list) return;
+    if (S.dispErr) { list.innerHTML = `<div class="ob-err">Couldn't reach the Counterparty indexer — this is a connection issue, not a definitive "none." <button class="mini" id="dispRetry">Retry</button></div>`; const rb = $('#dispRetry'); if (rb) rb.onclick = findDispensers; if (card) card.innerHTML = ''; return; }
+    if (!S.dispensers || !S.dispensers.length) { list.innerHTML = `<div class="dash-empty">No open dispensers for ${esc(S.dispAsset)} right now. A dispenser sends you this asset when you pay BTC to its address — none are open for it at the moment (oracle-priced dispensers are hidden here). You can also check the AMM pool + DEX via <b>Swap</b>.</div>`; if (card) card.innerHTML = ''; return; }
+    const cheapest = routeBuy(S.dispensers, Infinity).sorted[0];
+    if ((!S.dispRecv || Number(S.dispRecv) <= 0) && cheapest) S.dispRecv = String(cheapest.give);
+    paintRoute();
+  }
+  // Uniswap-style buy card: enter a target, see the cheapest-first route (send BTC, avg price,
+  // % over floor / slippage, tx count, miner fee) + the dispenser order book with used rows lit.
+  function paintRoute() {
+    const card = $('#dispBuy'), list = $('#dispList'); if (!card || !list) return;
+    const asset = S.dispAsset, target = Number(S.dispRecv) || 0;
+    const r = routeBuy(S.dispensers, target);
+    const step = r.sorted.length ? r.sorted[0].give : 1, maxRecv = r.bookDepth;
+    const rateLine = (target > 0 && r.avgUnit != null)
+      ? `1 ${esc(asset)} = <b>${nfmt(Math.round(r.avgUnit))} sats</b>${usd(r.avgUnit)}${r.overFloorPct != null ? ` · <span class="${r.overFloorPct > 0.5 ? 'over' : 'up'}">${r.overFloorPct.toFixed(r.overFloorPct < 10 ? 1 : 0)}% over floor</span>` : ''}`
+      : 'Enter an amount to route across the book.';
+    const routesLine = r.slices.length ? `${r.txs} tx${r.txs > 1 ? 's' : ''} · ${r.slices.map((s) => nfmt(s.filled)).join(' + ')} ${esc(asset)}` : '—';
+    const minerSats = r.txs * DISP_TX_VB * S.feeRate;
+    card.innerHTML = `
+      <div class="disp-swap">
+        <div class="ds-side"><div class="ds-lbl">You receive</div>
+          <div class="ds-row"><input id="dispRecv" class="ds-amt" type="number" min="0" step="any" value="${esc(S.dispRecv)}"/><span class="ds-asset">${esc(asset)}</span></div>
+          <div class="ds-presets" id="dispPresets"></div></div>
+        <div class="ds-arrow">↓</div>
+        <div class="ds-side"><div class="ds-lbl">You send</div>
+          <div class="ds-row"><span class="ds-amt ds-out">${(r.totalSats / SATS).toFixed(8)}</span><span class="ds-asset">BTC</span></div>
+          <div class="ds-sub">${nfmt(r.totalSats)} sats${usd(r.totalSats)}</div></div>
+      </div>
+      <div class="ds-rate">${rateLine}</div>
+      <div class="ds-meta">
+        <div><span>Routes</span><b>${routesLine}</b></div>
+        <div><span>You get</span><b>${nfmt(r.totalFilled)} ${esc(asset)}</b></div>
+        <div><span>Miner fees</span><b>~${nfmt(minerSats)} sats${usd(minerSats)}</b></div>
+        <div><span>Arrival</span><b>next block after BTC confirms</b></div>
+      </div>
+      ${r.shortfall > 1e-7 && target > 0 ? `<div class="fine over">Book depth is only ${nfmt(r.totalFilled)} ${esc(asset)} — not enough open dispensers to fully fill ${nfmt(target)}.</div>` : ''}
+      <div class="wbtns" style="margin-top:10px"><button class="primary" id="dispGo"${r.slices.length ? '' : ' disabled'}>${r.txs > 1 ? `Review buy · ${r.txs} txs` : 'Review buy'}</button></div>
+      <div class="fine">Routing includes miner fees — a deeper route can beat a cheaper, shallower one. Each dispenser is a separate Bitcoin payment.</div>`;
+    const pre = $('#dispPresets');
+    if (pre) {
+      const opts = [['1×', step], ['10×', step * 10], ['Half', roundStep(maxRecv / 2, step)], ['Max', maxRecv]].filter(([, v]) => v > 0 && v <= maxRecv);
+      pre.innerHTML = opts.map(([l, v]) => `<button class="mini" data-recv="${v}">${l}</button>`).join('');
+      pre.querySelectorAll('[data-recv]').forEach((b) => (b.onclick = () => { S.dispRecv = String(b.dataset.recv); paintRoute(); }));
+    }
+    const inp = $('#dispRecv'); if (inp) inp.oninput = () => { S.dispRecv = inp.value; paintRoute(); };
+    const go = $('#dispGo'); if (go && r.slices.length) go.onclick = () => reviewRoute(r);
+    // order book — dispensers cheapest-first; rows filling the order are highlighted with partial amounts
+    const usedBy = {}; r.slices.forEach((s) => { usedBy[s.address] = s; });
+    list.innerHTML = `<div class="acct-grp">Dispensers · cheapest first</div>` + r.sorted.slice(0, 12).map((d) => {
+      const u = usedBy[d.address];
+      return `<div class="ob-drow${u ? ' used' : ''}"><span class="ob-drate">${nfmt(d.rate)} <em>sats</em>${d.give !== 1 ? ` <em>/ ${nfmt(d.give)}</em>` : ''}</span><span class="ob-damt">${u ? `<b>${nfmt(u.filled)}</b> of ${nfmt(d.wholeRem)}` : nfmt(d.wholeRem)} ${esc(asset)}</span></div>`;
+    }).join('') + `<div class="fine ob-foot">Lit rows fill your order. Total open: ${nfmt(maxRecv)} ${esc(asset)}.</div>`;
+  }
+  function reviewRoute(r) {
+    if (!r.slices.length) return; const asset = S.dispAsset;
+    modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Confirm buy</h3><div class="cp-addr">${esc(asset)} · ${r.txs} dispenser${r.txs > 1 ? 's' : ''} · cheapest-first</div></div></div>
+      <div class="m-rows">
+        <div class="m-row"><span class="k">Receive</span><span class="v">${nfmt(r.totalFilled)} ${esc(asset)}</span></div>
+        <div class="m-row"><span class="k">Pay</span><span class="v">${nfmt(r.totalSats)} sats${usd(r.totalSats)}</span></div>
+        <div class="m-row"><span class="k">Avg price</span><span class="v">${nfmt(Math.round(r.avgUnit))} sats / ${esc(asset)}${r.overFloorPct != null ? ` · ${r.overFloorPct.toFixed(1)}% over floor` : ''}</span></div>
+        <div class="m-row"><span class="k">Transactions</span><span class="v">${r.txs} — each dispenser paid separately</span></div>
+      </div>
+      <div id="routeProg" class="ds-prog"></div>
+      ${r.txs > 1 ? `<div class="fine over" style="margin-top:6px">A deep route sends ${r.txs} Bitcoin transactions, one per dispenser. Each is verified before signing. If a later leg can't fund yet (e.g. your BTC is one coin still confirming), earlier legs stand and you get a partial fill you can finish later.</div>` : ''}
+      <div id="dispcStatus" class="statusline" hidden></div>
+      <div class="wbtns"><button class="ghost" id="dispcBack">Back</button><button class="primary" id="dispcGo">Sign &amp; buy${r.txs > 1 ? ` · ${r.txs} txs` : ''}</button></div>`);
+    $('#dispcBack').onclick = () => render();
+    $('#dispcGo').onclick = () => executeRoute(r);
+  }
+  // Execute the route as sequential dispense txs (one per dispenser). No unconfirmed-change chaining —
+  // each leg composes from the wallet's confirmed UTXOs and passes through the fail-closed verifier,
+  // so a leg that can't fund yet stops cleanly with a reported partial fill instead of a bad sign.
+  async function executeRoute(r) {
+    const cs = $('#dispcStatus'), prog = $('#routeProg'), go = $('#dispcGo'), back = $('#dispcBack');
+    if (go) go.disabled = true; if (back) back.disabled = true;
+    const sent = [];
+    for (let i = 0; i < r.slices.length; i++) {
+      const s = r.slices[i];
+      if (cs) { cs.hidden = false; cs.className = 'statusline load'; cs.textContent = `Composing & signing tx ${i + 1} of ${r.slices.length}…`; }
+      try {
+        const { compose } = await window.WonderCpFlow.composeVerify('dispense', { dispenser: s.address, quantity: s.sats, sat_per_vbyte: S.feeRate }, { dests: [s.address], allowed: [s.address], feeRatePerVb: S.feeRate });
+        const { txid } = await window.WonderCpFlow.sign(compose);
+        sent.push({ txid, slice: s });
+        if (prog) prog.innerHTML = sent.map((x, k) => `<div class="ds-progrow">✓ tx ${k + 1}: ${nfmt(x.slice.filled)} ${esc(S.dispAsset)} — <a href="https://mempool.space/tx/${encodeURIComponent(x.txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(x.txid).slice(0, 12))}…</a></div>`).join('');
+      } catch (e) {
+        if (cs) { cs.className = 'statusline err'; cs.textContent = `Stopped at tx ${i + 1}/${r.slices.length}: ${friendlyDisp(e)}.${sent.length ? ` ${sent.length} tx${sent.length > 1 ? 's' : ''} already sent — partial fill; retry the rest once your coins confirm.` : ''}`; }
+        if (back) back.disabled = false; return;
+      }
+    }
+    if (cs) { cs.className = 'statusline'; cs.innerHTML = `Bought ✓ — ${sent.length} tx${sent.length > 1 ? 's' : ''} sent · ${nfmt(r.totalFilled)} ${esc(S.dispAsset)}. Each dispenser sends your asset as its tx confirms.`; }
+  }
+  function friendlyDisp(e) {
+    const m = (e && e.message) || '';
+    return /insufficient|funds|utxo/i.test(m) ? 'not enough spendable BTC (each dispense pays the dispenser in BTC + miner fee)' : (m || 'compose/verify error');
   }
 
   function renderSwap() {
