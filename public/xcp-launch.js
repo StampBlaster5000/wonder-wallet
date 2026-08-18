@@ -55,11 +55,12 @@
   async function render() {
     modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">XCP-69 · fair launches</h3>
         <div class="cp-addr">100M supply · 69M public sale · 69-minter fair mint — self-custodial, on Counterparty</div></div>
-      <button class="mini" id="lpX">Close</button></div>
+      <div class="cc-head-r"><button class="ghost sm" id="lpCreate">＋ Create</button><button class="mini" id="lpX">Close</button></div></div>
       <div class="lp-tabs">${PHASES.map((ph) => `<button class="lp-tab${ph.key === CUR ? ' on' : ''}" data-ph="${ph.key}">${ph.tab}</button>`).join('')}</div>
       <div id="lpBody" class="lp-body"><div class="statusline load">Loading launches…</div></div>
-      <div class="fine" style="margin-top:8px">Conformance verified against the XCP-69 standard in your browser. Mint &amp; create flows are landing next.</div>`);
+      <div class="fine" style="margin-top:8px">Conformance verified against the XCP-69 standard in your browser — fixed terms, no premine, pre-announced.</div>`);
     $('#lpX').onclick = close;
+    const cr = $('#lpCreate'); if (cr) cr.onclick = openCreate;
     $('#lpCard').querySelectorAll('[data-ph]').forEach((b) => (b.onclick = () => { CUR = b.dataset.ph; render(); }));
     const list = await launches(CUR);
     const body = $('#lpBody'); if (!body) return;
@@ -150,5 +151,78 @@
     }
   }
 
-  window.WonderLaunchpad = { open: () => { CUR = 'open'; render(); }, openLaunch };
+  // ── Create an XCP-69 launch (fairminter with the fixed params + random anti-snipe lp_asset) ──
+  const CR = { lead: 144, height: 0, feeRate: 6 };
+  // A cryptographically-random unissued numeric Counterparty asset (numeric issuance is free; a
+  // predictable lp name could be squatted between broadcast and confirmation, invalidating the launch).
+  function randomLpAsset() {
+    const MIN = 95428956661682177n, MAX = 18446744073709551615n, span = MAX - MIN;
+    const b = new Uint8Array(8); crypto.getRandomValues(b);
+    let n = 0n; for (const x of b) n = (n << 8n) | BigInt(x);
+    return 'A' + (MIN + (n % span)).toString();
+  }
+  async function openCreate() {
+    if (!window.__activeAccount) return;
+    try { const st = await fetch('api/status').then((r) => r.json()); CR.height = (st.btc && st.btc.height) || 0; } catch (_) {}
+    try { const f = await fetch('api/btc/fees').then((r) => r.json()); CR.feeRate = f.halfHourFee || 6; } catch (_) {}
+    const LEADS = [['~6h', 36], ['~1 day', 144], ['~3 days', 432]];
+    modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Create an XCP-69 launch</h3><div class="cp-addr">Fixed terms — 100M supply · 69M sale · 0.01 XCP/1,000 · 10 XCP cap · all-or-nothing</div></div><button class="mini" id="crX">Close</button></div>
+      <label class="cpf"><span>Token name</span><input id="crName" class="m-in" placeholder="MYTOKEN (4–12 letters, not starting with A)" maxlength="12" spellcheck="false" autocapitalize="characters"/></label>
+      <label class="cpf"><span>Info URL <span class="fine">(optional — image + metadata JSON)</span></span><input id="crDesc" class="m-in" placeholder="https://…/MYTOKEN.json" spellcheck="false"/></label>
+      <div class="cpf"><span>Pre-announce &amp; start in</span><div class="lp-presets" id="crLead">${LEADS.map(([l, n]) => `<button class="mini${n === CR.lead ? ' on' : ''}" data-lead="${n}">${l}</button>`).join('')}</div></div>
+      <div class="fine" id="crSched"></div>
+      <div class="fine" style="margin-top:6px">Costs 0.5 XCP name registration + a pool-deposit gas fee (prepaid) + a Bitcoin miner fee. You receive <b>none</b> of the 690 XCP raise — it all seeds the permanently-locked pool.</div>
+      <div id="crStatus" class="statusline" hidden></div>
+      <div class="wbtns"><button class="ghost" id="crBack">Back</button><button class="primary" id="crGo">Review launch</button></div>`);
+    $('#crX').onclick = close; $('#crBack').onclick = () => render();
+    const sched = () => { const start = CR.height + CR.lead; const el = $('#crSched'); if (el) el.innerHTML = `Starts at block <b>${start}</b> (now ${CR.height}) · ~7-day mint window · deadline block ${start + 1000}`; };
+    $('#lpCard').querySelectorAll('[data-lead]').forEach((b) => (b.onclick = () => { CR.lead = Number(b.dataset.lead); $('#lpCard').querySelectorAll('[data-lead]').forEach((x) => x.classList.toggle('on', x === b)); sched(); }));
+    sched();
+    $('#crGo').onclick = doCreate;
+  }
+  async function doCreate() {
+    const xr = X(), s = $('#crStatus'); if (!s) return;
+    const name = ($('#crName').value || '').trim().toUpperCase(); const nEl = $('#crName'); if (nEl) nEl.value = name;
+    const desc = ($('#crDesc').value || '').trim();
+    if (!/^[B-Z][A-Z]{3,11}$/.test(name)) { s.hidden = false; s.className = 'statusline err'; s.textContent = 'Token name must be 4–12 letters and not start with A.'; return; }
+    s.hidden = false; s.className = 'statusline load'; s.textContent = 'Composing & verifying…';
+    try {
+      const K = xr.XCP69, start = CR.height + CR.lead;
+      const params = {
+        asset: name, price: K.PRICE.toString(), quantity_by_price: K.QUANTITY_BY_PRICE.toString(),
+        hard_cap: K.HARD_CAP.toString(), soft_cap: K.SOFT_CAP.toString(), pool_quantity: K.POOL_QUANTITY.toString(),
+        lp_asset: randomLpAsset(), max_mint_per_address: K.MAX_MINT_PER_ADDRESS.toString(), max_mint_per_tx: K.MAX_MINT_PER_TX.toString(),
+        start_block: start, soft_cap_deadline_block: start + 1000, end_block: 0, premint_quantity: 0, minted_asset_commission: 0,
+        burn_payment: false, lock_quantity: true, lock_description: true, divisible: true, sat_per_vbyte: CR.feeRate,
+      };
+      if (desc) params.description = desc;
+      const { compose, report } = await window.WonderCpFlow.composeVerify('fairminter', params, { feeRatePerVb: CR.feeRate });
+      const feeSats = compose.btc_fee != null ? Number(compose.btc_fee).toLocaleString('en-US') : '—';
+      const leadLbl = CR.lead === 36 ? '6h' : CR.lead === 432 ? '3 days' : '1 day';
+      modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Confirm launch</h3><div class="cp-addr">${esc(name)}</div></div></div>
+        <div class="m-rows">
+          <div class="m-row"><span class="k">Token</span><span class="v">${esc(name)} · 100M supply</span></div>
+          <div class="m-row"><span class="k">Sale</span><span class="v">69M · 0.01 XCP / 1,000 · 10 XCP cap</span></div>
+          <div class="m-row"><span class="k">Starts</span><span class="v">block ${start} (~${leadLbl})</span></div>
+          <div class="m-row"><span class="k">Miner fee</span><span class="v">${feeSats} sats</span></div>
+        </div>
+        ${window.WonderVerify.bannerHtml(report)}
+        <div class="fine" style="margin-top:8px">Pre-announced on-chain before it opens — no stealth mint. Sell out ⇒ pool seeds &amp; LP burns; miss ⇒ all minters auto-refunded.</div>
+        <div id="crcStatus" class="statusline" hidden></div>
+        <div class="wbtns"><button class="ghost" id="crcBack">Back</button><button class="primary" id="crcGo">Sign &amp; launch</button></div>`);
+      $('#crcBack').onclick = openCreate;
+      $('#crcGo').onclick = async () => {
+        const cs = $('#crcStatus'); cs.hidden = false; cs.className = 'statusline load'; cs.textContent = 'Signing & broadcasting…';
+        try { const { txid } = await window.WonderCpFlow.sign(compose); cs.className = 'statusline'; cs.innerHTML = `Launch created ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(txid).slice(0, 18))}…</a> · it pre-announces, then opens at block ${start}.`; }
+        catch (e) { cs.className = 'statusline err'; cs.textContent = 'Failed: ' + (e.message || 'sign/broadcast error'); }
+      };
+    } catch (e) {
+      s.className = 'statusline err';
+      s.textContent = /insufficient xcp/i.test(e.message || '') ? 'Not enough XCP to pay the 0.5 XCP registration + pool-deposit gas fee.'
+        : /in use|already|exists/i.test(e.message || '') ? 'That token name is taken — pick another.'
+        : (e.message || 'Compose/verify failed.');
+    }
+  }
+
+  window.WonderLaunchpad = { open: () => { CUR = 'open'; render(); }, openLaunch, openCreate };
 })();
