@@ -692,6 +692,25 @@ app.get('/api/cp/pool/:a/:b', limitProxy, wrap(async (req, res) => {
   try { const j = await cpGetRaw(`pools/${a}/${b}?verbose=true`); res.json({ result: j.result || null }); }
   catch (_) { res.json({ result: null }); }
 }));
+// Open dispensers SELLING a given asset, cheapest-first (for buying). Excludes oracle-priced
+// dispensers (their price floats) from the simple buy path. `address` is the dispenser to pay.
+app.get('/api/cp/asset-dispensers/:asset', limitProxy, wrap(async (req, res) => {
+  const a = String(req.params.asset).toUpperCase();
+  if (!RE.cpasset.test(a)) { const e = new Error('bad_asset'); e.status = 400; throw e; }
+  try {
+    const j = await (await fetch(`${cp.BASE}/assets/${encodeURIComponent(a)}/dispensers?status=open&limit=30&verbose=true`, { headers: { Accept: 'application/json' } })).json();
+    const dispensers = (Array.isArray(j.result) ? j.result : [])
+      .filter((x) => Number(x.give_remaining) > 0 && Number(x.satoshirate) > 0 && !x.oracle_address)
+      .map((x) => ({
+        address: x.source, satoshirate: Number(x.satoshirate),
+        giveQty: x.give_quantity_normalized != null ? String(x.give_quantity_normalized) : String(x.give_quantity),
+        remaining: x.give_remaining_normalized != null ? String(x.give_remaining_normalized) : String(x.give_remaining),
+        asset: (x.asset_info && x.asset_info.asset_longname) || x.asset,
+      }))
+      .sort((p, q) => p.satoshirate - q.satoshirate);
+    res.json({ dispensers });
+  } catch (_) { res.json({ dispensers: [] }); }
+}));
 // Combined AMM pool + order-book swap quote — core routes both venues; we don't build a router.
 app.get('/api/cp/pool/:a/:b/quote', limitProxy, wrap(async (req, res) => {
   const a = String(req.params.a).toUpperCase(), b = String(req.params.b).toUpperCase();

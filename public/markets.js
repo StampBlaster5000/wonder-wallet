@@ -21,9 +21,11 @@
   const close = () => { const m = $('#mktModal'); if (m) m.hidden = true; };
 
   // Swap state: one side is always XCP (XCP-69 pools are TOKEN/XCP); `dir` = which way.
-  const S = { dir: 'buy', token: '', tokenDiv: true, amount: '', quote: null, slippage: 'auto', feeRate: 6 };
+  const S = { dir: 'buy', token: '', tokenDiv: true, amount: '', quote: null, slippage: 'auto', feeRate: 6, dispAsset: '', dispensers: null, dispPick: 0, dispCount: 1 };
   const DIVCACHE = { XCP: true, BTC: true };
-  let TABS = 'swap';
+  let TABS = 'swap', BTCUSD = 0;
+  const nfmt = (n) => Number(n).toLocaleString('en-US');
+  const usd = (sats) => { const u = (Number(sats) / SATS) * BTCUSD; return u ? ' ≈ $' + u.toLocaleString('en-US', { maximumFractionDigits: 2 }) : ''; };
 
   async function divisible(asset) {
     if (asset in DIVCACHE) return DIVCACHE[asset];
@@ -76,11 +78,84 @@
       <div id="mktBody"></div>`);
     $('#mktX').onclick = close;
     $('#mktCard').querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => { TABS = b.dataset.tab; render(); }));
-    if (TABS === 'swap') renderSwap(); else renderSoon();
+    if (TABS === 'swap') renderSwap(); else if (TABS === 'dispense') renderDispense(); else renderSoon();
   }
 
   function renderSoon() {
-    $('#mktBody').innerHTML = `<div class="dash-empty">🛠 ${TABS === 'liquidity' ? 'Liquidity (add / remove)' : TABS === 'limit' ? 'Limit orders' : 'Dispensers'} — building next. Swap is live now.</div>`;
+    $('#mktBody').innerHTML = `<div class="dash-empty">🛠 ${TABS === 'liquidity' ? 'Liquidity (add / remove)' : 'Limit orders'} — building next.</div>`;
+  }
+
+  // ── Dispense (buy from dispensers, cheapest-first) ──
+  function renderDispense() {
+    $('#mktBody').innerHTML = `
+      <div class="mkt-side"><div class="mkt-lbl">Buy from dispensers</div>
+        <div class="mkt-in"><input id="dispAsset" class="mkt-tokenin" style="width:150px;text-align:left;font-size:15px" placeholder="ASSET name" spellcheck="false" value="${esc(S.dispAsset)}"/><button class="ghost sm" id="dispFind">Find</button></div></div>
+      <div id="dispList"></div><div id="dispBuy"></div>
+      <div id="mktStatus" class="statusline" hidden></div>`;
+    const el = $('#dispAsset');
+    $('#dispFind').onclick = findDispensers;
+    el.onkeydown = (e) => { if (e.key === 'Enter') findDispensers(); };
+    if (S.dispAsset && S.dispensers) paintDispensers();
+  }
+  async function findDispensers() {
+    const el = $('#dispAsset'); S.dispAsset = (el.value || '').trim().toUpperCase(); el.value = S.dispAsset;
+    if (!RE_ASSET.test(S.dispAsset)) return;
+    const list = $('#dispList'); if (list) list.innerHTML = '<div class="fine">Finding dispensers…</div>';
+    try { const j = await fetch('api/cp/asset-dispensers/' + encodeURIComponent(S.dispAsset)).then((r) => r.json()); S.dispensers = j.dispensers || []; } catch (_) { S.dispensers = []; }
+    S.dispPick = 0; S.dispCount = 1; paintDispensers();
+  }
+  function paintDispensers() {
+    const list = $('#dispList'); if (!list) return;
+    if (!S.dispensers || !S.dispensers.length) { list.innerHTML = `<div class="dash-empty">No open (non-oracle) dispensers for ${esc(S.dispAsset)}.</div>`; const b = $('#dispBuy'); if (b) b.innerHTML = ''; return; }
+    list.innerHTML = `<div class="acct-grp">Dispensers · cheapest first</div>` + S.dispensers.slice(0, 6).map((d, i) => `
+      <button class="disp-opt${i === S.dispPick ? ' on' : ''}" data-i="${i}">
+        <span class="disp-give">${esc(d.giveQty)} ${esc(S.dispAsset)}</span>
+        <span class="disp-rate">${nfmt(d.satoshirate)} sats${usd(d.satoshirate)}</span>
+        <span class="disp-rem">${esc(d.remaining)} left</span></button>`).join('');
+    list.querySelectorAll('[data-i]').forEach((b) => (b.onclick = () => { S.dispPick = Number(b.dataset.i); paintDispensers(); }));
+    paintDispBuy();
+  }
+  function paintDispBuy() {
+    const box = $('#dispBuy'); if (!box) return;
+    const d = S.dispensers[S.dispPick]; if (!d) { box.innerHTML = ''; return; }
+    const maxN = Math.max(1, Math.floor(Number(d.remaining) / Number(d.giveQty)) || 1);
+    box.innerHTML = `<div class="lp-mintrow" style="margin-top:10px"><input id="dispN" class="m-in" type="number" min="1" max="${maxN}" value="${S.dispCount || 1}"/><span class="lp-lotslbl">dispenses · ${esc(d.giveQty)} ${esc(S.dispAsset)} each</span></div>
+      <div class="lp-cost" id="dispCost"></div>
+      <div class="fine">Deep-route note: cheapest-first shown; you buy from the selected dispenser. Miner fees can make a deep cheap route beat a shallow one.</div>
+      <div class="wbtns" style="margin-top:8px"><button class="primary" id="dispGo">Review buy</button></div>`;
+    const nEl = $('#dispN');
+    const cost = () => { const n = Math.max(1, parseInt(nEl.value, 10) || 1); const el = $('#dispCost'); if (el) el.innerHTML = `<b>${n}</b> dispense${n === 1 ? '' : 's'} → receive <b>${(Number(d.giveQty) * n).toLocaleString('en-US', { maximumFractionDigits: 8 })} ${esc(S.dispAsset)}</b> · costs <b>${nfmt(n * d.satoshirate)} sats</b> BTC${usd(n * d.satoshirate)} + miner fee`; };
+    nEl.oninput = () => { S.dispCount = nEl.value; cost(); }; cost();
+    $('#dispGo').onclick = () => doDispense(d, Math.max(1, Math.min(maxN, parseInt(nEl.value, 10) || 1)));
+  }
+  async function doDispense(d, n) {
+    const s = $('#mktStatus'); if (!s) return;
+    s.hidden = false; s.className = 'statusline load'; s.textContent = 'Composing & verifying…';
+    try {
+      const sats = n * d.satoshirate;
+      const { compose, report } = await window.WonderCpFlow.composeVerify('dispense', { dispenser: d.address, quantity: sats, sat_per_vbyte: S.feeRate }, { dests: [d.address], allowed: [d.address], feeRatePerVb: S.feeRate });
+      const feeSats = compose.btc_fee != null ? nfmt(compose.btc_fee) : '—';
+      modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Confirm buy</h3><div class="cp-addr">${esc(S.dispAsset)} · from dispenser</div></div></div>
+        <div class="m-rows">
+          <div class="m-row"><span class="k">Receive</span><span class="v">${(Number(d.giveQty) * n).toLocaleString('en-US', { maximumFractionDigits: 8 })} ${esc(S.dispAsset)}</span></div>
+          <div class="m-row"><span class="k">Pay</span><span class="v">${nfmt(sats)} sats${usd(sats)}</span></div>
+          <div class="m-row" style="flex-direction:column;align-items:flex-start;gap:3px"><span class="k">Dispenser</span><span class="v vmono" style="font-size:11px;word-break:break-all">${esc(d.address)}</span></div>
+          <div class="m-row"><span class="k">Miner fee</span><span class="v">${feeSats} sats</span></div>
+        </div>
+        ${window.WonderVerify.bannerHtml(report)}
+        <div id="dispcStatus" class="statusline" hidden></div>
+        <div class="wbtns"><button class="ghost" id="dispcBack">Back</button><button class="primary" id="dispcGo">Sign &amp; buy</button></div>`);
+      $('#dispcBack').onclick = () => render();
+      $('#dispcGo').onclick = async () => {
+        const cs = $('#dispcStatus'); cs.hidden = false; cs.className = 'statusline load'; cs.textContent = 'Signing & broadcasting…';
+        try { const { txid } = await window.WonderCpFlow.sign(compose);
+          cs.className = 'statusline'; cs.innerHTML = `Bought ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(txid).slice(0, 18))}…</a> · the dispenser sends your asset.`;
+        } catch (e) { cs.className = 'statusline err'; cs.textContent = 'Failed: ' + (e.message || 'sign/broadcast error'); }
+      };
+    } catch (e) {
+      s.className = 'statusline err';
+      s.textContent = /insufficient|funds|utxo/i.test(e.message || '') ? 'Not enough BTC on this address to buy that many (dispensing pays the dispenser in BTC).' : (e.message || 'Compose/verify failed.');
+    }
   }
 
   function renderSwap() {
@@ -150,5 +225,5 @@
     }
   }
 
-  window.WonderMarket = { open: async (token) => { TABS = 'swap'; if (token) { S.token = String(token).toUpperCase(); S.dir = 'buy'; S.tokenDiv = await divisible(S.token); } try { const f = await fetch('api/btc/fees').then((r) => r.json()); S.feeRate = f.halfHourFee || 6; } catch (_) {} render(); } };
+  window.WonderMarket = { open: async (token) => { TABS = 'swap'; if (token) { S.token = String(token).toUpperCase(); S.dir = 'buy'; S.tokenDiv = await divisible(S.token); } try { const f = await fetch('api/btc/fees').then((r) => r.json()); S.feeRate = f.halfHourFee || 6; } catch (_) {} try { const pr = await fetch('api/prices').then((r) => r.json()); BTCUSD = pr.bitcoin || 0; } catch (_) {} render(); } };
 })();
