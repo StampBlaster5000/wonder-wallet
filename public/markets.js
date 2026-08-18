@@ -78,11 +78,84 @@
       <div id="mktBody"></div>`);
     $('#mktX').onclick = close;
     $('#mktCard').querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => { TABS = b.dataset.tab; render(); }));
-    if (TABS === 'swap') renderSwap(); else if (TABS === 'dispense') renderDispense(); else renderSoon();
+    if (TABS === 'swap') renderSwap();
+    else if (TABS === 'dispense') renderDispense();
+    else if (TABS === 'limit') renderLimit();
+    else if (TABS === 'liquidity') renderLiquidity();
   }
 
-  function renderSoon() {
-    $('#mktBody').innerHTML = `<div class="dash-empty">🛠 ${TABS === 'liquidity' ? 'Liquidity (add / remove)' : 'Limit orders'} — building next.</div>`;
+  // ── Limit orders (resting DEX order at a chosen price + cancel) ──
+  const L = { dir: 'buy', token: '', tokenDiv: true, price: '', amount: '' };
+  function renderLimit() {
+    $('#mktBody').innerHTML = `
+      <div class="lp-tabs" style="margin-bottom:10px"><button class="lp-tab${L.dir === 'buy' ? ' on' : ''}" data-d="buy">Buy</button><button class="lp-tab${L.dir === 'sell' ? ' on' : ''}" data-d="sell">Sell</button></div>
+      <div class="mkt-side"><div class="mkt-lbl">Token</div><div class="mkt-in"><input id="limTok" class="mkt-tokenin" style="width:160px;text-align:left;font-size:15px" placeholder="TOKEN" spellcheck="false" value="${esc(L.token)}"/></div></div>
+      <div class="mkt-side"><div class="mkt-lbl">Price</div><div class="mkt-in"><input id="limPrice" class="mkt-amt" type="number" min="0" step="any" placeholder="0.0" value="${esc(L.price)}"/><span class="mkt-asset">XCP each</span></div></div>
+      <div class="mkt-side"><div class="mkt-lbl">Amount</div><div class="mkt-in"><input id="limAmt" class="mkt-amt" type="number" min="0" step="any" placeholder="0.0" value="${esc(L.amount)}"/><span class="mkt-asset">${esc(L.token || 'TOKEN')}</span></div></div>
+      <div id="limTotal" class="lp-cost"></div>
+      <div id="mktStatus" class="statusline" hidden></div>
+      <div class="wbtns"><button class="primary" id="limGo">Review ${L.dir === 'buy' ? 'buy' : 'sell'} order</button></div>
+      <div id="limOrders" style="margin-top:14px"></div>`;
+    const tok = $('#limTok'), pr = $('#limPrice'), am = $('#limAmt');
+    const total = () => { const p = Number(pr.value), a = Number(am.value); const el = $('#limTotal'); if (el) el.innerHTML = (p > 0 && a > 0) ? `${L.dir === 'buy' ? 'Pay' : 'Receive'} <b>${(p * a).toLocaleString('en-US', { maximumFractionDigits: 8 })} XCP</b> for <b>${a.toLocaleString('en-US', { maximumFractionDigits: 8 })} ${esc(L.token)}</b> — rests until filled at your price or better` : ''; };
+    tok.oninput = async () => { L.token = tok.value.trim().toUpperCase(); tok.value = L.token; L.tokenDiv = L.token ? await divisible(L.token) : true; render(); };
+    pr.oninput = () => { L.price = pr.value; total(); }; am.oninput = () => { L.amount = am.value; total(); }; total();
+    $('#mktCard').querySelectorAll('[data-d]').forEach((b) => (b.onclick = () => { L.dir = b.dataset.d; render(); }));
+    $('#limGo').onclick = reviewLimit;
+    loadOrders();
+  }
+  async function loadOrders() {
+    const box = $('#limOrders'); if (!box) return;
+    const a = window.__activeAccount; const src = window.WonderCpFlow && window.WonderCpFlow.srcAddr(a); if (!src) return;
+    try {
+      const j = await fetch('api/cp/myorders/' + encodeURIComponent(src)).then((r) => r.json());
+      const orders = (j.orders || []).filter((o) => o.give_asset === 'XCP' || o.get_asset === 'XCP');
+      if (!orders.length) { box.innerHTML = ''; return; }
+      box.innerHTML = `<div class="acct-grp">Your open orders</div>` + orders.slice(0, 8).map((o) => `<div class="disp-opt" style="cursor:default"><span class="disp-give">${esc(o.give_asset)} ${esc(String(o.give_remaining))} → ${esc(o.get_asset)} ${esc(String(o.get_remaining))}</span><button class="mini" data-cancel="${esc(o.tx_hash)}">Cancel</button></div>`).join('');
+      box.querySelectorAll('[data-cancel]').forEach((b) => (b.onclick = () => cancelOrder(b.dataset.cancel)));
+    } catch (_) { box.innerHTML = ''; }
+  }
+  async function cancelOrder(hash) {
+    const s = $('#mktStatus'); if (s) { s.hidden = false; s.className = 'statusline load'; s.textContent = 'Composing cancel…'; }
+    try {
+      const { compose } = await window.WonderCpFlow.composeVerify('cancel', { offer_hash: hash, sat_per_vbyte: S.feeRate }, { feeRatePerVb: S.feeRate });
+      const { txid } = await window.WonderCpFlow.sign(compose);
+      if (s) { s.className = 'statusline'; s.innerHTML = `Cancel sent ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(txid).slice(0, 16))}…</a>`; }
+      loadOrders();
+    } catch (e) { if (s) { s.className = 'statusline err'; s.textContent = 'Failed: ' + (e.message || 'cancel error'); } }
+  }
+  async function reviewLimit() {
+    const s = $('#mktStatus'); if (!s) return;
+    const p = Number(L.price), a = Number(L.amount);
+    if (!RE_ASSET.test(L.token)) { s.hidden = false; s.className = 'statusline err'; s.textContent = 'Enter a token symbol.'; return; }
+    if (!(p > 0) || !(a > 0)) { s.hidden = false; s.className = 'statusline err'; s.textContent = 'Enter a price and amount.'; return; }
+    s.hidden = false; s.className = 'statusline load'; s.textContent = 'Composing & verifying…';
+    try {
+      const tokRaw = String(Math.round(a * (L.tokenDiv ? SATS : 1)));
+      const xcpRaw = String(Math.round(p * a * SATS));
+      const params = L.dir === 'buy'
+        ? { give_asset: 'XCP', give_quantity: xcpRaw, get_asset: L.token, get_quantity: tokRaw, expiration: 8064, fee_required: 0, sat_per_vbyte: S.feeRate }
+        : { give_asset: L.token, give_quantity: tokRaw, get_asset: 'XCP', get_quantity: xcpRaw, expiration: 8064, fee_required: 0, sat_per_vbyte: S.feeRate };
+      const { compose, report } = await window.WonderCpFlow.composeVerify('order', params, { feeRatePerVb: S.feeRate });
+      const feeSats = compose.btc_fee != null ? nfmt(compose.btc_fee) : '—';
+      modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Confirm ${L.dir} order</h3><div class="cp-addr">${esc(L.token)} · limit</div></div></div>
+        <div class="m-rows">
+          <div class="m-row"><span class="k">${L.dir === 'buy' ? 'Buy' : 'Sell'}</span><span class="v">${a.toLocaleString('en-US', { maximumFractionDigits: 8 })} ${esc(L.token)}</span></div>
+          <div class="m-row"><span class="k">Price</span><span class="v">${p.toLocaleString('en-US', { maximumFractionDigits: 8 })} XCP each</span></div>
+          <div class="m-row"><span class="k">${L.dir === 'buy' ? 'Pay' : 'Receive'}</span><span class="v">${(p * a).toLocaleString('en-US', { maximumFractionDigits: 8 })} XCP</span></div>
+          <div class="m-row"><span class="k">Miner fee</span><span class="v">${feeSats} sats</span></div>
+        </div>
+        ${window.WonderVerify.bannerHtml(report)}
+        <div class="fine" style="margin-top:8px">Rests on the Counterparty DEX; the AMM pool fills it automatically if its price crosses yours.</div>
+        <div id="limcStatus" class="statusline" hidden></div>
+        <div class="wbtns"><button class="ghost" id="limcBack">Back</button><button class="primary" id="limcGo">Sign &amp; place</button></div>`);
+      $('#limcBack').onclick = () => render();
+      $('#limcGo').onclick = async () => {
+        const cs = $('#limcStatus'); cs.hidden = false; cs.className = 'statusline load'; cs.textContent = 'Signing & broadcasting…';
+        try { const { txid } = await window.WonderCpFlow.sign(compose); cs.className = 'statusline'; cs.innerHTML = `Order placed ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(txid).slice(0, 18))}…</a>`; }
+        catch (e) { cs.className = 'statusline err'; cs.textContent = 'Failed: ' + (e.message || 'sign/broadcast error'); }
+      };
+    } catch (e) { s.className = 'statusline err'; s.textContent = /insufficient/i.test(e.message || '') ? `Not enough ${L.dir === 'buy' ? 'XCP' : L.token} to place this order.` : (e.message || 'Compose/verify failed.'); }
   }
 
   // ── Dispense (buy from dispensers, cheapest-first) ──
@@ -223,6 +296,83 @@
       s.className = 'statusline err';
       s.textContent = /insufficient/i.test(e.message || '') ? `Not enough ${p.give} on this address to swap.` : (e.message || 'Compose/verify failed.');
     }
+  }
+
+  // ── Liquidity (AMM pool deposit / withdraw) ──
+  const Q = { sub: 'add', token: '', pool: null, tokenDiv: true, amtA: '', lpAmt: '' };
+  async function renderLiquidity() {
+    $('#mktBody').innerHTML = `
+      <div class="lp-tabs" style="margin-bottom:10px"><button class="lp-tab${Q.sub === 'add' ? ' on' : ''}" data-q="add">Add</button><button class="lp-tab${Q.sub === 'remove' ? ' on' : ''}" data-q="remove">Remove</button></div>
+      <div class="mkt-side"><div class="mkt-lbl">Pool · TOKEN / XCP</div><div class="mkt-in"><input id="liqTok" class="mkt-tokenin" style="width:160px;text-align:left;font-size:15px" placeholder="TOKEN" spellcheck="false" value="${esc(Q.token)}"/><button class="ghost sm" id="liqLoad">Load</button></div></div>
+      <div id="liqBody"></div>
+      <div id="mktStatus" class="statusline" hidden></div>`;
+    $('#mktCard').querySelectorAll('[data-q]').forEach((b) => (b.onclick = () => { Q.sub = b.dataset.q; renderLiquidity(); }));
+    const tok = $('#liqTok');
+    $('#liqLoad').onclick = loadPool; tok.onkeydown = (e) => { if (e.key === 'Enter') loadPool(); };
+    if (Q.token && Q.pool) paintLiq();
+  }
+  async function loadPool() {
+    const tok = $('#liqTok'); Q.token = (tok.value || '').trim().toUpperCase(); tok.value = Q.token;
+    if (!RE_ASSET.test(Q.token)) return;
+    const body = $('#liqBody'); if (body) body.innerHTML = '<div class="fine">Loading pool…</div>';
+    Q.tokenDiv = await divisible(Q.token);
+    try { const j = await fetch(`api/cp/pool/${encodeURIComponent(Q.token)}/XCP`).then((r) => r.json()); Q.pool = j.result || null; } catch (_) { Q.pool = null; }
+    paintLiq();
+  }
+  function poolSides() { const p = Q.pool; if (!p) return null; const aIsXcp = p.asset_a === 'XCP'; return { xcpReserve: Number(aIsXcp ? p.reserve_a : p.reserve_b), tokReserve: Number(aIsXcp ? p.reserve_b : p.reserve_a), lpAsset: p.lp_asset, aIsXcp }; }
+  function paintLiq() {
+    const body = $('#liqBody'); if (!body) return;
+    if (!Q.pool) { body.innerHTML = `<div class="dash-empty">No AMM pool for ${esc(Q.token)} / XCP.</div>`; return; }
+    const ps = poolSides();
+    if (Q.sub === 'add') {
+      body.innerHTML = `
+        <div class="mkt-side"><div class="mkt-lbl">Deposit XCP</div><div class="mkt-in"><input id="liqXcp" class="mkt-amt" type="number" min="0" step="any" placeholder="0.0" value="${esc(Q.amtA)}"/><span class="mkt-asset">XCP</span></div></div>
+        <div class="mkt-flip"><span style="color:var(--muted);font-size:16px">＋</span></div>
+        <div class="mkt-side"><div class="mkt-lbl">Paired ${esc(Q.token)}</div><div class="mkt-in"><input id="liqTokAmt" class="mkt-amt" type="text" readonly placeholder="0.0"/><span class="mkt-asset">${esc(Q.token)}</span></div></div>
+        <div class="lp-cost">Pool ratio · 1 XCP ≈ ${(ps.tokReserve / ps.xcpReserve).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${esc(Q.token)}. Deposit both sides in ratio; you receive LP tokens (liquidity is locked).</div>
+        <div class="wbtns"><button class="primary" id="liqAddGo">Review add</button></div>`;
+      const xEl = $('#liqXcp'), tEl = $('#liqTokAmt');
+      const upd = () => { Q.amtA = xEl.value; const x = Number(xEl.value); const t = x > 0 ? x * (ps.tokReserve / ps.xcpReserve) : 0; tEl.value = t ? t.toLocaleString('en-US', { maximumFractionDigits: 8 }) : ''; };
+      xEl.oninput = upd; upd();
+      $('#liqAddGo').onclick = () => doPool('pooldeposit', ps);
+    } else {
+      body.innerHTML = `
+        <div class="mkt-side"><div class="mkt-lbl">Burn LP tokens</div><div class="mkt-in"><input id="liqLp" class="mkt-amt" type="number" min="0" step="any" placeholder="0.0" value="${esc(Q.lpAmt)}"/><span class="mkt-asset">LP</span></div></div>
+        <div class="lp-cost">LP asset · <span class="vmono">${esc(ps.lpAsset)}</span>. Burning LP returns your share of both reserves.</div>
+        <div class="wbtns"><button class="primary" id="liqRemGo">Review remove</button></div>`;
+      const lpEl = $('#liqLp'); lpEl.oninput = () => { Q.lpAmt = lpEl.value; };
+      $('#liqRemGo').onclick = () => doPool('poolwithdraw', ps);
+    }
+  }
+  async function doPool(type, ps) {
+    const s = $('#mktStatus'); if (!s) return;
+    s.hidden = false; s.className = 'statusline load'; s.textContent = 'Composing & verifying…';
+    try {
+      let params, summary;
+      if (type === 'pooldeposit') {
+        const x = Number(Q.amtA); if (!(x > 0)) throw new Error('Enter an XCP amount.');
+        const tok = x * (ps.tokReserve / ps.xcpReserve);
+        const xcpRaw = String(Math.round(x * SATS)), tokRaw = String(Math.round(tok * (Q.tokenDiv ? SATS : 1)));
+        const p = Q.pool;
+        params = { asset_a: p.asset_a, asset_b: p.asset_b, quantity_a: ps.aIsXcp ? xcpRaw : tokRaw, quantity_b: ps.aIsXcp ? tokRaw : xcpRaw, sat_per_vbyte: S.feeRate };
+        summary = `${x} XCP + ${tok.toLocaleString('en-US', { maximumFractionDigits: 8 })} ${Q.token}`;
+      } else {
+        const lp = Number(Q.lpAmt); if (!(lp > 0)) throw new Error('Enter an LP amount.');
+        params = { lp_asset: ps.lpAsset, quantity: String(Math.round(lp * SATS)), sat_per_vbyte: S.feeRate };
+        summary = `Burn ${lp} LP → your share of ${Q.token} / XCP`;
+      }
+      const { compose, report } = await window.WonderCpFlow.composeVerify(type, params, { feeRatePerVb: S.feeRate });
+      const feeSats = compose.btc_fee != null ? nfmt(compose.btc_fee) : '—';
+      modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Confirm · ${type === 'pooldeposit' ? 'Add liquidity' : 'Remove liquidity'}</h3><div class="cp-addr">${esc(Q.token)} / XCP pool</div></div></div>
+        <div class="m-rows"><div class="m-row"><span class="k">${type === 'pooldeposit' ? 'Deposit' : 'Withdraw'}</span><span class="v">${esc(summary)}</span></div><div class="m-row"><span class="k">Miner fee</span><span class="v">${feeSats} sats</span></div></div>
+        ${window.WonderVerify.bannerHtml(report)}
+        <div id="pcStatus" class="statusline" hidden></div>
+        <div class="wbtns"><button class="ghost" id="pcBack">Back</button><button class="primary" id="pcGo">Sign &amp; submit</button></div>`);
+      $('#pcBack').onclick = () => render();
+      $('#pcGo').onclick = async () => { const cs = $('#pcStatus'); cs.hidden = false; cs.className = 'statusline load'; cs.textContent = 'Signing & broadcasting…';
+        try { const { txid } = await window.WonderCpFlow.sign(compose); cs.className = 'statusline'; cs.innerHTML = `Done ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(txid).slice(0, 18))}…</a>`; }
+        catch (e) { cs.className = 'statusline err'; cs.textContent = 'Failed: ' + (e.message || 'error'); } };
+    } catch (e) { s.className = 'statusline err'; s.textContent = /insufficient/i.test(e.message || '') ? 'Insufficient balance for this pool action.' : (e.message || 'Compose/verify failed.'); }
   }
 
   window.WonderMarket = { open: async (token) => { TABS = 'swap'; if (token) { S.token = String(token).toUpperCase(); S.dir = 'buy'; S.tokenDiv = await divisible(S.token); } try { const f = await fetch('api/btc/fees').then((r) => r.json()); S.feeRate = f.halfHourFee || 6; } catch (_) {} try { const pr = await fetch('api/prices').then((r) => r.json()); BTCUSD = pr.bitcoin || 0; } catch (_) {} render(); } };

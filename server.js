@@ -541,7 +541,7 @@ app.get('/api/cp/assetname/:asset', limitProxy, wrap(async (req, res) => {
 // ── Counterparty actions (Phase 6): compose → (client signs) → broadcast ──
 // `attach` is address-sourced (fits the generic route). `detach` is UTXO-sourced — it has
 // its own route below. `order`/`cancel`/`btcpay` power the DEX.
-const CP_TYPES = new Set(['send', 'mpma', 'sweep', 'dispenser', 'dispense', 'dividend', 'destroy', 'issuance', 'broadcast', 'order', 'cancel', 'btcpay', 'fairminter', 'fairmint', 'attach']);
+const CP_TYPES = new Set(['send', 'mpma', 'sweep', 'dispenser', 'dispense', 'dividend', 'destroy', 'issuance', 'broadcast', 'order', 'cancel', 'btcpay', 'fairminter', 'fairmint', 'attach', 'pooldeposit', 'poolwithdraw']);
 const qstr = (o) => Object.entries(o || {}).filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
 
 app.post('/api/cp/compose/:type', limitMoney, wrap(async (req, res) => {
