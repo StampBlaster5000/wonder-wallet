@@ -90,19 +90,65 @@
     $('#mktBody').innerHTML = `
       <div class="lp-tabs" style="margin-bottom:10px"><button class="lp-tab${L.dir === 'buy' ? ' on' : ''}" data-d="buy">Buy</button><button class="lp-tab${L.dir === 'sell' ? ' on' : ''}" data-d="sell">Sell</button></div>
       <div class="mkt-side"><div class="mkt-lbl">Token</div><div class="mkt-in"><input id="limTok" class="mkt-tokenin" style="width:160px;text-align:left;font-size:15px" placeholder="TOKEN" spellcheck="false" value="${esc(L.token)}"/></div></div>
-      <div class="mkt-side"><div class="mkt-lbl">Price</div><div class="mkt-in"><input id="limPrice" class="mkt-amt" type="number" min="0" step="any" placeholder="0.0" value="${esc(L.price)}"/><span class="mkt-asset">XCP each</span></div></div>
-      <div class="mkt-side"><div class="mkt-lbl">Amount</div><div class="mkt-in"><input id="limAmt" class="mkt-amt" type="number" min="0" step="any" placeholder="0.0" value="${esc(L.amount)}"/><span class="mkt-asset">${esc(L.token || 'TOKEN')}</span></div></div>
+      <div id="limBook" class="ob-box"></div>
+      <div class="mkt-side"><div class="mkt-lbl">Price <button class="mini" id="limMkt" style="margin-left:6px" title="Fill best market price">Market</button></div><div class="mkt-in"><input id="limPrice" class="mkt-amt" type="number" min="0" step="any" placeholder="0.0" value="${esc(L.price)}"/><span class="mkt-asset">XCP each</span></div></div>
+      <div class="mkt-side"><div class="mkt-lbl">Amount</div><div class="mkt-in"><input id="limAmt" class="mkt-amt" type="number" min="0" step="any" placeholder="0.0" value="${esc(L.amount)}"/><span class="mkt-asset" id="limTokLbl">${esc(L.token || 'TOKEN')}</span></div></div>
       <div id="limTotal" class="lp-cost"></div>
       <div id="mktStatus" class="statusline" hidden></div>
       <div class="wbtns"><button class="primary" id="limGo">Review ${L.dir === 'buy' ? 'buy' : 'sell'} order</button></div>
       <div id="limOrders" style="margin-top:14px"></div>`;
     const tok = $('#limTok'), pr = $('#limPrice'), am = $('#limAmt');
     const total = () => { const p = Number(pr.value), a = Number(am.value); const el = $('#limTotal'); if (el) el.innerHTML = (p > 0 && a > 0) ? `${L.dir === 'buy' ? 'Pay' : 'Receive'} <b>${(p * a).toLocaleString('en-US', { maximumFractionDigits: 8 })} XCP</b> for <b>${a.toLocaleString('en-US', { maximumFractionDigits: 8 })} ${esc(L.token)}</b> — rests until filled at your price or better` : ''; };
-    tok.oninput = async () => { L.token = tok.value.trim().toUpperCase(); tok.value = L.token; L.tokenDiv = L.token ? await divisible(L.token) : true; render(); };
+    // Update in place — do NOT re-render on every keystroke (that destroys the input mid-typing,
+    // truncating the token and firing loadBook on a partial name). Debounce the book/divisibility lookup.
+    let bookT;
+    tok.oninput = () => {
+      const up = tok.value.toUpperCase(); if (tok.value !== up) { const p = tok.selectionStart; tok.value = up; try { tok.setSelectionRange(p, p); } catch (_) {} }
+      L.token = up.trim();
+      const lbl = $('#limTokLbl'); if (lbl) lbl.textContent = L.token || 'TOKEN';
+      total();
+      clearTimeout(bookT);
+      bookT = setTimeout(() => { if (RE_ASSET.test(L.token)) { loadBook(); divisible(L.token).then((d) => { L.tokenDiv = d; }); } else { const b = $('#limBook'); if (b) b.innerHTML = ''; } }, 350);
+    };
     pr.oninput = () => { L.price = pr.value; total(); }; am.oninput = () => { L.amount = am.value; total(); }; total();
     $('#mktCard').querySelectorAll('[data-d]').forEach((b) => (b.onclick = () => { L.dir = b.dataset.d; render(); }));
     $('#limGo').onclick = reviewLimit;
+    const mk = $('#limMkt'); if (mk) mk.onclick = () => { const px = (L.dir === 'buy' ? L.bestAsk : L.bestBid) ?? L.pool; if (px && pr) { pr.value = Number(px).toFixed(8); L.price = pr.value; total(); } };
+    if (RE_ASSET.test(L.token)) loadBook();
     loadOrders();
+  }
+  // Live order book + spread + AMM pool price for TOKEN/XCP. Click a level to fill the price.
+  async function loadBook() {
+    const box = $('#limBook'); if (!box) return;
+    box.innerHTML = '<div class="fine">Loading order book…</div>';
+    let orders = [];
+    try { const j = await fetch(`api/cp/book/${encodeURIComponent(L.token)}/XCP`).then((r) => r.json()); orders = j.orders || []; } catch (_) {}
+    const bids = [], asks = [];
+    for (const o of orders) {
+      const gq = Number(o.give_quantity_normalized), tq = Number(o.get_quantity_normalized); // fixed order rate
+      if (!(gq > 0) || !(tq > 0)) continue;
+      if (o.give_asset === 'XCP' && o.get_asset === L.token) {          // bid: pay XCP for TOKEN
+        const rem = Number(o.get_remaining != null ? o.get_remaining : tq); if (rem > 0) bids.push({ price: gq / tq, amount: rem });
+      } else if (o.give_asset === L.token && o.get_asset === 'XCP') {   // ask: sell TOKEN for XCP
+        const rem = Number(o.give_remaining != null ? o.give_remaining : gq); if (rem > 0) asks.push({ price: tq / gq, amount: rem });
+      }
+    }
+    bids.sort((a, b) => b.price - a.price); asks.sort((a, b) => a.price - b.price);
+    L.bestBid = bids[0] ? bids[0].price : null; L.bestAsk = asks[0] ? asks[0].price : null;
+    const spread = (L.bestBid && L.bestAsk) ? (L.bestAsk - L.bestBid) : null;
+    const spreadPct = (spread != null && L.bestBid && L.bestAsk) ? (spread / ((L.bestBid + L.bestAsk) / 2)) * 100 : null;
+    let pool = null;
+    try { const p = await fetch(`api/cp/pool/${encodeURIComponent(L.token)}/XCP`).then((r) => r.json()); if (p.result) { const pr = p.result, aX = pr.asset_a === 'XCP'; const xr = Number(aX ? pr.reserve_a_normalized : pr.reserve_b_normalized), tr = Number(aX ? pr.reserve_b_normalized : pr.reserve_a_normalized); pool = tr > 0 ? xr / tr : null; } } catch (_) {}
+    L.pool = pool;
+    const px = (v) => (v != null ? Number(v).toFixed(8) : '—');
+    const lvl = (r, cls) => `<button class="ob-row ${cls}" data-p="${r.price}"><span>${px(r.price)}</span><span>${r.amount.toLocaleString('en-US', { maximumFractionDigits: 2 })}</span></button>`;
+    box.innerHTML = `<div class="acct-grp">Order book · ${esc(L.token)} / XCP</div>
+      <div class="ob-sum"><span>Bid <b class="up">${px(L.bestBid)}</b></span><span>Ask <b class="dn">${px(L.bestAsk)}</b></span><span>Spread <b>${spread != null ? px(spread) + (spreadPct != null ? ` (${spreadPct.toFixed(1)}%)` : '') : '—'}</b></span>${pool != null ? `<span>Pool <b>${px(pool)}</b></span>` : ''}</div>
+      <div class="ob-levels">
+        <div class="ob-asks">${asks.slice(0, 4).reverse().map((a) => lvl(a, 'ask')).join('') || '<div class="fine ob-none">no asks</div>'}</div>
+        <div class="ob-bids">${bids.slice(0, 4).map((b) => lvl(b, 'bid')).join('') || '<div class="fine ob-none">no bids</div>'}</div>
+      </div>`;
+    box.querySelectorAll('[data-p]').forEach((r) => (r.onclick = () => { const pr = $('#limPrice'); if (pr) { pr.value = Number(r.dataset.p).toFixed(8); L.price = pr.value; const el = $('#limTotal'); if (el && $('#limAmt')) { const a = Number($('#limAmt').value), p = Number(pr.value); if (p > 0 && a > 0) el.innerHTML = `${L.dir === 'buy' ? 'Pay' : 'Receive'} <b>${(p * a).toLocaleString('en-US', { maximumFractionDigits: 8 })} XCP</b>`; } } }));
   }
   async function loadOrders() {
     const box = $('#limOrders'); if (!box) return;
@@ -245,7 +291,7 @@
   }
   function paintDispensers() {
     const list = $('#dispList'); if (!list) return;
-    if (!S.dispensers || !S.dispensers.length) { list.innerHTML = `<div class="dash-empty">No open (non-oracle) dispensers for ${esc(S.dispAsset)}.</div>`; const b = $('#dispBuy'); if (b) b.innerHTML = ''; return; }
+    if (!S.dispensers || !S.dispensers.length) { const hint = S.dispAsset === 'XCP' ? ' Dispensers sell a <b>token</b> for BTC — XCP is what buyers pay <i>with</i>, so it has none. Search a token like PEPECASH.' : ' A dispenser sells this token for BTC; there may be none open right now, or try the AMM pool via <b>Swap</b>.'; list.innerHTML = `<div class="dash-empty">No open (non-oracle) dispensers for ${esc(S.dispAsset)}.${hint}</div>`; const b = $('#dispBuy'); if (b) b.innerHTML = ''; return; }
     list.innerHTML = `<div class="acct-grp">Dispensers · cheapest first</div>` + S.dispensers.slice(0, 6).map((d, i) => `
       <button class="disp-opt${i === S.dispPick ? ' on' : ''}" data-i="${i}">
         <span class="disp-give">${esc(d.giveQty)} ${esc(S.dispAsset)}</span>

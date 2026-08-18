@@ -607,12 +607,18 @@ const slimOrder = (o) => ({
   expiration: o.expiration, status: o.status,
 });
 // Open order book for an asset pair (both directions of the market).
+// NOTE: CP's /orders/{x} path is a single-order-by-hash lookup, NOT a market book — it rejects
+// status/limit and treats {a1}_{a2} as a tx hash. The real book comes from the per-asset orders
+// endpoint, filtered to the two-asset pair (both directions).
 app.get('/api/cp/book/:a1/:a2', wrap(async (req, res) => {
   const a1 = String(req.params.a1).toUpperCase(), a2 = String(req.params.a2).toUpperCase();
   if (!RE.cpasset.test(a1) || !RE.cpasset.test(a2)) { const e = new Error('bad_asset'); e.status = 400; throw e; }
   try {
-    const j = await (await fetch(`${cp.BASE}/orders/${a1}_${a2}?status=open&limit=50&verbose=true`, { headers: { Accept: 'application/json' } })).json();
-    res.json({ orders: (Array.isArray(j.result) ? j.result : []).map(slimOrder) });
+    const j = await (await fetch(`${cp.BASE}/assets/${encodeURIComponent(a1)}/orders?status=open&limit=200&verbose=true`, { headers: { Accept: 'application/json' } })).json();
+    const orders = (Array.isArray(j.result) ? j.result : [])
+      .filter((o) => (o.give_asset === a1 && o.get_asset === a2) || (o.give_asset === a2 && o.get_asset === a1))
+      .map(slimOrder);
+    res.json({ orders });
   } catch (_) { res.json({ orders: [] }); }
 }));
 // Open order book for a SINGLE asset — every pair it trades in (both directions).

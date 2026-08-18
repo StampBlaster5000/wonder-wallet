@@ -1059,3 +1059,19 @@ html.theme-light .wordmark .name { background-image: linear-gradient(180deg, var
 .disp-give { font-weight: 600; font-size: 13px; }
 .disp-rate { font-family: var(--mono); font-size: 12px; color: var(--gold2); }
 .disp-rem { font-size: 11px; color: var(--muted); }
+
+/* Limit-tab order book + spread */
+.ob-box { margin: 10px 0 4px; }
+.ob-sum { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted2); padding: 8px 10px; background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; }
+.ob-sum b { font-family: var(--mono); font-weight: 600; color: var(--text); }
+.ob-sum b.up { color: #4bbf73; }
+.ob-sum b.dn { color: #e0655f; }
+.ob-levels { margin-top: 6px; }
+.ob-asks, .ob-bids { display: flex; flex-direction: column; gap: 2px; }
+.ob-asks { margin-bottom: 4px; }
+.ob-row { display: flex; justify-content: space-between; gap: 12px; width: 100%; font-family: var(--mono); font-size: 12px; padding: 3px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; text-align: left; }
+.ob-row span:last-child { color: var(--muted2); }
+.ob-row.ask { background: rgba(224,101,95,0.07); } .ob-row.ask span:first-child { color: #e0655f; }
+.ob-row.bid { background: rgba(75,191,115,0.07); } .ob-row.bid span:first-child { color: #4bbf73; }
+.ob-row:hover { outline: 1px solid var(--gold); }
+.ob-none { padding: 3px 10px; }
