@@ -1099,6 +1099,7 @@ input.ds-amt::-webkit-outer-spin-button, input.ds-amt::-webkit-inner-spin-button
 .ds-meta > div { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted2); }
 .ds-meta b { color: var(--text); font-weight: 600; text-align: right; }
 .fine.over { color: #e0a04b; }
+.fine.up { color: #4bbf73; }
 .ds-prog { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
 .ds-progrow { font-size: 12px; color: var(--muted2); font-family: var(--mono); }
 .ob-drow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 11px; border: 1px solid var(--border); border-radius: 9px; margin-bottom: 5px; font-size: 12.5px; }

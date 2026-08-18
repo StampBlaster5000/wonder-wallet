@@ -305,29 +305,45 @@
     } catch (_) { S.dispensers = []; S.dispErr = true; }
     S.dispPick = 0; S.dispCount = 1; paintDispensers();
   }
-  // Cheapest-first routing across open dispensers (they ARE the order book). Fill a target receive
-  // amount by taking whole dispenses from the lowest per-unit price up, and report the effective
-  // average price + "% over floor" (the slippage) the way a Uniswap route would.
+  // Fee-aware routing across open dispensers (they ARE the order book). Fill a target receive amount
+  // by whole dispenses, minimizing TOTAL outlay = dispenser payments + miner fees (each dispenser is a
+  // separate tx). A shallow cheap dispenser that adds a whole tx fee for a few units can lose to a
+  // single deeper dispenser that finishes the order in one tx — so we don't just take cheapest-per-unit.
+  // Reports effective avg price + "% over floor" (the slippage) the way a Uniswap route would.
   function routeBuy(dispensers, target) {
     const ds = (dispensers || []).map((d) => ({ address: d.address, rate: Number(d.satoshirate), give: Number(d.giveQty), remaining: Number(d.remaining) }))
       .filter((d) => d.give > 0 && d.rate > 0 && d.remaining >= d.give)
       .map((d) => ({ ...d, unit: d.rate / d.give, wholeRem: Math.floor(d.remaining / d.give + 1e-9) * d.give }))
       .sort((a, b) => a.unit - b.unit || a.rate - b.rate);
-    let need = Number(target) || 0; const slices = [];
-    for (const d of ds) {
-      if (need <= 1e-9) break;
-      const avail = Math.floor(d.remaining / d.give + 1e-9); if (avail < 1) continue;
-      const take = Math.min(avail, Math.max(1, Math.ceil((need - 1e-9) / d.give)));
-      slices.push({ address: d.address, rate: d.rate, give: d.give, dispenses: take, filled: take * d.give, sats: take * d.rate });
-      need -= take * d.give;
+    const T = Number(target) || 0;
+    const feePerTx = DISP_TX_VB * S.feeRate;
+    const fillFrom = (d, units) => { const disp = Math.min(Math.floor(d.wholeRem / d.give + 1e-9), Math.max(1, Math.ceil((units - 1e-9) / d.give))); return { address: d.address, rate: d.rate, give: d.give, dispenses: disp, filled: disp * d.give, sats: disp * d.rate }; };
+    const cost = (sl) => sl.reduce((s, x) => s + x.sats, 0) + sl.length * feePerTx; // total outlay incl miner fees
+    // Candidate 1: pure cheapest-first greedy (min asset cost, max depth if unfillable).
+    const greedy = (() => { let need = T; const sl = []; for (const d of ds) { if (need <= 1e-9) break; const s = fillFrom(d, need); sl.push(s); need -= s.filled; } return sl; })();
+    const candidates = [greedy];
+    // Candidates 2..: take the k cheapest dispensers fully, then finish the remainder with the SINGLE
+    // cheapest-per-unit dispenser deep enough to cover it in one tx (trades a per-unit premium for a saved fee).
+    const prefix = []; let cum = 0;
+    for (let k = 0; k < ds.length; k++) {
+      const need = T - cum; if (need <= 1e-9) break;
+      for (let j = k; j < ds.length; j++) { if (ds[j].wholeRem >= need - 1e-9) { candidates.push(prefix.concat([fillFrom(ds[j], need)])); break; } }
+      prefix.push(fillFrom(ds[k], ds[k].wholeRem)); cum += ds[k].wholeRem;
     }
-    const totalFilled = slices.reduce((s, x) => s + x.filled, 0);
+    // Choose: among candidates that meet the target, the min total outlay; else the deepest fill (greedy).
+    const fillOf = (sl) => sl.reduce((s, x) => s + x.filled, 0);
+    const fillers = candidates.filter((sl) => fillOf(sl) >= T - 1e-9);
+    const slices = fillers.length ? fillers.reduce((a, b) => (cost(a) <= cost(b) ? a : b)) : greedy;
+    const totalFilled = fillOf(slices);
     const totalSats = slices.reduce((s, x) => s + x.sats, 0);
     const floorUnit = ds.length ? ds[0].unit : null;
     const avgUnit = totalFilled > 0 ? totalSats / totalFilled : null;
     const overFloorPct = (avgUnit != null && floorUnit) ? (avgUnit / floorUnit - 1) * 100 : null;
     const bookDepth = ds.reduce((s, d) => s + d.wholeRem, 0);
-    return { slices, totalFilled, totalSats, floorUnit, avgUnit, overFloorPct, txs: slices.length, shortfall: Math.max(0, need), bookDepth, sorted: ds };
+    // Was a fee-aware route chosen over the naive cheapest-first? (for a transparency hint)
+    const greedyFills = fillOf(greedy) >= T - 1e-9;
+    const savedVsGreedy = greedyFills ? Math.max(0, Math.round(cost(greedy) - cost(slices))) : 0;
+    return { slices, totalFilled, totalSats, floorUnit, avgUnit, overFloorPct, txs: slices.length, shortfall: Math.max(0, T - totalFilled), bookDepth, sorted: ds, feePerTx, minerSats: slices.length * feePerTx, savedVsGreedy };
   }
   function roundStep(v, step) { return step > 0 ? Math.max(step, Math.floor(v / step) * step) : v; }
   function paintDispensers() {
@@ -349,7 +365,8 @@
       ? `1 ${esc(asset)} = <b>${nfmt(Math.round(r.avgUnit))} sats</b>${usd(r.avgUnit)}${r.overFloorPct != null ? ` · <span class="${r.overFloorPct > 0.5 ? 'over' : 'up'}">${r.overFloorPct.toFixed(r.overFloorPct < 10 ? 1 : 0)}% over floor</span>` : ''}`
       : 'Enter an amount to route across the book.';
     const routesLine = r.slices.length ? `${r.txs} tx${r.txs > 1 ? 's' : ''} · ${r.slices.map((s) => nfmt(s.filled)).join(' + ')} ${esc(asset)}` : '—';
-    const minerSats = r.txs * DISP_TX_VB * S.feeRate;
+    const minerSats = r.minerSats;
+    const totalOutlay = r.totalSats + minerSats;
     card.innerHTML = `
       <div class="disp-swap">
         <div class="ds-side"><div class="ds-lbl">You receive</div>
@@ -364,9 +381,10 @@
       <div class="ds-meta">
         <div><span>Routes</span><b>${routesLine}</b></div>
         <div><span>You get</span><b>${nfmt(r.totalFilled)} ${esc(asset)}</b></div>
-        <div><span>Miner fees</span><b>~${nfmt(minerSats)} sats${usd(minerSats)}</b></div>
-        <div><span>Arrival</span><b>next block after BTC confirms</b></div>
+        <div><span>Miner fees · ${r.txs} tx${r.txs > 1 ? 's' : ''}</span><b>~${nfmt(minerSats)} sats${usd(minerSats)}</b></div>
+        <div><span>Total cost</span><b>${nfmt(totalOutlay)} sats${usd(totalOutlay)}</b></div>
       </div>
+      ${r.savedVsGreedy > 0 ? `<div class="fine up">Fee-aware route: finishing with a deeper dispenser saves ~${nfmt(r.savedVsGreedy)} sats${usd(r.savedVsGreedy)} in miner fees vs. the naive cheapest-first split.</div>` : ''}
       ${r.shortfall > 1e-7 && target > 0 ? `<div class="fine over">Book depth is only ${nfmt(r.totalFilled)} ${esc(asset)} — not enough open dispensers to fully fill ${nfmt(target)}.</div>` : ''}
       <div class="wbtns" style="margin-top:10px"><button class="primary" id="dispGo"${r.slices.length ? '' : ' disabled'}>${r.txs > 1 ? `Review buy · ${r.txs} txs` : 'Review buy'}</button></div>
       <div class="fine">Routing includes miner fees — a deeper route can beat a cheaper, shallower one. Each dispenser is a separate Bitcoin payment.</div>`;
