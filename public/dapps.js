@@ -32,8 +32,7 @@
       { ic: ICON.chart, name: 'Counterparty DEX', desc: 'Trustless on-chain order book', act: 'dex' },
       { ic: ICON.plus, name: 'Issuance suite', desc: 'Create · issue · lock · transfer · subassets', act: 'issuance' },
       { ic: ICON.link, name: 'Attach / Detach', desc: 'Bind CP assets to a UTXO or release', act: 'attachdetach' },
-      { ic: ICON.gift, name: 'Fairminter', desc: 'Fair-mint pools — create & mint', act: 'fairminter' },
-      { ic: ICON.rocket, name: 'XCP-69', desc: '69-minter fair launches — mint & create', act: 'xcp69' },
+      { ic: ICON.gift, name: 'Fairmint', desc: 'Fair-mint pools · XCP-69 launches', act: 'fairminter' },
       { ic: ICON.market, name: 'Market', desc: 'AMM swap · liquidity · dispensers', act: 'market' },
     ] },
     { chain: 'Stampchain', tools: [
@@ -185,10 +184,30 @@
     const x = $('#csX'); if (x) x.onclick = () => { const m = $('#dappmodal'); if (m) m.hidden = true; };
   }
 
+  // Dedicated Fairmint hub — create a fair-mint pool, mint into one, or open the XCP-69 launchpad.
+  function fairmintMenu() {
+    const a = window.__activeAccount, conn = window.__connectedWallet, CA = window.CpActions;
+    const btc = a ? (a.btcAddress || (a.bitcoin && a.bitcoin.nativeSegwit && a.bitcoin.nativeSegwit.address)) : null;
+    modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Fairmint</h3><div class="cp-addr">Counterparty fair-mint pools · XCP-69 fair launches</div></div><button class="mini" id="fmX">Close</button></div>
+      <div class="cp-grid">
+        <button class="cp-act" data-fm="fairminter"><span class="cp-ic">⚒</span>Fairminter (create)</button>
+        <button class="cp-act" data-fm="fairmint"><span class="cp-ic">⛏</span>Fairmint (mint)</button>
+        <button class="cp-act" data-fm="xcp69"><span class="cp-ic">🚀</span>XCP-69 launches</button>
+      </div>`);
+    $('#fmX').onclick = () => { const m = $('#dappmodal'); if (m) m.hidden = true; };
+    $('#dappCard').querySelectorAll('[data-fm]').forEach((b) => (b.onclick = () => {
+      const k = b.dataset.fm, m = $('#dappmodal'); if (m) m.hidden = true;
+      if (k === 'xcp69') return window.WonderLaunchpad ? window.WonderLaunchpad.open() : toast('Launchpad loading…');
+      if (a && CA) CA.quick(a.account, btc, k);
+      else if (conn && CA) CA.quickConnected(conn, k);
+      else toast('Open a wallet to use this.');
+    }));
+  }
+
   // ── launch a tool ──
   function launch(act) {
     const s = state();
-    if (act === 'xcp69') { if (isMobile()) closeDrawer(); return window.WonderLaunchpad ? window.WonderLaunchpad.open() : comingSoon('xcp69'); }
+    if (act === 'fairminter') { if (isMobile()) closeDrawer(); return fairmintMenu(); } // dedicated Fairmint hub: create · mint · XCP-69
     if (act === 'market') { if (isMobile()) closeDrawer(); return window.WonderMarket ? window.WonderMarket.open() : comingSoon('market'); }
     if (s.mode === 'hardware') {
       if (!s.canSign) return toast('Ledger is read-only for this address — switch to your main signing address (Native SegWit / Legacy / Taproot).');
