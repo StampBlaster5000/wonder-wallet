@@ -15,13 +15,21 @@
 
   function modal(html) {
     let m = $('#mktModal');
-    if (!m) { m = document.createElement('div'); m.id = 'mktModal'; m.className = 'modal'; m.innerHTML = '<div class="modal-card mkt-card" id="mktCard"></div>'; document.body.appendChild(m); m.addEventListener('click', (e) => { if (e.target.id === 'mktModal') m.hidden = true; }); }
+    if (!m) { m = document.createElement('div'); m.id = 'mktModal'; m.className = 'modal'; m.innerHTML = '<div class="modal-card mkt-card" id="mktCard"></div>'; document.body.appendChild(m); m.addEventListener('click', (e) => { if (e.target.id === 'mktModal') close(); }); }
     $('#mktCard').innerHTML = html; m.hidden = false; return $('#mktCard');
   }
-  const close = () => { const m = $('#mktModal'); if (m) m.hidden = true; };
+  // Closing the Market clears the session — no stale quote/qty when it's reopened (fresh estimates every time).
+  function resetSession() {
+    Object.assign(S, { dir: 'buy', token: '', tokenDiv: true, amount: '', quote: null, quoteErr: false, slippage: 'auto',
+      dispMode: 'buy', dispAsset: '', dispensers: null, dispErr: false, dispPick: 0, dispCount: 1, dispRecv: '', routeMode: 'auto', dispSel: null, sellAsset: '', sellComp: null });
+    Object.assign(L, { dir: 'buy', token: '', tokenDiv: true, price: '', amount: '', bestBid: null, bestAsk: null, pool: null });
+    Object.assign(Q, { sub: 'add', token: '', pool: null, tokenDiv: true, amtA: '', lpAmt: '' });
+    TABS = 'swap';
+  }
+  const close = () => { const m = $('#mktModal'); if (m) m.hidden = true; resetSession(); };
 
   // Swap state: one side is always XCP (XCP-69 pools are TOKEN/XCP); `dir` = which way.
-  const S = { dir: 'buy', token: '', tokenDiv: true, amount: '', quote: null, slippage: 'auto', feeRate: 6, dispMode: 'buy', dispAsset: '', dispensers: null, dispPick: 0, dispCount: 1, dispRecv: '', sellAsset: '', sellComp: null };
+  const S = { dir: 'buy', token: '', tokenDiv: true, amount: '', quote: null, slippage: 'auto', feeRate: 6, dispMode: 'buy', dispAsset: '', dispensers: null, dispErr: false, dispPick: 0, dispCount: 1, dispRecv: '', routeMode: 'auto', dispSel: null, sellAsset: '', sellComp: null };
   const DISP_TX_VB = 154; // ~vsize of one dispense tx (1-2 inputs, dispenser payment + change) for miner-fee estimates
   const DIVCACHE = { XCP: true, BTC: true };
   let TABS = 'swap', BTCUSD = 0;
@@ -310,52 +318,54 @@
   // separate tx). A shallow cheap dispenser that adds a whole tx fee for a few units can lose to a
   // single deeper dispenser that finishes the order in one tx — so we don't just take cheapest-per-unit.
   // Reports effective avg price + "% over floor" (the slippage) the way a Uniswap route would.
-  function routeBuy(dispensers, target) {
-    const ds = (dispensers || []).map((d) => ({ address: d.address, rate: Number(d.satoshirate), give: Number(d.giveQty), remaining: Number(d.remaining) }))
+  function routeBuy(dispensers, target, opts) {
+    opts = opts || {};
+    const all = (dispensers || []).map((d) => ({ address: d.address, rate: Number(d.satoshirate), give: Number(d.giveQty), remaining: Number(d.remaining) }))
       .filter((d) => d.give > 0 && d.rate > 0 && d.remaining >= d.give)
       .map((d) => ({ ...d, unit: d.rate / d.give, wholeRem: Math.floor(d.remaining / d.give + 1e-9) * d.give }))
       .sort((a, b) => a.unit - b.unit || a.rate - b.rate);
     const T = Number(target) || 0;
     const feePerTx = DISP_TX_VB * S.feeRate;
-    // "Dust" dispensers hold a trivial amount (< max(1 unit, 1% of the target)). A dust dispenser can be
-    // cheapest-per-unit yet only sell a sliver — routing through it wastes a whole tx and, worse, would
-    // define a bogus "floor" (e.g. a 1.75-XCP dispenser making everything look 15% over floor). So we
-    // route + measure the floor against the real book, and only fall back to dust if depth can't fill.
-    const dustThresh = Math.max(1, 0.01 * T);
-    const nonDust = ds.filter((d) => d.wholeRem >= dustThresh - 1e-9);
-    const pool = (nonDust.reduce((s, d) => s + d.wholeRem, 0) >= T - 1e-9) ? nonDust : ds;
+    const bookTotal = all.reduce((s, d) => s + d.wholeRem, 0);
+    // Market floor = the cheapest per-unit dispenser holding a non-trivial share of the book (>= 1% of
+    // total open depth). Anything priced BELOW that while holding a sliver is a floor-pin / spam dispenser
+    // (undercut the market with ~1 unit to drag the displayed floor down) — we HIDE it from the book and
+    // never route through it. `floorUnit` is this market floor, so "% over floor" reflects the real book.
+    const floorDepth = Math.max(1, 0.01 * bookTotal);
+    const mf = all.find((d) => d.wholeRem >= floorDepth - 1e-9);
+    const floorUnit = mf ? mf.unit : (all[0] ? all[0].unit : null);
+    const visible = all.filter((d) => floorUnit == null || d.unit >= floorUnit - 1e-9);
+    // Routing pool = visible dispensers, optionally restricted to a user's custom selection.
+    const pool = opts.allowed ? visible.filter((d) => opts.allowed.has(d.address)) : visible;
     const fillFrom = (d, units) => { const disp = Math.min(Math.floor(d.wholeRem / d.give + 1e-9), Math.max(1, Math.ceil((units - 1e-9) / d.give))); return { address: d.address, rate: d.rate, give: d.give, dispenses: disp, filled: disp * d.give, sats: disp * d.rate }; };
     const cost = (sl) => sl.reduce((s, x) => s + x.sats, 0) + sl.length * feePerTx; // total outlay incl miner fees
+    const fillOf = (sl) => sl.reduce((s, x) => s + x.filled, 0);
     // Candidate 1: pure cheapest-first greedy (min asset cost, max depth if unfillable).
     const greedy = (() => { let need = T; const sl = []; for (const d of pool) { if (need <= 1e-9) break; const s = fillFrom(d, need); sl.push(s); need -= s.filled; } return sl; })();
     const candidates = [greedy];
-    // Candidates 2..: take the k cheapest dispensers fully, then finish the remainder with the SINGLE
-    // cheapest-per-unit dispenser deep enough to cover it in one tx (trades a per-unit premium for a saved fee).
-    const prefix = []; let cum = 0;
-    for (let k = 0; k < pool.length; k++) {
-      const need = T - cum; if (need <= 1e-9) break;
-      for (let j = k; j < pool.length; j++) { if (pool[j].wholeRem >= need - 1e-9) { candidates.push(prefix.concat([fillFrom(pool[j], need)])); break; } }
-      prefix.push(fillFrom(pool[k], pool[k].wholeRem)); cum += pool[k].wholeRem;
+    // In AUTO mode only, also try: take the k cheapest dispensers fully, then finish the remainder with the
+    // SINGLE cheapest dispenser deep enough to cover it in one tx (trades a per-unit premium for a saved
+    // fee). Custom mode uses exactly the picked set, so no auto substitution.
+    if (!opts.allowed) {
+      const prefix = []; let cum = 0;
+      for (let k = 0; k < pool.length; k++) {
+        const need = T - cum; if (need <= 1e-9) break;
+        for (let j = k; j < pool.length; j++) { if (pool[j].wholeRem >= need - 1e-9) { candidates.push(prefix.concat([fillFrom(pool[j], need)])); break; } }
+        prefix.push(fillFrom(pool[k], pool[k].wholeRem)); cum += pool[k].wholeRem;
+      }
     }
     // Choose: among candidates that meet the target, the min total outlay; else the deepest fill (greedy).
-    const fillOf = (sl) => sl.reduce((s, x) => s + x.filled, 0);
     const fillers = candidates.filter((sl) => fillOf(sl) >= T - 1e-9);
     const slices = fillers.length ? fillers.reduce((a, b) => (cost(a) <= cost(b) ? a : b)) : greedy;
     const totalFilled = fillOf(slices);
     const totalSats = slices.reduce((s, x) => s + x.sats, 0);
-    // Floor = the cheapest price you could realistically START from — the lowest per-unit dispenser that
-    // holds a meaningful amount (>= 3% of the order). Decoupled from the route so a tiny cheap-per-unit
-    // sliver (e.g. a 1.75-XCP dispenser) can't masquerade as the floor and inflate "% over floor".
-    const floorMin = Math.max(1, 0.03 * T);
-    const floorCand = ds.find((d) => d.wholeRem >= floorMin - 1e-9); // ds sorted asc by unit → first qualifying is cheapest
-    const floorUnit = (floorCand && floorCand.unit) || (pool.length ? pool[0].unit : (ds.length ? ds[0].unit : null));
     const avgUnit = totalFilled > 0 ? totalSats / totalFilled : null;
     const overFloorPct = (avgUnit != null && floorUnit) ? (avgUnit / floorUnit - 1) * 100 : null;
-    const bookDepth = ds.reduce((s, d) => s + d.wholeRem, 0);
+    const bookDepth = visible.reduce((s, d) => s + d.wholeRem, 0);
     // Was a fee-aware route chosen over the naive cheapest-first? (for a transparency hint)
     const greedyFills = fillOf(greedy) >= T - 1e-9;
     const savedVsGreedy = greedyFills ? Math.max(0, Math.round(cost(greedy) - cost(slices))) : 0;
-    return { slices, totalFilled, totalSats, floorUnit, avgUnit, overFloorPct, txs: slices.length, shortfall: Math.max(0, T - totalFilled), bookDepth, sorted: ds, feePerTx, minerSats: slices.length * feePerTx, savedVsGreedy };
+    return { slices, totalFilled, totalSats, floorUnit, avgUnit, overFloorPct, txs: slices.length, shortfall: Math.max(0, T - totalFilled), bookDepth, sorted: visible, feePerTx, minerSats: slices.length * feePerTx, savedVsGreedy, totalCost: totalSats + slices.length * feePerTx };
   }
   function roundStep(v, step) { return step > 0 ? Math.max(step, Math.floor(v / step) * step) : v; }
   function paintDispensers() {
@@ -368,18 +378,24 @@
   }
   // Uniswap-style buy card: enter a target, see the cheapest-first route (send BTC, avg price,
   // % over floor / slippage, tx count, miner fee) + the dispenser order book with used rows lit.
+  // AUTO picks the cheapest all-in route; CUSTOM lets you click dispensers and quote your own route.
   function paintRoute() {
     const card = $('#dispBuy'), list = $('#dispList'); if (!card || !list) return;
     const asset = S.dispAsset, target = Number(S.dispRecv) || 0;
-    const r = routeBuy(S.dispensers, target);
-    const step = r.sorted.length ? r.sorted[0].give : 1, maxRecv = r.bookDepth;
+    const auto = routeBuy(S.dispensers, target);
+    const custom = S.routeMode === 'custom';
+    if (custom && !S.dispSel) S.dispSel = new Set(auto.slices.map((s) => s.address)); // seed from the auto route
+    const r = custom ? routeBuy(S.dispensers, target, { allowed: S.dispSel }) : auto;
+    const step = auto.sorted.length ? auto.sorted[0].give : 1, maxRecv = auto.bookDepth;
     const rateLine = (target > 0 && r.avgUnit != null)
       ? `1 ${esc(asset)} = <b>${nfmt(Math.round(r.avgUnit))} sats</b>${usd(r.avgUnit)}${r.overFloorPct != null ? ` · <span class="${r.overFloorPct > 0.5 ? 'over' : 'up'}">${r.overFloorPct.toFixed(r.overFloorPct < 10 ? 1 : 0)}% over floor</span>` : ''}`
-      : 'Enter an amount to route across the book.';
+      : (custom ? 'Pick dispensers below to build your route.' : 'Enter an amount to route across the book.');
     const routesLine = r.slices.length ? `${r.txs} tx${r.txs > 1 ? 's' : ''} · ${r.slices.map((s) => nfmt(s.filled)).join(' + ')} ${esc(asset)}` : '—';
     const minerSats = r.minerSats;
     const totalOutlay = r.totalSats + minerSats;
+    const delta = custom ? Math.round(r.totalCost - auto.totalCost) : 0; // custom vs the cheapest auto route
     card.innerHTML = `
+      <div class="ds-modes"><button class="ds-mode${!custom ? ' on' : ''}" data-rm="auto">Auto</button><button class="ds-mode${custom ? ' on' : ''}" data-rm="custom">Custom</button>${custom ? `<button class="mini ds-reset" id="dispReset" title="Reset to the cheapest auto route">reset</button>` : ''}</div>
       <div class="disp-swap">
         <div class="ds-side"><div class="ds-lbl">You receive</div>
           <div class="ds-row"><input id="dispRecv" class="ds-amt" type="number" min="0" step="any" value="${esc(S.dispRecv)}"/><span class="ds-asset">${esc(asset)}</span></div>
@@ -396,10 +412,13 @@
         <div><span>Miner fees · ${r.txs} tx${r.txs > 1 ? 's' : ''}</span><b>~${nfmt(minerSats)} sats${usd(minerSats)}</b></div>
         <div><span>Total cost</span><b>${nfmt(totalOutlay)} sats${usd(totalOutlay)}</b></div>
       </div>
-      ${r.savedVsGreedy > 0 ? `<div class="fine up">Fee-aware route: finishing with a deeper dispenser saves ~${nfmt(r.savedVsGreedy)} sats${usd(r.savedVsGreedy)} in miner fees vs. the naive cheapest-first split.</div>` : ''}
-      ${r.shortfall > 1e-7 && target > 0 ? `<div class="fine over">Book depth is only ${nfmt(r.totalFilled)} ${esc(asset)} — not enough open dispensers to fully fill ${nfmt(target)}.</div>` : ''}
+      ${custom && r.slices.length ? `<div class="fine ${delta > 0 ? 'over' : 'up'}">vs. Auto (cheapest): ${delta > 0 ? `+${nfmt(delta)} sats${usd(delta)} more` : delta < 0 ? `${nfmt(-delta)} sats${usd(-delta)} cheaper` : 'same total'} — ${auto.txs} tx auto vs ${r.txs} tx here.</div>` : ''}
+      ${!custom && r.savedVsGreedy > 0 ? `<div class="fine up">Fee-aware route: finishing with a deeper dispenser saves ~${nfmt(r.savedVsGreedy)} sats${usd(r.savedVsGreedy)} vs. the naive cheapest-first split.</div>` : ''}
+      ${r.shortfall > 1e-7 && target > 0 ? `<div class="fine over">${custom ? 'Your selected dispensers' : 'Book depth'} only cover ${nfmt(r.totalFilled)} ${esc(asset)}${custom ? ' — pick more dispensers below' : ` — not enough open dispensers to fully fill ${nfmt(target)}`}.</div>` : ''}
       <div class="wbtns" style="margin-top:10px"><button class="primary" id="dispGo"${r.slices.length ? '' : ' disabled'}>${r.txs > 1 ? `Review buy · ${r.txs} txs` : 'Review buy'}</button></div>
-      <div class="fine">Routing includes miner fees — a deeper route can beat a cheaper, shallower one. Each dispenser is a separate Bitcoin payment.</div>`;
+      <div class="fine">${custom ? 'Custom route: tap dispensers below to include/exclude them. Each dispenser is a separate Bitcoin payment.' : 'Auto picks the cheapest all-in route (dispenser prices + miner fees). Switch to Custom to choose your own dispensers.'}</div>`;
+    card.querySelectorAll('[data-rm]').forEach((b) => (b.onclick = () => { if (S.routeMode !== b.dataset.rm) { S.routeMode = b.dataset.rm; if (b.dataset.rm === 'auto') S.dispSel = null; paintRoute(); } }));
+    const rst = $('#dispReset'); if (rst) rst.onclick = () => { S.dispSel = new Set(auto.slices.map((s) => s.address)); paintRoute(); };
     const pre = $('#dispPresets');
     if (pre) {
       const opts = [['1×', step], ['10×', step * 10], ['Half', roundStep(maxRecv / 2, step)], ['Max', maxRecv]].filter(([, v]) => v > 0 && v <= maxRecv);
@@ -408,12 +427,17 @@
     }
     const inp = $('#dispRecv'); if (inp) inp.oninput = () => { S.dispRecv = inp.value; paintRoute(); };
     const go = $('#dispGo'); if (go && r.slices.length) go.onclick = () => reviewRoute(r);
-    // order book — dispensers cheapest-first; rows filling the order are highlighted with partial amounts
+    // order book — dispensers cheapest-first; rows filling the order are highlighted with partial amounts.
+    // In custom mode, rows are tappable to include/exclude and show a check.
     const usedBy = {}; r.slices.forEach((s) => { usedBy[s.address] = s; });
-    list.innerHTML = `<div class="acct-grp">Dispensers · cheapest first</div>` + r.sorted.slice(0, 12).map((d) => {
-      const u = usedBy[d.address];
-      return `<div class="ob-drow${u ? ' used' : ''}"><span class="ob-drate">${nfmt(d.rate)} <em>sats</em>${d.give !== 1 ? ` <em>/ ${nfmt(d.give)}</em>` : ''}</span><span class="ob-damt">${u ? `<b>${nfmt(u.filled)}</b> of ${nfmt(d.wholeRem)}` : nfmt(d.wholeRem)} ${esc(asset)}</span></div>`;
-    }).join('') + `<div class="fine ob-foot">Lit rows fill your order. Total open: ${nfmt(maxRecv)} ${esc(asset)}.</div>`;
+    list.innerHTML = `<div class="acct-grp">Dispensers · cheapest first${custom ? ' · tap to pick' : ''}</div>` + auto.sorted.slice(0, 14).map((d) => {
+      const u = usedBy[d.address], sel = custom && S.dispSel && S.dispSel.has(d.address);
+      return `<div class="ob-drow${u ? ' used' : ''}${custom ? ' pick' : ''}${sel ? ' sel' : ''}"${custom ? ` data-addr="${esc(d.address)}"` : ''}>${custom ? `<span class="ob-check">${sel ? '✓' : ''}</span>` : ''}<span class="ob-drate">${nfmt(d.rate)} <em>sats</em>${d.give !== 1 ? ` <em>/ ${nfmt(d.give)}</em>` : ''}</span><span class="ob-damt">${u ? `<b>${nfmt(u.filled)}</b> of ${nfmt(d.wholeRem)}` : nfmt(d.wholeRem)} ${esc(asset)}</span></div>`;
+    }).join('') + `<div class="fine ob-foot">${custom ? 'Ticked rows are in your route.' : 'Lit rows fill your order.'} Total open: ${nfmt(maxRecv)} ${esc(asset)}.</div>`;
+    if (custom) list.querySelectorAll('[data-addr]').forEach((row) => (row.onclick = () => {
+      const a = row.dataset.addr; if (!S.dispSel) S.dispSel = new Set();
+      if (S.dispSel.has(a)) S.dispSel.delete(a); else S.dispSel.add(a); paintRoute();
+    }));
   }
   function reviewRoute(r) {
     if (!r.slices.length) return; const asset = S.dispAsset;

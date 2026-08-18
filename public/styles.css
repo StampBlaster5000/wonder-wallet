@@ -1109,3 +1109,13 @@ input.ds-amt::-webkit-outer-spin-button, input.ds-amt::-webkit-inner-spin-button
 .ob-damt { color: var(--text); font-family: var(--mono); }
 .ob-damt b { color: var(--gold2); }
 .ob-foot { margin-top: 6px; }
+/* Auto/Custom route mode toggle + tappable dispenser picks */
+.ds-modes { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.ds-mode { padding: 5px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); color: var(--muted2); font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: inherit; }
+.ds-mode.on { border-color: var(--gold); color: var(--gold2); background: linear-gradient(180deg, rgba(224,180,83,0.10), var(--surface2)); }
+.ds-reset { margin-left: auto; }
+.ob-drow.pick { cursor: pointer; }
+.ob-drow.pick:hover { border-color: var(--border2); }
+.ob-drow.pick.sel { border-color: var(--gold); }
+.ob-check { flex: none; width: 16px; height: 16px; border-radius: 5px; border: 1px solid var(--border2); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; color: var(--gold2); margin-right: 8px; }
+.ob-drow.sel .ob-check { border-color: var(--gold); background: rgba(224,180,83,0.12); }
