@@ -381,6 +381,10 @@
   // AUTO picks the cheapest all-in route; CUSTOM lets you click dispensers and quote your own route.
   function paintRoute() {
     const card = $('#dispBuy'), list = $('#dispList'); if (!card || !list) return;
+    // Re-rendering the card replaces the amount input, which would drop focus mid-typing. Remember if it
+    // was focused (and the caret) so we can restore it after the rebuild — lets you type "100" in one go.
+    const keepFocus = document.activeElement && document.activeElement.id === 'dispRecv';
+    const caret = keepFocus ? document.activeElement.selectionStart : null;
     const asset = S.dispAsset, target = Number(S.dispRecv) || 0;
     const auto = routeBuy(S.dispensers, target);
     const custom = S.routeMode === 'custom';
@@ -398,7 +402,7 @@
       <div class="ds-modes"><button class="ds-mode${!custom ? ' on' : ''}" data-rm="auto">Auto</button><button class="ds-mode${custom ? ' on' : ''}" data-rm="custom">Custom</button>${custom ? `<button class="mini ds-reset" id="dispReset" title="Reset to the cheapest auto route">reset</button>` : ''}</div>
       <div class="disp-swap">
         <div class="ds-side"><div class="ds-lbl">You receive</div>
-          <div class="ds-row"><input id="dispRecv" class="ds-amt" type="number" min="0" step="any" value="${esc(S.dispRecv)}"/><span class="ds-asset">${esc(asset)}</span></div>
+          <div class="ds-row"><input id="dispRecv" class="ds-amt" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="0" value="${esc(S.dispRecv)}"/><span class="ds-asset">${esc(asset)}</span></div>
           <div class="ds-presets" id="dispPresets"></div></div>
         <div class="ds-arrow">↓</div>
         <div class="ds-side"><div class="ds-lbl">You send</div>
@@ -425,8 +429,10 @@
       pre.innerHTML = opts.map(([l, v]) => `<button class="mini" data-recv="${v}">${l}</button>`).join('');
       pre.querySelectorAll('[data-recv]').forEach((b) => (b.onclick = () => { S.dispRecv = String(b.dataset.recv); paintRoute(); }));
     }
-    const inp = $('#dispRecv'); if (inp) inp.oninput = () => { S.dispRecv = inp.value; paintRoute(); };
+    const inp = $('#dispRecv');
+    if (inp) inp.oninput = () => { const c = inp.value.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1'); if (c !== inp.value) inp.value = c; S.dispRecv = c; paintRoute(); };
     const go = $('#dispGo'); if (go && r.slices.length) go.onclick = () => reviewRoute(r);
+    if (keepFocus && inp) { inp.focus(); try { const p = caret == null ? inp.value.length : Math.min(caret, inp.value.length); inp.setSelectionRange(p, p); } catch (_) {} }
     // order book — dispensers cheapest-first; rows filling the order are highlighted with partial amounts.
     // In custom mode, rows are tappable to include/exclude and show a check.
     const usedBy = {}; r.slices.forEach((s) => { usedBy[s.address] = s; });
