@@ -650,6 +650,57 @@ app.get('/api/cp/myorders/:address', wrap(async (req, res) => {
   } catch (_) { res.json({ orders: [] }); }
 }));
 
+// ── XCP-69 fair-launch + AMM pool reads (Phase 1) ──────────────────────────────────────────────
+// XCP-69 quantities (hard_cap 10^16) exceed Number.MAX_SAFE_INTEGER, so we NEVER native-JSON.parse
+// these — we quote 16+-digit integers so they reach the browser as strings for exact BigInt math.
+// Conformance (isXcp69) is decided client-side; these routes only relay + validate.
+const cpLossless = (text) => JSON.parse(String(text).replace(/:\s*(-?\d{16,})(?=\s*[,}\]])/g, ':"$1"'));
+async function cpGetRaw(path) {
+  const r = await fetch(`${cp.BASE}/${path}`, { headers: { Accept: 'application/json' } });
+  return cpLossless(await r.text());
+}
+// Fair-launch pools in a given phase (filter to XCP-69 client-side); paginated by cursor.
+app.get('/api/cp/fairminters', limitProxy, wrap(async (req, res) => {
+  const status = ['open', 'pending', 'closed'].includes(String(req.query.status)) ? String(req.query.status) : 'open';
+  const cursor = /^\d{1,12}$/.test(String(req.query.cursor || '')) ? `&cursor=${req.query.cursor}` : '';
+  try { const j = await cpGetRaw(`fairminters?status=${status}&limit=100&verbose=true${cursor}`);
+    res.json({ result: Array.isArray(j.result) ? j.result : [], next_cursor: j.next_cursor != null ? j.next_cursor : null }); }
+  catch (_) { res.json({ result: [], next_cursor: null }); }
+}));
+app.get('/api/cp/fairminters/:tx', limitProxy, wrap(async (req, res) => {
+  const tx = String(req.params.tx); if (!/^[0-9a-f]{64}$/i.test(tx)) { const e = new Error('bad_tx'); e.status = 400; throw e; }
+  try { const j = await cpGetRaw(`fairminters/${tx}?verbose=true`); res.json({ result: j.result || null }); }
+  catch (_) { res.json({ result: null }); }
+}));
+app.get('/api/cp/fairminters/:tx/mints', limitProxy, wrap(async (req, res) => {
+  const tx = String(req.params.tx); if (!/^[0-9a-f]{64}$/i.test(tx)) { const e = new Error('bad_tx'); e.status = 400; throw e; }
+  try { const j = await cpGetRaw(`fairminters/${tx}/fairmints?limit=200&verbose=true`); res.json({ result: Array.isArray(j.result) ? j.result : [] }); }
+  catch (_) { res.json({ result: [] }); }
+}));
+// The IMMUTABLE creation event — conformance timing checks (pre-announcement, original deadline) must
+// use this, NOT the /fairminters row (core rewrites block_index on open + deadline on early sellout).
+app.get('/api/cp/fairminter-event/:tx', limitProxy, wrap(async (req, res) => {
+  const tx = String(req.params.tx); if (!/^[0-9a-f]{64}$/i.test(tx)) { const e = new Error('bad_tx'); e.status = 400; throw e; }
+  try { const j = await cpGetRaw(`transactions/${tx}/events/NEW_FAIRMINTER?verbose=true`);
+    const row = Array.isArray(j.result) && j.result[0] ? j.result[0] : null; res.json({ event: row ? (row.params || row) : null }); }
+  catch (_) { res.json({ event: null }); }
+}));
+// AMM pool state for a pair (the launched-vs-refunded oracle + reserves for local quoting).
+app.get('/api/cp/pool/:a/:b', limitProxy, wrap(async (req, res) => {
+  const a = String(req.params.a).toUpperCase(), b = String(req.params.b).toUpperCase();
+  if (!RE.cpasset.test(a) || !RE.cpasset.test(b)) { const e = new Error('bad_asset'); e.status = 400; throw e; }
+  try { const j = await cpGetRaw(`pools/${a}/${b}?verbose=true`); res.json({ result: j.result || null }); }
+  catch (_) { res.json({ result: null }); }
+}));
+// Combined AMM pool + order-book swap quote — core routes both venues; we don't build a router.
+app.get('/api/cp/pool/:a/:b/quote', limitProxy, wrap(async (req, res) => {
+  const a = String(req.params.a).toUpperCase(), b = String(req.params.b).toUpperCase();
+  if (!RE.cpasset.test(a) || !RE.cpasset.test(b)) { const e = new Error('bad_asset'); e.status = 400; throw e; }
+  const q = String(req.query.quantity || ''); if (!/^\d{1,20}$/.test(q)) { const e = new Error('bad_qty'); e.status = 400; throw e; }
+  try { const j = await cpGetRaw(`pools/${a}/${b}/quote?quantity=${q}`); res.json({ result: j.result || null }); }
+  catch (_) { res.json({ result: null }); }
+}));
+
 // ── Attach / Detach (move CP assets between an address balance and a UTXO) ──
 // Detachable balances: the address's asset balances that currently sit on a UTXO.
 app.get('/api/cp/attached/:address', wrap(async (req, res) => {
