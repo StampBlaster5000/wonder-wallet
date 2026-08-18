@@ -88,6 +88,6 @@ V.configure({ core, getMeta: () => ({}), fetchFn: async () => ({ json: async () 
     assert.equal(signed, false, 'signFn must NOT run when verification fails');
   });
 
-  console.log('verifier: ' + pass + ' passed, ' + fail + ' failed');
+  console.log((fail ? '❌' : '✅') + ' verifier: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 })();
