@@ -189,7 +189,7 @@
   function launch(act) {
     const s = state();
     if (act === 'xcp69') { if (isMobile()) closeDrawer(); return window.WonderLaunchpad ? window.WonderLaunchpad.open() : comingSoon('xcp69'); }
-    if (act === 'market') return comingSoon('market'); // Market interface (swap/liquidity/dispense) — next phase
+    if (act === 'market') { if (isMobile()) closeDrawer(); return window.WonderMarket ? window.WonderMarket.open() : comingSoon('market'); }
     if (s.mode === 'hardware') {
       if (!s.canSign) return toast('Ledger is read-only for this address — switch to your main signing address (Native SegWit / Legacy / Taproot).');
       if (act === 'connect' || !EXT_OK.has(act)) return toast((NAME[act] || 'This tool') + ' isn’t on Ledger yet.');
