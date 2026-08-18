@@ -189,7 +189,7 @@
     const a = window.__activeAccount, conn = window.__connectedWallet, CA = window.CpActions;
     const btc = a ? (a.btcAddress || (a.bitcoin && a.bitcoin.nativeSegwit && a.bitcoin.nativeSegwit.address)) : null;
     modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Fairmint</h3><div class="cp-addr">Counterparty fair-mint pools · XCP-69 fair launches</div></div><button class="mini" id="fmX">Close</button></div>
-      <div class="cp-grid">
+      <div class="cp-grid" style="grid-template-columns:1fr">
         <button class="cp-act" data-fm="fairminter"><span class="cp-ic">⚒</span>Fairminter (create)</button>
         <button class="cp-act" data-fm="fairmint"><span class="cp-ic">⛏</span>Fairmint (mint)</button>
         <button class="cp-act" data-fm="xcp69"><span class="cp-ic">🚀</span>XCP-69 launches</button>
