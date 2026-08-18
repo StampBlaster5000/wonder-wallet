@@ -317,18 +317,25 @@
       .sort((a, b) => a.unit - b.unit || a.rate - b.rate);
     const T = Number(target) || 0;
     const feePerTx = DISP_TX_VB * S.feeRate;
+    // "Dust" dispensers hold a trivial amount (< max(1 unit, 1% of the target)). A dust dispenser can be
+    // cheapest-per-unit yet only sell a sliver — routing through it wastes a whole tx and, worse, would
+    // define a bogus "floor" (e.g. a 1.75-XCP dispenser making everything look 15% over floor). So we
+    // route + measure the floor against the real book, and only fall back to dust if depth can't fill.
+    const dustThresh = Math.max(1, 0.01 * T);
+    const nonDust = ds.filter((d) => d.wholeRem >= dustThresh - 1e-9);
+    const pool = (nonDust.reduce((s, d) => s + d.wholeRem, 0) >= T - 1e-9) ? nonDust : ds;
     const fillFrom = (d, units) => { const disp = Math.min(Math.floor(d.wholeRem / d.give + 1e-9), Math.max(1, Math.ceil((units - 1e-9) / d.give))); return { address: d.address, rate: d.rate, give: d.give, dispenses: disp, filled: disp * d.give, sats: disp * d.rate }; };
     const cost = (sl) => sl.reduce((s, x) => s + x.sats, 0) + sl.length * feePerTx; // total outlay incl miner fees
     // Candidate 1: pure cheapest-first greedy (min asset cost, max depth if unfillable).
-    const greedy = (() => { let need = T; const sl = []; for (const d of ds) { if (need <= 1e-9) break; const s = fillFrom(d, need); sl.push(s); need -= s.filled; } return sl; })();
+    const greedy = (() => { let need = T; const sl = []; for (const d of pool) { if (need <= 1e-9) break; const s = fillFrom(d, need); sl.push(s); need -= s.filled; } return sl; })();
     const candidates = [greedy];
     // Candidates 2..: take the k cheapest dispensers fully, then finish the remainder with the SINGLE
     // cheapest-per-unit dispenser deep enough to cover it in one tx (trades a per-unit premium for a saved fee).
     const prefix = []; let cum = 0;
-    for (let k = 0; k < ds.length; k++) {
+    for (let k = 0; k < pool.length; k++) {
       const need = T - cum; if (need <= 1e-9) break;
-      for (let j = k; j < ds.length; j++) { if (ds[j].wholeRem >= need - 1e-9) { candidates.push(prefix.concat([fillFrom(ds[j], need)])); break; } }
-      prefix.push(fillFrom(ds[k], ds[k].wholeRem)); cum += ds[k].wholeRem;
+      for (let j = k; j < pool.length; j++) { if (pool[j].wholeRem >= need - 1e-9) { candidates.push(prefix.concat([fillFrom(pool[j], need)])); break; } }
+      prefix.push(fillFrom(pool[k], pool[k].wholeRem)); cum += pool[k].wholeRem;
     }
     // Choose: among candidates that meet the target, the min total outlay; else the deepest fill (greedy).
     const fillOf = (sl) => sl.reduce((s, x) => s + x.filled, 0);
@@ -336,7 +343,12 @@
     const slices = fillers.length ? fillers.reduce((a, b) => (cost(a) <= cost(b) ? a : b)) : greedy;
     const totalFilled = fillOf(slices);
     const totalSats = slices.reduce((s, x) => s + x.sats, 0);
-    const floorUnit = ds.length ? ds[0].unit : null;
+    // Floor = the cheapest price you could realistically START from — the lowest per-unit dispenser that
+    // holds a meaningful amount (>= 3% of the order). Decoupled from the route so a tiny cheap-per-unit
+    // sliver (e.g. a 1.75-XCP dispenser) can't masquerade as the floor and inflate "% over floor".
+    const floorMin = Math.max(1, 0.03 * T);
+    const floorCand = ds.find((d) => d.wholeRem >= floorMin - 1e-9); // ds sorted asc by unit → first qualifying is cheapest
+    const floorUnit = (floorCand && floorCand.unit) || (pool.length ? pool[0].unit : (ds.length ? ds[0].unit : null));
     const avgUnit = totalFilled > 0 ? totalSats / totalFilled : null;
     const overFloorPct = (avgUnit != null && floorUnit) ? (avgUnit / floorUnit - 1) * 100 : null;
     const bookDepth = ds.reduce((s, d) => s + d.wholeRem, 0);
