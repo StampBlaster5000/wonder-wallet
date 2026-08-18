@@ -1043,8 +1043,8 @@ html.theme-light .wordmark .name { background-image: linear-gradient(180deg, var
 .mkt-asset { flex: none; font-weight: 700; font-size: 14px; color: var(--gold2); background: var(--surface3); border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px; }
 .mkt-tokenin { width: 92px; text-align: center; text-transform: uppercase; outline: none; }
 .mkt-tokenin::placeholder { color: var(--muted); }
-.mkt-flip { display: flex; justify-content: center; margin: -6px 0; position: relative; z-index: 1; }
-.mkt-flip button { width: 30px; height: 30px; border-radius: 9px; background: var(--surface3); border: 1px solid var(--border); color: var(--muted2); cursor: pointer; font-size: 12px; }
+.mkt-flip { display: flex; justify-content: center; margin: 9px 0; }
+.mkt-flip button { width: 34px; height: 34px; border-radius: 10px; background: var(--surface3); border: 1px solid var(--border); color: var(--muted2); cursor: pointer; font-size: 13px; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
 .mkt-flip button:hover { border-color: var(--gold); color: var(--gold2); }
 .mkt-quote { margin: 12px 0 4px; display: flex; flex-direction: column; gap: 5px; }
 .mkt-qrow { display: flex; justify-content: space-between; align-items: center; font-size: 12.5px; color: var(--muted2); }
