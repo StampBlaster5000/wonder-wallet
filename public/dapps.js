@@ -21,6 +21,8 @@
     tag: '<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>',
     gem: '<path d="M6 3h12l4 6-10 12L2 9z"/><path d="M2 9h20"/><path d="M12 3L8 9l4 12 4-12z"/>',
     zap: '<path d="M13 2L3 14h9l-1 8 10-12h-9z"/>',
+    rocket: '<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>',
+    market: '<path d="M17 3v18"/><path d="M21 7l-4-4-4 4"/><path d="M7 21V3"/><path d="M3 17l4 4 4-4"/>',
   };
 
   // First-party tooling, grouped by chain. Each item launches an audited in-browser module.
@@ -30,9 +32,13 @@
       { ic: ICON.chart, name: 'Counterparty DEX', desc: 'Trustless on-chain order book', act: 'dex' },
       { ic: ICON.plus, name: 'Issuance suite', desc: 'Create · issue · lock · transfer · subassets', act: 'issuance' },
       { ic: ICON.link, name: 'Attach / Detach', desc: 'Bind CP assets to a UTXO or release', act: 'attachdetach' },
+      { ic: ICON.gift, name: 'Fairminter', desc: 'Fair-mint pools — create & mint', act: 'fairminter' },
+      { ic: ICON.rocket, name: 'XCP-69', desc: '69-minter fair launches — mint & create', act: 'xcp69' },
+      { ic: ICON.market, name: 'Market', desc: 'AMM swap · liquidity · dispensers', act: 'market' },
+    ] },
+    { chain: 'Stampchain', tools: [
       { ic: ICON.token, name: 'SRC-20 deploy / mint', desc: 'Deploy & mint SRC-20 tokens', act: 'src20' },
       { ic: ICON.image, name: 'Stamps art minting', desc: 'Mint Bitcoin Stamps art on-chain', act: 'stampart' },
-      { ic: ICON.gift, name: 'Fairminter', desc: 'Create & mint native CP fair mints', act: 'fairminter' },
       { ic: ICON.tag, name: 'Bitname (.btc)', desc: 'SRC-101 — register · transfer · renew', act: 'src101' },
     ] },
     { chain: 'Ethereum', tools: [
@@ -167,9 +173,22 @@
     clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2600);
   }
 
+  // Placeholder for tools whose full interface is under construction (XCP-69 launches · AMM Market).
+  function comingSoon(act) {
+    if (isMobile()) closeDrawer();
+    const I = act === 'xcp69'
+      ? { t: 'XCP-69 · fair launches', d: 'Browse and mint 69-minter fair launches — and create your own conformant launch. Self-custodial: composed on Counterparty, signed in your browser, no site to trust.' }
+      : { t: 'Market · Counterparty AMM', d: 'Swap (pool + order-book routed), provide liquidity (add / remove), place limit orders, and buy from dispensers with cheapest-first routing — powered by Counterparty pools, signed in your browser.' };
+    modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">${I.t}</h3><div class="cp-addr">Coming to Wonder Terminal</div></div><button class="mini" id="csX">Close</button></div>
+      <p class="fine" style="margin:10px 0">${I.d}</p>
+      <div class="dapp-note" style="margin-top:6px;color:var(--gold2)">🛠 Building this now — landing in an upcoming Terminal drop.</div>`);
+    const x = $('#csX'); if (x) x.onclick = () => { const m = $('#dappmodal'); if (m) m.hidden = true; };
+  }
+
   // ── launch a tool ──
   function launch(act) {
     const s = state();
+    if (act === 'xcp69' || act === 'market') return comingSoon(act); // full interfaces under construction
     if (s.mode === 'hardware') {
       if (!s.canSign) return toast('Ledger is read-only for this address — switch to your main signing address (Native SegWit / Legacy / Taproot).');
       if (act === 'connect' || !EXT_OK.has(act)) return toast((NAME[act] || 'This tool') + ' isn’t on Ledger yet.');
