@@ -291,7 +291,7 @@
   }
   function paintDispensers() {
     const list = $('#dispList'); if (!list) return;
-    if (!S.dispensers || !S.dispensers.length) { const hint = S.dispAsset === 'XCP' ? ' Dispensers sell a <b>token</b> for BTC — XCP is what buyers pay <i>with</i>, so it has none. Search a token like PEPECASH.' : ' A dispenser sells this token for BTC; there may be none open right now, or try the AMM pool via <b>Swap</b>.'; list.innerHTML = `<div class="dash-empty">No open (non-oracle) dispensers for ${esc(S.dispAsset)}.${hint}</div>`; const b = $('#dispBuy'); if (b) b.innerHTML = ''; return; }
+    if (!S.dispensers || !S.dispensers.length) { list.innerHTML = `<div class="dash-empty">No open dispensers for ${esc(S.dispAsset)} right now. A dispenser sends you this asset when you pay BTC to its address — none are open for it at the moment (oracle-priced dispensers are hidden here). You can also check the AMM pool + DEX via <b>Swap</b>.</div>`; const b = $('#dispBuy'); if (b) b.innerHTML = ''; return; }
     list.innerHTML = `<div class="acct-grp">Dispensers · cheapest first</div>` + S.dispensers.slice(0, 6).map((d, i) => `
       <button class="disp-opt${i === S.dispPick ? ' on' : ''}" data-i="${i}">
         <span class="disp-give">${esc(d.giveQty)} ${esc(S.dispAsset)}</span>
