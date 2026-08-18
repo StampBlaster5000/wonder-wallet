@@ -217,7 +217,7 @@
       $('#limcBack').onclick = () => render();
       $('#limcGo').onclick = async () => {
         const cs = $('#limcStatus'); cs.hidden = false; cs.className = 'statusline load'; cs.textContent = 'Signing & broadcasting…';
-        try { const { txid } = await window.WonderCpFlow.sign(compose); cs.className = 'statusline'; cs.innerHTML = `Order placed ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(txid).slice(0, 18))}…</a>`; }
+        try { const { txid } = await window.WonderCpFlow.sign(compose); cs.className = 'statusline'; cs.innerHTML = `Order placed ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(txid).slice(0, 18))}…</a>`; sealBroadcast(); }
         catch (e) { cs.className = 'statusline err'; cs.textContent = 'Failed: ' + (e.message || 'sign/broadcast error'); }
       };
     } catch (e) { s.className = 'statusline err'; s.textContent = /insufficient/i.test(e.message || '') ? `Not enough ${L.dir === 'buy' ? 'XCP' : L.token} to place this order.` : (e.message || 'Compose/verify failed.'); }
@@ -296,7 +296,7 @@
       $('#selcBack').onclick = () => render();
       $('#selcGo').onclick = async () => {
         const cs = $('#selcStatus'); cs.hidden = false; cs.className = 'statusline load'; cs.textContent = 'Signing & broadcasting…';
-        try { const { txid } = await window.WonderCpFlow.sign(compose); cs.className = 'statusline'; cs.innerHTML = `Dispenser created ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(txid).slice(0, 18))}…</a>`; }
+        try { const { txid } = await window.WonderCpFlow.sign(compose); cs.className = 'statusline'; cs.innerHTML = `Dispenser created ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(txid).slice(0, 18))}…</a>`; sealBroadcast(); }
         catch (e) { cs.className = 'statusline err'; cs.textContent = 'Failed: ' + (e.message || 'sign/broadcast error'); }
       };
     } catch (e) { s.className = 'statusline err'; s.textContent = /insufficient|doesn.?t have|does not have/i.test(e.message || '') ? `You don't hold enough ${asset} to escrow that amount.` : (e.message || 'Compose/verify failed.'); }
@@ -478,10 +478,26 @@
         if (prog) prog.innerHTML = sent.map((x, k) => `<div class="ds-progrow">✓ tx ${k + 1}: ${nfmt(x.slice.filled)} ${esc(S.dispAsset)} — <a href="https://mempool.space/tx/${encodeURIComponent(x.txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(x.txid).slice(0, 12))}…</a></div>`).join('');
       } catch (e) {
         if (cs) { cs.className = 'statusline err'; cs.textContent = `Stopped at tx ${i + 1}/${r.slices.length}: ${friendlyDisp(e)}.${sent.length ? ` ${sent.length} tx${sent.length > 1 ? 's' : ''} already sent — partial fill; retry the rest once your coins confirm.` : ''}`; }
-        if (back) back.disabled = false; return;
+        // If anything was broadcast it's irreversible — seal the screen (Close, no Back). Otherwise the
+        // user can still go back and adjust, so just re-enable Back.
+        if (sent.length) sealBroadcast(); else if (back) back.disabled = false;
+        return;
       }
     }
     if (cs) { cs.className = 'statusline'; cs.innerHTML = `Bought ✓ — ${sent.length} tx${sent.length > 1 ? 's' : ''} sent · ${nfmt(r.totalFilled)} ${esc(S.dispAsset)}. Each dispenser sends your asset as its tx confirms.`; }
+    sealBroadcast(); // broadcast done — there's no going back; swap Back→Close + add an X
+  }
+  // Once a tx has hit the network the action can't be undone. Replace the confirm screen's Back/Sign row
+  // with a single Close, and drop an ✕ in the header — both dismiss (and reset) the session.
+  function sealBroadcast() {
+    const head = document.querySelector('#mktCard .cc-head');
+    if (head && !head.querySelector('.mkt-x')) {
+      const x = document.createElement('button');
+      x.type = 'button'; x.className = 'mkt-x'; x.textContent = '×'; x.title = 'Close'; x.setAttribute('aria-label', 'Close');
+      x.onclick = close; head.appendChild(x);
+    }
+    const btns = document.querySelector('#mktCard .wbtns');
+    if (btns) { btns.innerHTML = '<button class="primary" id="dispcClose">Close</button>'; const c = document.getElementById('dispcClose'); if (c) c.onclick = close; }
   }
   function friendlyDisp(e) {
     const m = (e && e.message) || '';
@@ -546,7 +562,7 @@
       $('#mktcGo').onclick = async () => {
         const cs = $('#mktcStatus'); cs.hidden = false; cs.className = 'statusline load'; cs.textContent = 'Signing & broadcasting…';
         try { const { txid } = await window.WonderCpFlow.sign(compose);
-          cs.className = 'statusline'; cs.innerHTML = `Swapped ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(txid).slice(0, 18))}…</a> · fills on Counterparty.`;
+          cs.className = 'statusline'; cs.innerHTML = `Swapped ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(txid).slice(0, 18))}…</a> · fills on Counterparty.`; sealBroadcast();
         } catch (e) { cs.className = 'statusline err'; cs.textContent = 'Failed: ' + (e.message || 'sign/broadcast error'); }
       };
     } catch (e) {
@@ -627,7 +643,7 @@
         <div class="wbtns"><button class="ghost" id="pcBack">Back</button><button class="primary" id="pcGo">Sign &amp; submit</button></div>`);
       $('#pcBack').onclick = () => render();
       $('#pcGo').onclick = async () => { const cs = $('#pcStatus'); cs.hidden = false; cs.className = 'statusline load'; cs.textContent = 'Signing & broadcasting…';
-        try { const { txid } = await window.WonderCpFlow.sign(compose); cs.className = 'statusline'; cs.innerHTML = `Done ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(txid).slice(0, 18))}…</a>`; }
+        try { const { txid } = await window.WonderCpFlow.sign(compose); cs.className = 'statusline'; cs.innerHTML = `Done ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(txid).slice(0, 18))}…</a>`; sealBroadcast(); }
         catch (e) { cs.className = 'statusline err'; cs.textContent = 'Failed: ' + (e.message || 'error'); } };
     } catch (e) { s.className = 'statusline err'; s.textContent = /insufficient/i.test(e.message || '') ? 'Insufficient balance for this pool action.' : (e.message || 'Compose/verify failed.'); }
   }
