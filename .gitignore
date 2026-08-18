@@ -31,3 +31,6 @@ public/_*
 
 # CWS upload package (built artifact, served from public/)
 public/wonder-wallet-cws-*.zip
+
+# Security assessment reports — open-vuln PoCs, never commit while findings are open
+docs/pentest-*/
