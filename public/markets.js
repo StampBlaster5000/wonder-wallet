@@ -497,13 +497,13 @@
       <div class="mkt-flip"><button id="mktFlip" title="Flip direction">↓↑</button></div>
       <div class="mkt-side"><div class="mkt-lbl">Buy</div>
         <div class="mkt-in"><input id="mktGet" class="mkt-amt" type="text" readonly placeholder="0.0"/>
-          <input id="mktToken" class="mkt-asset mkt-tokenin" placeholder="TOKEN" spellcheck="false" value="${esc(S.token)}"/></div></div>
+          <input id="mktToken" class="mkt-asset mkt-tokenin" style="width:auto" size="${Math.max(5, Math.min(13, (S.token || '').length || 5))}" maxlength="26" placeholder="TOKEN" spellcheck="false" value="${esc(S.token)}"/></div></div>
       <div id="mktQuote" class="mkt-quote"></div>
       <div id="mktStatus" class="statusline" hidden></div>
       <div class="wbtns"><button class="ghost sm" id="mktGear" title="Slippage & fee">⚙ ${S.slippage === 'auto' ? 'Auto' : S.slippage + '%'}</button><button class="primary" id="mktGo">Review swap</button></div>`;
     const sell = $('#mktSell'), tok = $('#mktToken');
     sell.oninput = () => { S.amount = sell.value; refreshQuote(); };
-    tok.oninput = async () => { S.token = tok.value.trim().toUpperCase(); tok.value = S.token; S.tokenDiv = S.token ? await divisible(S.token) : true; refreshQuote(); };
+    tok.oninput = async () => { S.token = tok.value.trim().toUpperCase(); tok.value = S.token; tok.size = Math.max(5, Math.min(13, S.token.length || 5)); S.tokenDiv = S.token ? await divisible(S.token) : true; refreshQuote(); };
     $('#mktFlip').onclick = () => { S.dir = S.dir === 'buy' ? 'sell' : 'buy'; S.amount = ''; S.quote = null; render(); };
     $('#mktGear').onclick = gearMenu;
     $('#mktGo').onclick = reviewSwap;
