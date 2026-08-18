@@ -21,7 +21,7 @@
   const close = () => { const m = $('#mktModal'); if (m) m.hidden = true; };
 
   // Swap state: one side is always XCP (XCP-69 pools are TOKEN/XCP); `dir` = which way.
-  const S = { dir: 'buy', token: '', tokenDiv: true, amount: '', quote: null, slippage: 'auto', feeRate: 6, dispAsset: '', dispensers: null, dispPick: 0, dispCount: 1 };
+  const S = { dir: 'buy', token: '', tokenDiv: true, amount: '', quote: null, slippage: 'auto', feeRate: 6, dispMode: 'buy', dispAsset: '', dispensers: null, dispPick: 0, dispCount: 1, sellAsset: '', sellComp: null };
   const DIVCACHE = { XCP: true, BTC: true };
   let TABS = 'swap', BTCUSD = 0;
   const nfmt = (n) => Number(n).toLocaleString('en-US');
@@ -158,17 +158,83 @@
     } catch (e) { s.className = 'statusline err'; s.textContent = /insufficient/i.test(e.message || '') ? `Not enough ${L.dir === 'buy' ? 'XCP' : L.token} to place this order.` : (e.message || 'Compose/verify failed.'); }
   }
 
-  // ── Dispense (buy from dispensers, cheapest-first) ──
+  // ── Dispense (buy from dispensers cheapest-first · or create one to sell) ──
   function renderDispense() {
     $('#mktBody').innerHTML = `
+      <div class="lp-tabs" style="margin-bottom:10px"><button class="lp-tab${S.dispMode === 'buy' ? ' on' : ''}" data-dm="buy">Buy</button><button class="lp-tab${S.dispMode === 'sell' ? ' on' : ''}" data-dm="sell">Sell · create</button></div>
+      <div id="dispModeBody"></div>
+      <div id="mktStatus" class="statusline" hidden></div>`;
+    $('#mktCard').querySelectorAll('[data-dm]').forEach((b) => (b.onclick = () => { S.dispMode = b.dataset.dm; renderDispense(); }));
+    if (S.dispMode === 'sell') renderDispenseSell(); else renderDispenseBuy();
+  }
+  function renderDispenseBuy() {
+    $('#dispModeBody').innerHTML = `
       <div class="mkt-side"><div class="mkt-lbl">Buy from dispensers</div>
         <div class="mkt-in"><input id="dispAsset" class="mkt-tokenin" style="width:150px;text-align:left;font-size:15px" placeholder="ASSET name" spellcheck="false" value="${esc(S.dispAsset)}"/><button class="ghost sm" id="dispFind">Find</button></div></div>
-      <div id="dispList"></div><div id="dispBuy"></div>
-      <div id="mktStatus" class="statusline" hidden></div>`;
+      <div id="dispList"></div><div id="dispBuy"></div>`;
     const el = $('#dispAsset');
     $('#dispFind').onclick = findDispensers;
     el.onkeydown = (e) => { if (e.key === 'Enter') findDispensers(); };
     if (S.dispAsset && S.dispensers) paintDispensers();
+  }
+  // Create a dispenser to SELL an asset — competition-aware (buyers fill cheapest first).
+  function renderDispenseSell() {
+    $('#dispModeBody').innerHTML = `
+      <div class="mkt-side"><div class="mkt-lbl">Asset to sell</div><div class="mkt-in"><input id="sellAsset" class="mkt-tokenin" style="width:150px;text-align:left;font-size:15px" placeholder="ASSET" spellcheck="false" value="${esc(S.sellAsset)}"/><button class="ghost sm" id="sellCheck">Check</button></div></div>
+      <div id="sellComp" class="lp-cost"></div>
+      <div class="mkt-side"><div class="mkt-lbl">Give per dispense</div><div class="mkt-in"><input id="sellGive" class="mkt-amt" type="number" min="0" step="any" placeholder="0.0"/><span class="mkt-asset">${esc(S.sellAsset || 'units')}</span></div></div>
+      <div class="mkt-side"><div class="mkt-lbl">Total to escrow</div><div class="mkt-in"><input id="sellEscrow" class="mkt-amt" type="number" min="0" step="any" placeholder="0.0"/><span class="mkt-asset">${esc(S.sellAsset || 'total')}</span></div></div>
+      <div class="mkt-side"><div class="mkt-lbl">Price per dispense</div><div class="mkt-in"><input id="sellRate" class="mkt-amt" type="number" min="1" step="1" placeholder="sats"/><span class="mkt-asset">sats</span></div></div>
+      <div class="lp-presets" id="sellPresets"></div>
+      <div class="wbtns" style="margin-top:10px"><button class="primary" id="sellGo">Review dispenser</button></div>`;
+    const a = $('#sellAsset');
+    $('#sellCheck').onclick = checkComp; a.onkeydown = (e) => { if (e.key === 'Enter') checkComp(); };
+    $('#sellGo').onclick = doSellDispenser;
+    if (S.sellAsset && S.sellComp != null) paintComp();
+  }
+  async function checkComp() {
+    const a = $('#sellAsset'); S.sellAsset = (a.value || '').trim().toUpperCase(); a.value = S.sellAsset;
+    if (!RE_ASSET.test(S.sellAsset)) return;
+    const c = $('#sellComp'); if (c) c.textContent = 'Checking the competition…';
+    try { const j = await fetch('api/cp/asset-dispensers/' + encodeURIComponent(S.sellAsset)).then((r) => r.json()); S.sellComp = (j.dispensers || []); } catch (_) { S.sellComp = []; }
+    renderDispenseSell();
+  }
+  function paintComp() {
+    const c = $('#sellComp'); const pre = $('#sellPresets'); if (!c) return;
+    const cheapest = S.sellComp.length ? S.sellComp[0].satoshirate : 0;
+    c.innerHTML = cheapest ? `Competition · cheapest is <b>${nfmt(cheapest)} sats</b> per dispense${usd(cheapest)}. Buyers fill cheapest first, so undercut or match to sell.` : `No competing dispensers for ${esc(S.sellAsset)} — you set the price.`;
+    if (pre && cheapest) { pre.innerHTML = [['Floor', cheapest], ['−1', Math.max(1, cheapest - 1)], ['+10%', Math.ceil(cheapest * 1.1)]].map(([l, v]) => `<button class="mini" data-rate="${v}">${l} (${nfmt(v)})</button>`).join(''); pre.querySelectorAll('[data-rate]').forEach((b) => (b.onclick = () => { const r = $('#sellRate'); if (r) r.value = b.dataset.rate; })); }
+  }
+  async function doSellDispenser() {
+    const s = $('#mktStatus'); if (!s) return;
+    const asset = S.sellAsset, give = Number($('#sellGive').value), escrow = Number($('#sellEscrow').value), rate = Number($('#sellRate').value);
+    if (!RE_ASSET.test(asset)) { s.hidden = false; s.className = 'statusline err'; s.textContent = 'Enter the asset to sell.'; return; }
+    if (!(give > 0) || !(escrow > 0) || !(rate >= 1)) { s.hidden = false; s.className = 'statusline err'; s.textContent = 'Enter give-per-dispense, total to escrow, and a price (sats).'; return; }
+    s.hidden = false; s.className = 'statusline load'; s.textContent = 'Composing & verifying…';
+    try {
+      const div = await divisible(asset);
+      const params = { asset, give_quantity: String(Math.round(give * (div ? SATS : 1))), escrow_quantity: String(Math.round(escrow * (div ? SATS : 1))), mainchainrate: String(Math.round(rate)), status: 0, sat_per_vbyte: S.feeRate };
+      const { compose, report } = await window.WonderCpFlow.composeVerify('dispenser', params, { feeRatePerVb: S.feeRate });
+      const feeSats = compose.btc_fee != null ? nfmt(compose.btc_fee) : '—';
+      const dispenses = Math.floor(escrow / give) || 0;
+      modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Confirm dispenser</h3><div class="cp-addr">Selling ${esc(asset)}</div></div></div>
+        <div class="m-rows">
+          <div class="m-row"><span class="k">Give per dispense</span><span class="v">${give.toLocaleString('en-US', { maximumFractionDigits: 8 })} ${esc(asset)}</span></div>
+          <div class="m-row"><span class="k">Escrow</span><span class="v">${escrow.toLocaleString('en-US', { maximumFractionDigits: 8 })} ${esc(asset)} (~${dispenses} dispenses)</span></div>
+          <div class="m-row"><span class="k">Price</span><span class="v">${nfmt(rate)} sats each${usd(rate)}</span></div>
+          <div class="m-row"><span class="k">Miner fee</span><span class="v">${feeSats} sats</span></div>
+        </div>
+        ${window.WonderVerify.bannerHtml(report)}
+        <div class="fine" style="margin-top:8px">Buyers send BTC to your address to trigger a dispense. You can close it anytime to reclaim the escrow.</div>
+        <div id="selcStatus" class="statusline" hidden></div>
+        <div class="wbtns"><button class="ghost" id="selcBack">Back</button><button class="primary" id="selcGo">Sign &amp; create</button></div>`);
+      $('#selcBack').onclick = () => render();
+      $('#selcGo').onclick = async () => {
+        const cs = $('#selcStatus'); cs.hidden = false; cs.className = 'statusline load'; cs.textContent = 'Signing & broadcasting…';
+        try { const { txid } = await window.WonderCpFlow.sign(compose); cs.className = 'statusline'; cs.innerHTML = `Dispenser created ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(txid).slice(0, 18))}…</a>`; }
+        catch (e) { cs.className = 'statusline err'; cs.textContent = 'Failed: ' + (e.message || 'sign/broadcast error'); }
+      };
+    } catch (e) { s.className = 'statusline err'; s.textContent = /insufficient|doesn.?t have|does not have/i.test(e.message || '') ? `You don't hold enough ${asset} to escrow that amount.` : (e.message || 'Compose/verify failed.'); }
   }
   async function findDispensers() {
     const el = $('#dispAsset'); S.dispAsset = (el.value || '').trim().toUpperCase(); el.value = S.dispAsset;
