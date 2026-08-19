@@ -5,11 +5,18 @@
  *   sign path            = tx.sign(priv); tx.finalize()
  *
  * A correct BIP86 key-path spend must produce a single-element witness whose one
- * item is a 64-byte SCHNORR signature (SIGHASH_DEFAULT). btc-signer's finalize()
- * verifies the signature against the BIP341 taproot sighash before it will finalize,
- * so a successful finalize + 64-byte witness == the tweak + sighash are correct.
+ * item is a 64-byte SCHNORR signature (SIGHASH_DEFAULT).
  *
- * This is the exact regression XCP Wallet added in v0.5.2 after their P2TR fix.
+ * SCOPE (WW-C16): this suite proves the STRUCTURE of a key-path spend — the BIP86
+ * address matches the published vector, the x-only tapInternalKey is present, and
+ * signing yields a single 64-byte witness item. It does NOT independently verify the
+ * Schnorr signature against the BIP-341 sighash: btc-signer's finalize() only ASSEMBLES
+ * the witness (a forged 64-byte tapKeySig would finalize), so a green run here is a
+ * structural regression, not a cryptographic proof of the signature. Independent
+ * Schnorr verification (compute the BIP-341 key-path sighash with the exact
+ * @scure/btc-signer preimage args + @noble/curves schnorr.verify) is a tracked
+ * follow-up — do not read this suite as proving signature validity.
+ *
  * Run: node tests/taproot-signing.mjs
  */
 import { mnemonicToSeedSync } from '@scure/bip39';
@@ -56,5 +63,5 @@ if (signedOk) {
   ok(!!tx.id && tx.vsize > 0, `tx finalized (txid ${String(tx.id).slice(0, 12)}…, vsize ${tx.vsize})`);
 }
 
-console.log('\n' + (failed ? `❌ ${failed} check(s) FAILED` : '✅ Taproot key-path signing is correct (64-byte schnorr, key-path, tweak verified by finalize)'));
+console.log('\n' + (failed ? `❌ ${failed} check(s) FAILED` : '✅ Taproot key-path spend STRUCTURE is correct (BIP86 vector address, x-only key, single 64-byte witness item). Note: signature validity is NOT independently verified here — see SCOPE (WW-C16).'));
 process.exit(failed ? 1 : 0);
