@@ -36,6 +36,19 @@
     });
   }
   const STAMP_MAX = 100 * 1024; // hard cap: a stamp is paid for byte-by-byte in BTC; also keeps us under the 512KB JSON limit
+  // WW-B14: the seed path's spend refusal lives inside C.signStamp; a connected/Ledger signer bypasses it.
+  // Before ANY external signer sees a composed Stamp/SRC PSBT, bind a spend ceiling to it locally: a
+  // legitimate mint pays only dust data outputs + change back to the source — it must NOT carry a large
+  // BTC payment to any other address. Fail closed on an undecodable tx or an oversized non-source output.
+  const STAMP_OUT_DUST_CEIL = 10000; // sats — data/dust outputs sit far below this; a real siphon would exceed it
+  function stampSpendSafe(psbtHexOrB64, sourceAddr) {
+    let outs; try { outs = C.decodeTxOutputs(psbtHexOrB64) || []; } catch (_) { throw new Error('Could not decode the composed transaction to verify it — refusing to sign.'); }
+    for (const o of outs) {
+      if (o.opReturn || !o.value) continue;                 // Counterparty/Stamp data / valueless → not a payment
+      if (o.address && sourceAddr && o.address === sourceAddr) continue; // change back to self
+      if (Number(o.value) > STAMP_OUT_DUST_CEIL) throw new Error('Aborted — the composed mint would pay ' + Number(o.value).toLocaleString('en-US') + ' sats to ' + (o.address || 'an unexpected output') + ', far above the dust a stamp/SRC mint needs. It may have been tampered with; nothing was signed.');
+    }
+  }
   let ACCOUNT = 0, BTC = null, FEE = 10, HOLDINGS = null, _tickT = null, BTC_USD = 0;
   // EXT = a connected/hardware signer ({address, name, signPsbt[, pushPsbt]}) when the wallet isn't a
   // local seed. When set, the composed SRC-20 / Stamps PSBT is signed by that wallet/device, not locally.
@@ -267,8 +280,9 @@
         if (EXT) {
           // Connected wallet / Ledger: it signs the composed PSBT, then we broadcast. UniSat/OKX want
           // hex; the Wonder/Ledger adapter returns { txhex } which we broadcast via our server (one prompt).
-          s.textContent = 'Waiting for approval in ' + (EXT.name || 'your wallet') + '…';
           const hex = /^[0-9a-fA-F]+$/.test(r.hex) ? r.hex : b64hex(r.hex);
+          stampSpendSafe(hex, EXT.address); // WW-B14: bind the spend ceiling before the external signer sees it
+          s.textContent = 'Waiting for approval in ' + (EXT.name || 'your wallet') + '…';
           const signed = await EXT.signPsbt(hex, { autoFinalized: true });
           s.textContent = 'Broadcasting…';
           if (signed && typeof signed === 'object' && signed.txhex) {

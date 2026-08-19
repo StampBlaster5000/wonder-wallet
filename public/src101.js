@@ -94,8 +94,14 @@
       if (c.error || !c.hex) throw new Error(c.detail || c.error || 'compose_unavailable');
       // Connected external wallet (UniSat/OKX/Wonder): hand the composed PSBT to it to sign + broadcast.
       if (CONN2) {
-        s.textContent = 'Waiting for approval in ' + (CONN2.name || 'your wallet') + '…';
         const hex = /^[0-9a-fA-F]+$/.test(c.hex) ? c.hex : s101hex(c.hex);
+        // WW-B14: bind a spend ceiling to the composed name-op PSBT before the external signer sees it —
+        // a legit .btc op pays only dust data outputs + change to source, never a large BTC payment.
+        try {
+          const outs = C.decodeTxOutputs(hex) || [];
+          for (const o of outs) { if (o.opReturn || !o.value) continue; if (o.address && o.address === FROM) continue; if (Number(o.value) > 10000) throw new Error('Aborted — the composed transaction would pay ' + Number(o.value).toLocaleString('en-US') + ' sats to ' + (o.address || 'an unexpected output') + ', far above what a .btc name op needs. Nothing was signed.'); }
+        } catch (e) { if (/Aborted/.test(e.message)) throw e; throw new Error('Could not decode the composed transaction to verify it — refusing to sign.'); }
+        s.textContent = 'Waiting for approval in ' + (CONN2.name || 'your wallet') + '…';
         const signedTx = await CONN2.signPsbt(hex, { autoFinalized: true });
         s.textContent = 'Broadcasting…';
         const signedStr = typeof signedTx === 'string' ? signedTx : (signedTx && (signedTx.psbt || signedTx.hex)) || hex;
