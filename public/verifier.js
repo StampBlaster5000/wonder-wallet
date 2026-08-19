@@ -92,6 +92,45 @@
     return { fee };
   }
 
+  // ── 5. SIGHASH — every input must commit to ALL outputs (WW-B02). ──
+  // SIGHASH_ALL (0x01) commits to every input AND every output, so no output can be swapped after you
+  // approve. SINGLE / NONE / ANYONECANPAY (e.g. 0x83 = SINGLE|ANYONECANPAY) leave other outputs mutable
+  // — the post-approval change-theft class the pentest demonstrated draining a 98,000-sat "change" output.
+  // Reject anything but ALL unless a dedicated protocol-bound flow explicitly opts in (intent.allowSighash).
+  function checkSighash(c, intent) {
+    const allowed = new Set([0x01]); // SIGHASH_ALL
+    (intent.allowSighash || []).forEach((s) => allowed.add(Number(s)));
+    const ins = inputsOf(c);
+    let nonAll = 0;
+    for (const inp of ins) {
+      const sh = inp.sighashType != null ? Number(inp.sighashType) : (inp.sighash != null ? Number(inp.sighash) : null);
+      if (sh == null) continue; // unspecified in the PSBT → the signer uses SIGHASH_ALL → safe
+      if (!allowed.has(sh)) throw vErr('bad_sighash', 'Aborted — an input is set to sign with a non-standard SIGHASH flag (0x' + sh.toString(16) + ') that leaves other outputs mutable after you approve. This is the post-approval change-theft pattern; nothing was signed.');
+      if (sh !== 0x01) nonAll++;
+    }
+    return { checked: ins.length, nonAll };
+  }
+
+  // ── 6. Replacement (RBF) — a fee bump must reuse the parent's EXACT inputs + keep its payment (WW-B03). ──
+  // No-op unless intent.parentInputs is supplied (the outpoints "txid:vout" of the tx being replaced). A
+  // replacement that adds/drops inputs may not conflict with the parent and can become a SECOND payment;
+  // one that drops the recipient output redirects funds. Both must be impossible for a bump.
+  function checkReplacement(c, intent) {
+    if (!intent.parentInputs) return { skipped: 'not a replacement' };
+    const parent = new Set((intent.parentInputs || []).map(String));
+    const cur = new Set(inputsOf(c).map((i) => i.txid + ':' + i.index));
+    for (const k of cur) if (!parent.has(k)) throw vErr('rbf_extra_input', 'Aborted — the replacement spends an input (' + k + ') that was not in the parent it claims to bump. A bump must reuse only the original inputs or it becomes a second payment. Nothing was signed.');
+    for (const k of parent) if (!cur.has(k)) throw vErr('rbf_missing_input', 'Aborted — the replacement drops a parent input (' + k + '); it would not conflict with (replace) the original. Nothing was signed.');
+    if (intent.preserveOutputs) {
+      const outs = outputs(c);
+      for (const po of intent.preserveOutputs) {
+        const ok = outs.some((o) => o.address === po.address && (po.value == null || Number(o.value) === Number(po.value)));
+        if (!ok) throw vErr('rbf_output_dropped', 'Aborted — the replacement no longer pays the original recipient ' + po.address + (po.value != null ? ' (' + fmt(po.value) + ' sats)' : '') + '. A fee bump must preserve the payment. Nothing was signed.');
+      }
+    }
+    return { parentInputs: parent.size, replacementInputs: cur.size };
+  }
+
   // ── 4. Inputs — re-check every input against FRESH coin-control (fail closed). The pentest gap. ──
   async function checkInputs(c, intent) {
     if (intent.checkInputs === false) return { skipped: 'input check disabled for this flow' };
@@ -134,6 +173,8 @@
     checkOutputs(c, intent); report.outputs = true;
     report.recipients = checkRecipients(c, intent);
     report.fee = checkFee(c, intent);
+    report.sighash = checkSighash(c, intent);         // WW-B02 — reject non-ALL sighash (change theft)
+    report.replacement = checkReplacement(c, intent); // WW-B03 — RBF must reuse parent inputs + payment
     report.inputs = await checkInputs(c, intent);
     report.ok = true;
     return report;
@@ -151,11 +192,13 @@
     const rows = ['✓ Outputs verified — BTC leaves only to you or your stated recipient'];
     if (report.recipients && report.recipients.list) report.recipients.list.forEach((x) => rows.push('✓ Recipient <b>' + esc(x.addr) + '</b> <span class="fine">(via ' + esc(x.via) + ')</span>'));
     if (report.inputs && report.inputs.checked) rows.push('✓ ' + report.inputs.checked + ' input' + (report.inputs.checked === 1 ? '' : 's') + ' re-checked — none frozen, asset-bearing, or unknown');
+    if (report.sighash && report.sighash.checked && !report.sighash.nonAll) rows.push('✓ Every input commits to all outputs (SIGHASH_ALL) — no output can change after you approve');
+    if (report.replacement && report.replacement.parentInputs) rows.push('✓ Fee bump reuses the original inputs and keeps the payment');
     if (report.fee && report.fee.fee != null) rows.push('✓ Miner fee within your approved limit');
     return '<div class="cp-verified">' + rows.join('<br>') + '</div>';
   }
 
-  const API = { verify, verifyAndSign, bannerHtml, configure, RE_BTC_ADDR, checks: { checkOutputs, checkRecipients, checkFee, checkInputs } };
+  const API = { verify, verifyAndSign, bannerHtml, configure, RE_BTC_ADDR, checks: { checkOutputs, checkRecipients, checkFee, checkSighash, checkReplacement, checkInputs } };
   if (typeof module !== 'undefined' && module.exports) module.exports = API; // Node (regression tests)
   if (typeof window !== 'undefined') window.WonderVerify = API;              // Browser (Terminal + extension)
 })(this);
