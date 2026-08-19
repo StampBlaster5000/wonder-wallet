@@ -73,6 +73,17 @@
   }
   // SECURITY (audit §4): clear modal contents on close so revealed seed/keys don't linger in the DOM.
   function closeModal() { const m = $('#wmodal'); if (m) { m.hidden = true; const c = $('#wmodalCard'); if (c) c.innerHTML = ''; } }
+  // WW-C05: on auto-lock, synchronously tear down every secret-bearing / in-progress surface so nothing
+  // signable or secret survives the advertised lock boundary — the seed/private-key reveal modal (scrub
+  // its DOM, which also drops the copy-button closures capturing the key), and every other tool overlay
+  // (which may hold a composed/pre-signed transaction). The core already zeroes the session + keys.
+  function lockPanic() {
+    closeModal(); // #wmodal — clears innerHTML (seed / private keys / copy-button closures)
+    ['#cpmodal', '#embmodal', '#mktModal', '#wsModal', '#modal', '#evModal', '#solModal', '#hwmodal'].forEach((sel) => {
+      const m = $(sel); if (!m) return; m.hidden = true;
+      const card = m.querySelector('.modal-card'); if (card) card.innerHTML = '';
+    });
+  }
 
   // ── Account names + address nicknames (local-only labels; not secret) ──
   const ACCT_NAMES = 'ww:acctnames', ADDR_NAMES = 'ww:addrnames';
@@ -2203,6 +2214,8 @@
     $('#bBroadcast').onclick = async () => {
       const s = $('#bcStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Verifying…';
       try {
+        // WW-C05: never push a tx signed in a session that has since auto-locked — discard it.
+        if (!C.isUnlocked()) throw new Error('Wallet locked — this transaction was discarded. Unlock and rebuild it.');
         // Fail-closed re-verification before the tx leaves the wallet: re-decode an unsigned twin of the
         // exact reviewed tx (same inputs/outputs) and run outputs + fee + SIGHASH + fresh coin-control
         // input checks. BTC leaves only to the recipient or change; a UTXO frozen/asset-bearing since the
@@ -2275,7 +2288,7 @@
   // boot
   // Session persistence + idle auto-lock (opt-in). Save the session on unlock; on lock (manual or idle),
   // wipe it and re-render to the lock screen. Reset the idle countdown on user activity.
-  try { C.onLockChange((unlocked) => { if (unlocked) saveSession(); else { clearSession(); render(); } }); } catch (_) {}
+  try { C.onLockChange((unlocked) => { if (unlocked) saveSession(); else { clearSession(); lockPanic(); render(); } }); } catch (_) {}
   ['mousemove', 'keydown', 'mousedown', 'touchstart', 'scroll'].forEach((e) => window.addEventListener(e, bumpActivity, { passive: true }));
 
   // Boot: resume a persisted session (opt-in), restore the last-selected account, then render.

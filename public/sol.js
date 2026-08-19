@@ -87,6 +87,8 @@
     $('#solBroadcast').onclick = async () => {
       const s = $('#solbStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Broadcasting…';
       try {
+        // WW-C05: never push a transaction signed in a session that has since auto-locked — discard it.
+        if (window.WonderCore && !window.WonderCore.isUnlocked()) throw new Error('Wallet locked — this transaction was discarded. Unlock and rebuild it.');
         const r = await fetch('api/sol/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txBase64: signed.txBase64 }) }).then((x) => x.json());
         if (r.error) throw new Error(r.detail || r.error);
         s.className = 'statusline load'; s.innerHTML = `Broadcast ✓ — <a href="https://solscan.io/tx/${encodeURIComponent(r.signature)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(r.signature).slice(0, 18))}…</a>`;
