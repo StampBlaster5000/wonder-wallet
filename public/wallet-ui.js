@@ -2082,7 +2082,7 @@
     c.querySelectorAll('.feeopt').forEach((b) => (b.onclick = () => { c.querySelectorAll('.feeopt').forEach((x) => x.classList.remove('on')); b.classList.add('on'); feeRate = Number(b.dataset.r); $('#sFee').value = ''; feeHint(feeRate); }));
     $('#sFee').oninput = (e) => { if (e.target.value !== '') { const r = Number(e.target.value); if (r > 0) { feeRate = r; c.querySelectorAll('.feeopt').forEach((x) => x.classList.remove('on')); feeHint(r); } } };
     // Dispenser detection: if the recipient runs an open Counterparty dispenser, offer trigger quantities.
-    let _dispT = null, btcUsd = 0;
+    let _dispT = null, btcUsd = 0, dispPromise = null; // WW-B20: the asset a dispense should return, carried to the final confirm
     try { if (!isTN()) btcUsd = (await fetch('api/prices').then((r) => r.json())).bitcoin || 0; } catch (_) {}
     const sats = (n) => Number(n).toLocaleString('en-US');
     const toUsd = (satsAmt) => { const u = (satsAmt / 1e8) * btcUsd; return u ? ' ≈ $' + u.toLocaleString('en-US', { maximumFractionDigits: 2 }) : ''; };
@@ -2099,6 +2099,7 @@
         const q = Number(b.dataset.q), totalSats = q * d.satoshirate;
         $('#sAmt').value = (totalSats / 1e8).toFixed(8); $('#sMax').checked = false;
         const recv = (parseFloat(d.giveQty) * q).toLocaleString('en-US', { maximumFractionDigits: 8 });
+        dispPromise = { asset: d.asset, recv, disp: q, sats: totalSats }; // carried to the irreversible confirm (WW-B20)
         $('#dispCost').innerHTML = `<b>${q}×</b> → send <b>${sats(totalSats)} sats</b> (${(totalSats / 1e8).toFixed(8)} BTC${toUsd(totalSats)}) + miner fee → receive ~<b>${esc(recv)} ${esc(d.asset)}</b>`;
       }));
     }
@@ -2108,7 +2109,7 @@
     const RE_ADDR = /^(bc1[a-z0-9]{8,87}|[13][a-km-zA-HJ-NP-Z1-9]{25,39})$/;
     const RE_DOTBTC = /^[a-z0-9][a-z0-9._-]{0,62}\.btc$/i;
     $('#sTo').oninput = () => {
-      clearTimeout(_dispT);
+      clearTimeout(_dispT); dispPromise = null; // recipient changed → any prior dispenser promise is stale
       const panel = $('#dispPanel'), nr = $('#nameResolve');
       const raw = $('#sTo').value.trim();
       // A .btc name → resolve it; otherwise clear the name banner and run dispenser detection.
@@ -2167,14 +2168,14 @@
         if (!spendable.length) throw new Error('No spendable UTXOs on this address.');
         const prevTxs = await fetchPrevTxs(sendType, spendable.map((u) => u.txid), s);
         const tx = C.send({ account: acc ? acc.account : 0, importedId: useImpId, type: sendType, utxos: spendable, recipient: to, amountSats, feeRate, rbf: $('#sRbf').checked, sendMax, prevTxs });
-        showSendPreview(acc, tx, to, sendType, prevTxs, resolvedName, from);
+        showSendPreview(acc, tx, to, sendType, prevTxs, resolvedName, from, (dispPromise && dispPromise.sats === amountSats) ? dispPromise : null);
       } catch (err) {
         s.className = 'statusline err';
         s.textContent = err.message === 'insufficient_funds' ? 'Insufficient spendable balance for that amount + fee.' : (err.message || 'Could not build transaction.');
       }
     };
   }
-  function showSendPreview(acc, tx, to, sendType = 'nativeSegwit', prevTxs = {}, named = null, from = null) {
+  function showSendPreview(acc, tx, to, sendType = 'nativeSegwit', prevTxs = {}, named = null, from = null, disp = null) {
     const btc = (n) => (n / 1e8).toLocaleString('en-US', { maximumFractionDigits: 8 });
     const usd = (sats) => { const p = DASH_PRICES.bitcoin || 0; return p && sats ? ` <span class="fine">≈ $${((sats / 1e8) * p).toLocaleString('en-US', { maximumFractionDigits: 2 })}</span>` : ''; };
     const toDisplay = named && named.name ? `<b>${esc(named.name)}</b><br><span class="mono fine">${esc(to)}</span>` : `<b class="mono">${esc(to)}</b>`;
@@ -2187,6 +2188,7 @@
         <div><span class="k">Inputs</span><span class="v">${tx.inputs.length}</span></div>
         <div><span class="k">Change back</span><span class="v">${btc(tx.change)} BTC</span></div>
       </div>
+      ${disp ? `<div class="warn" style="margin-top:8px;border-color:#b8860b">⚠ <b>Dispenser payment.</b> You should receive ~<b>${esc(disp.recv)} ${esc(disp.asset)}</b> (${esc(String(disp.disp))} dispense${disp.disp === 1 ? '' : 's'}) — but this is enforced by the dispenser, <b>not</b> by Bitcoin. Wonder cannot guarantee it; only send if you trust this dispenser is genuine. The asset is delivered in a separate Counterparty transaction after your BTC confirms.</div>` : ''}
       <div class="fine" style="margin-top:8px">Signed locally. ${tx.txid ? 'TXID ' + tx.txid.slice(0, 16) + '…' : ''}</div>
       <div id="bcStatus" class="statusline" hidden></div>
       <div class="wbtns"><button class="ghost" id="bBack">Back</button><button class="ghost" id="bPsbt">Export PSBT</button><button class="primary" id="bBroadcast">Broadcast</button></div>`);
