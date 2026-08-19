@@ -59,16 +59,26 @@ async function getFees() {
     fetchJson(`${base()}/v1/fees/recommended`).catch(() => null),
     fetchJson(`${base()}/v1/fees/mempool-blocks`).catch(() => null),
   ]);
-  const fees = rec || { fastestFee: 1, halfHourFee: 1, hourFee: 1, economyFee: 1, minimumFee: 1 };
-  const nb = Array.isArray(blocks) && blocks[0] && blocks[0].medianFee > 0 ? blocks[0].medianFee : null;
-  if (nb != null && nb < 1 && (fees.fastestFee || 1) <= 1) {
+  // WW-C07: NEVER pass upstream fee fields through untyped — a compromised/custom reader could return a
+  // string (e.g. an HTML/iframe payload) that later reaches an innerHTML sink in a view. Coerce every tier
+  // to a finite sat/vB within a defensible range; anything else falls back to a safe default. Only
+  // sanitized numbers leave this boundary, so the markup sinks downstream can never receive a payload.
+  const san = (v, d) => { const n = Number(v); return Number.isFinite(n) && n > 0 && n <= 1e6 ? n : d; };
+  const raw = rec || {};
+  const fees = {
+    fastestFee: san(raw.fastestFee, 1), halfHourFee: san(raw.halfHourFee, 1),
+    hourFee: san(raw.hourFee, 1), economyFee: san(raw.economyFee, 1), minimumFee: san(raw.minimumFee, 1),
+  };
+  const mf = Array.isArray(blocks) && blocks[0] ? Number(blocks[0].medianFee) : NaN;
+  const nb = Number.isFinite(mf) && mf > 0 ? mf : null;
+  if (nb != null && nb < 1 && fees.fastestFee <= 1) {
     const r1 = (n) => Math.max(0.1, Math.round(n * 10) / 10);
     const low = r1(nb);                    // next-block floor everyone's paying (e.g. 0.4)
     fees.fastestFee = 1;                    // high: guarantees next block + clears the 1 s/vB relay floor
     fees.halfHourFee = r1((low + 1) / 2);   // medium: midpoint (e.g. 0.7)
     fees.hourFee = low;                     // low priority (e.g. 0.4)
     fees.economyFee = low;
-    fees.minimumFee = Math.min(fees.minimumFee || 1, low);
+    fees.minimumFee = Math.min(fees.minimumFee, low);
     fees.source = 'projected';              // flag: sub-1 tiers derived from projected mempool blocks
   }
   cacheSet(key, fees, 30_000);

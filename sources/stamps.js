@@ -42,9 +42,12 @@ async function _stampsBal(address) {
   const hit = cacheGet(fresh);
   if (hit) return hit;
   let res = null; try { res = await fetchJson(`${BASE}/stamps/balance/${address}?limit=500`); } catch (_) {}
-  if (!res) return cacheGet(lastGood) || []; // live fetch failed → last-good snapshot rather than blank
+  // WW-C13: a malformed 200 body (no documented `data` array — e.g. {} or an error envelope) must follow
+  // the FAILURE path and return last-good; it must NOT be treated as an empty dataset that overwrites the
+  // last-good snapshot and blanks the gallery. A genuine empty result ({data:[]}) IS a valid array → cached.
+  if (!res || !Array.isArray(res.data)) return cacheGet(lastGood) || [];
   // /stamps/balance → { data: [{ stamp, cpid, balance, stamp_url, stamp_mimetype, … }] }
-  const stamps = (Array.isArray(res.data) ? res.data : []).map((s) => ({
+  const stamps = res.data.map((s) => ({
     stamp: s.stamp,
     cpid: s.cpid,
     quantity: Number(s.balance ?? s.quantity ?? 1), // held qty lives in `balance` on this endpoint
@@ -60,9 +63,9 @@ async function _src20Bal(address) {
   const hit = cacheGet(fresh);
   if (hit) return hit;
   let res = null; try { res = await fetchJson(`${BASE}/src20/balance/${address}?limit=500`); } catch (_) {}
-  if (!res) return cacheGet(lastGood) || [];
+  if (!res || !Array.isArray(res.data)) return cacheGet(lastGood) || []; // WW-C13: malformed → last-good, never overwrite
   // /src20/balance → { data: [{ tick, amt, deploy_img, … }] } (flat). Keep the group-wrapped fallback for safety.
-  const raw = (Array.isArray(res.data) ? res.data : []).flatMap((x) => (x && Array.isArray(x.data) ? x.data : [x]));
+  const raw = res.data.flatMap((x) => (x && Array.isArray(x.data) ? x.data : [x]));
   const src20 = raw.filter((t) => t && t.tick).map((t) => ({
     tick: decodeTick(t.tick),
     amount: fmtSrc20(t.amt ?? t.amount ?? t.balance),
