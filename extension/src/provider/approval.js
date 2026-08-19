@@ -47,7 +47,7 @@
   var app = document.getElementById('app');
   // Build stamp — a persistent corner badge (survives re-renders) so it's obvious which build is loaded.
   // Bump BUILD on each provider fix; if the badge doesn't match, the extension wasn't fully reloaded.
-  var BUILD = 'b23 · testnet-connect'
+  var BUILD = 'b24 · connect' // build stamp — NOT a network indicator (the extension follows the active mainnet/testnet toggle; the old "testnet-connect" tag was a stale dev label that wrongly implied testnet)
   try { var _vb = document.createElement('div'); _vb.className = 'ap-ver'; _vb.textContent = 'v' + (chrome.runtime.getManifest().version) + ' ' + BUILD; document.body.appendChild(_vb); } catch (_) {}
   var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); };
   var btc = function (n) { return n == null ? '—' : (Number(n) / 1e8).toFixed(8).replace(/0+$/, '').replace(/\.$/, '') + ' BTC'; };
