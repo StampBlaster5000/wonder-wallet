@@ -82,7 +82,8 @@
   // SECURITY: verify a SERVER-composed CP tx pays BTC only to the source (change) or an address the
   // user actually typed — before we sign. Blocks a tampered/compromised proxy from siphoning BTC.
   function verifyOutputs(c) {
-    let outs = null; try { outs = C.decodeTxOutputs(c.psbt); } catch (_) { return; }
+    // Fail CLOSED: an undecodable composed tx must abort, never sign blind (WW-C01 cited this catch→return).
+    let outs = null; try { outs = C.decodeTxOutputs(c.psbt); } catch (_) { throw new Error('Aborted — the composed transaction could not be decoded to verify its outputs; refusing to sign what cannot be read.'); }
     const allowed = new Set([FROM]);
     Object.values(LAST_PARAMS || {}).forEach((v) => { if (typeof v === 'string' && RE_BTC_ADDR.test(String(v).trim())) allowed.add(String(v).trim()); });
     for (const o of outs) {
@@ -149,8 +150,21 @@
   }
   // Sign a composed CP PSBT for the current source type — fetch prev-txs when legacy.
   async function cpSign(c) {
-    verifyOutputs(c); // abort before signing if the composed tx pays an unexpected address
-    verifyRecipient(c); // abort if the intended recipient isn't the one baked into the tx / CP data
+    // Fail-closed universal verification (WW-C02 + the WW-C01 fail-open decode): re-decode the composed
+    // tx and re-check outputs / recipient / fee / SIGHASH, AND re-validate every input against FRESH
+    // coin-control before signing. Counterparty Core chose the inputs, so a frozen / asset-bearing /
+    // unknown outpoint must never be signed just because it's ours. Detach legitimately spends its one
+    // asset UTXO (carried on LAST_PARAMS.__detachUtxo) — that outpoint, and only it, is allowed.
+    if (window.WonderVerify) {
+      const allowed = [];
+      Object.values(LAST_PARAMS || {}).forEach((v) => { if (typeof v === 'string' && RE_BTC_ADDR.test(String(v).trim())) allowed.push(String(v).trim()); });
+      const vsize = (c.signed_tx_estimated_size && c.signed_tx_estimated_size.vsize) || 0;
+      const intent = { from: FROM, allowed, dests: intendedDests(), allowInputs: (LAST_PARAMS && LAST_PARAMS.__detachUtxo) ? [String(LAST_PARAMS.__detachUtxo)] : [] };
+      if (vsize && CP_FEERATE) intent.feeMaxSats = Math.ceil(CP_FEERATE * vsize * 2.5);
+      await window.WonderVerify.verify(c, intent); // throws on ANY failure → nothing signed
+    } else {
+      verifyOutputs(c); verifyRecipient(c); // defensive fallback if the verifier module failed to load
+    }
     let prevTxs = {};
     if (FROM_TYPE === 'legacy') {
       const uniq = [...new Set(C.psbtInputs(c.psbt).map((i) => i.txid))];
@@ -858,7 +872,8 @@
   async function adDetachReview(utxo) {
     const s = $('#adDetStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Composing detach…';
     try {
-      LAST_PARAMS = {};
+      LAST_PARAMS = { __detachUtxo: utxo }; // detach legitimately spends this one asset-bearing UTXO — the verifier allows exactly it
+
       const c = await fetch('api/cp/detach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ utxo, destination: FROM, sat_per_vbyte: CP_FEERATE }) }).then((r) => r.json());
       if (c.error) throw new Error(c.detail || c.error);
       confirmScreen('Confirm · detach › address', c, `<div><span class="k">From UTXO</span><span class="v" style="font-size:12px">${esc(utxo.slice(0, 18))}…</span></div>`, 'Detach broadcast', () => adShell('detach'));
