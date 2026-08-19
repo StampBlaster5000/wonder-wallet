@@ -24,6 +24,21 @@
     try { localStorage.setItem(pendKey(eth), JSON.stringify(loadPending(eth).filter((x) => String(x.tokenId) !== String(tokenId)))); } catch (_) {}
   }
   const btcDeposit = (v) => (v.addresses || []).find((a) => /^btc$/i.test(a.coin)) || (v.addresses || []).find((a) => a.address) || null;
+
+  // ── WW-C06: authenticate the vault deposit address before any irreversible send ──
+  // The deposit address comes from the Emblem API and is prefilled into a real asset send. Wonder can't
+  // derive it independently, but it CAN (a) reject anything that isn't a well-formed Bitcoin address and
+  // (b) bind the send to the address captured when the vault was created — so a read response that later
+  // substitutes an attacker deposit address is caught here, before the asset moves. Fail closed.
+  const RE_BTC = /^((bc1|tb1)[a-z0-9]{8,87}|[123mn2][a-km-zA-HJ-NP-Z1-9]{25,39})$/;
+  const validDepositAddr = (a) => typeof a === 'string' && RE_BTC.test(a.trim());
+  const pendingAddr = (tokenId) => { try { return (loadPending(ETH).find((p) => String(p.tokenId) === String(tokenId)) || {}).address || null; } catch (_) { return null; } };
+  function guardDeposit(tokenId, addr) {
+    if (!validDepositAddr(addr)) throw new Error('The vault deposit address is not a valid Bitcoin address — refusing to send your asset there.');
+    const orig = pendingAddr(tokenId);
+    if (orig && String(orig).trim() !== String(addr).trim()) throw new Error('Aborted — this vault’s deposit address (' + addr + ') does not match the one saved when the vault was created (' + orig + '). It may have been substituted; nothing was sent.');
+    return String(addr).trim();
+  }
   // Standing notice: vaulting spans two chains.
   const TWOCHAIN_WARN = `<div class="vault-warn"><b>⚠ This is a two-chain flow — you'll need both Bitcoin and Ethereum.</b>
     <ul style="margin:6px 0 0;padding-left:18px"><li><b>Bitcoin</b> — to send your asset (a BTC tx + miner fee) to the vault's deposit address.</li>
@@ -107,7 +122,8 @@
     const v = LAST_VAULTS.find((x) => String(x.tokenId) === String(tokenId)) || {};
     const dep = btcDeposit(v);
     if (!dep) return;
-    const prefill = { destination: dep.address };
+    let addr; try { addr = guardDeposit(tokenId, dep.address); } catch (e) { modal(`<h3 class="m-title">Deposit blocked</h3><div class="warn" style="border-color:#c0392b;color:#e74c3c;margin:8px 0">⚠ ${esc(e.message)}</div><div class="wbtns"><button class="ghost" id="dbX">Close</button></div>`); const b = $('#dbX'); if (b) b.onclick = close; return; }
+    const prefill = { destination: addr };
     if (v._asset) prefill.asset = v._asset;
     if (window.CpActions) window.CpActions.quick(ACCOUNT, BTC, 'send', prefill);
   }
@@ -140,7 +156,8 @@
       if (v.error) throw new Error(v.detail || v.error);
       // Persist immediately — the deposit address must survive a window close / lack of ETH.
       const dep = btcDeposit(v) || (v.addresses || [])[0];
-      savePending(ETH, { tokenId: v.tokenId, coin: dep?.coin || 'BTC', address: dep?.address, name: col.name, createdAt: Date.now(), asset: ASSET_CTX ? ASSET_CTX.asset : null });
+      if (!dep || !validDepositAddr(dep.address)) throw new Error('Emblem returned an invalid or missing Bitcoin deposit address — not saving this vault. Please try again.');
+      savePending(ETH, { tokenId: v.tokenId, coin: dep.coin || 'BTC', address: dep.address, name: col.name, createdAt: Date.now(), asset: ASSET_CTX ? ASSET_CTX.asset : null });
       depositStep(col, v);
     } catch (e) { s.className = 'statusline err'; s.textContent = e.message === 'This operation was aborted' || /create_failed/.test(e.message) ? 'Emblem’s create endpoint is slow/unavailable right now — try again shortly.' : 'Failed: ' + e.message; }
   }
@@ -160,7 +177,7 @@
       <div id="mintStatus" class="statusline" hidden></div>
       <div class="wbtns"><button class="ghost" id="depBack">My Vaults</button><button class="primary" id="depMint">I've deposited · Mint</button></div>`;
     $('#depCopy').onclick = (e) => copy(dep?.address, e.target);
-    const ds = $('#depSend'); if (ds) ds.onclick = () => { const pf = { destination: dep.address }; if (ASSET_CTX) pf.asset = ASSET_CTX.asset; if (window.CpActions) window.CpActions.quick(ACCOUNT, BTC, 'send', pf); };
+    const ds = $('#depSend'); if (ds) ds.onclick = () => { let addr; try { addr = guardDeposit(vault.tokenId, dep.address); } catch (e) { const st = $('#mintStatus'); if (st) { st.hidden = false; st.className = 'statusline err'; st.textContent = e.message; } return; } const pf = { destination: addr }; if (ASSET_CTX) pf.asset = ASSET_CTX.asset; if (window.CpActions) window.CpActions.quick(ACCOUNT, BTC, 'send', pf); };
     $('#depBack').onclick = myVaults;
     $('#depMint').onclick = () => mint(vault.tokenId);
   }
