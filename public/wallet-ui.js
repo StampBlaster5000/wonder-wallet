@@ -2134,14 +2134,14 @@
         if (!spendable.length) throw new Error('No spendable UTXOs on this address.');
         const prevTxs = await fetchPrevTxs(sendType, spendable.map((u) => u.txid), s);
         const tx = C.send({ account: acc ? acc.account : 0, importedId: useImpId, type: sendType, utxos: spendable, recipient: to, amountSats, feeRate, rbf: $('#sRbf').checked, sendMax, prevTxs });
-        showSendPreview(acc, tx, to, sendType, prevTxs, resolvedName);
+        showSendPreview(acc, tx, to, sendType, prevTxs, resolvedName, from);
       } catch (err) {
         s.className = 'statusline err';
         s.textContent = err.message === 'insufficient_funds' ? 'Insufficient spendable balance for that amount + fee.' : (err.message || 'Could not build transaction.');
       }
     };
   }
-  function showSendPreview(acc, tx, to, sendType = 'nativeSegwit', prevTxs = {}, named = null) {
+  function showSendPreview(acc, tx, to, sendType = 'nativeSegwit', prevTxs = {}, named = null, from = null) {
     const btc = (n) => (n / 1e8).toLocaleString('en-US', { maximumFractionDigits: 8 });
     const usd = (sats) => { const p = DASH_PRICES.bitcoin || 0; return p && sats ? ` <span class="fine">≈ $${((sats / 1e8) * p).toLocaleString('en-US', { maximumFractionDigits: 2 })}</span>` : ''; };
     const toDisplay = named && named.name ? `<b>${esc(named.name)}</b><br><span class="mono fine">${esc(to)}</span>` : `<b class="mono">${esc(to)}</b>`;
@@ -2166,8 +2166,18 @@
       $('#bCopyP').onclick = (e) => copy(un.psbt, e.target); $('#mc').onclick = closeModal;
     };
     $('#bBroadcast').onclick = async () => {
-      const s = $('#bcStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Broadcasting…';
+      const s = $('#bcStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Verifying…';
       try {
+        // Fail-closed re-verification before the tx leaves the wallet: re-decode an unsigned twin of the
+        // exact reviewed tx (same inputs/outputs) and run outputs + fee + SIGHASH + fresh coin-control
+        // input checks. BTC leaves only to the recipient or change; a UTXO frozen/asset-bearing since the
+        // preview is caught here. (The checks don't depend on rbf sequence, so the twin is representative.)
+        if (window.WonderVerify && from) {
+          const feeRate = Math.max(1, Math.round(tx.fee / tx.vsize));
+          const un = C.send({ account: acc ? acc.account : 0, importedId: (acctKind === 'imported' ? impId : null), type: sendType, utxos: tx.inputs.map((i) => ({ txid: i.utxo.split(':')[0], vout: +i.utxo.split(':')[1], value: i.value })), recipient: to, amountSats: tx.amountSats, feeRate, rbf: true, sendMax: false, sign: false, prevTxs });
+          await window.WonderVerify.verify(un, { from, dests: [to], allowed: [to], feeMaxSats: Math.ceil(tx.fee * 1.05) });
+        }
+        s.textContent = 'Broadcasting…';
         const r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: tx.txhex }) }).then((x) => x.json());
         if (r.error) throw new Error(r.detail || r.error);
         s.className = 'statusline load'; s.innerHTML = `Broadcast ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(r.txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(r.txid).slice(0, 18))}…</a>`;
