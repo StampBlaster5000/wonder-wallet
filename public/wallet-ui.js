@@ -329,11 +329,22 @@
       <div class="wbtns"><button class="ghost" id="cbBack">Back</button><button class="primary" id="cbSend">Sign in ${esc(CONN.name)}</button></div>`);
     c.querySelectorAll('[data-copy]').forEach((el) => (el.onclick = () => copy(el.dataset.copy, el)));
     c.querySelector('#cbBack').onclick = () => renderConnectedSend();
-    c.querySelector('#cbSend').onclick = () => connSubmit($('#cbStatus'), tx.psbt);
+    c.querySelector('#cbSend').onclick = () => connSubmit($('#cbStatus'), tx.psbt, { from: CONN.address, dests: [to], allowed: [to], checkInputs: false });
   }
   // Shared: hand a composed PSBT (hex OR base64) to the connected wallet to sign + broadcast, show the txid.
-  async function connSubmit(s, psbt) {
-    s.hidden = false; s.className = 'statusline load'; s.textContent = 'Waiting for approval in ' + CONN.name + '…';
+  async function connSubmit(s, psbt, intent) {
+    s.hidden = false; s.className = 'statusline load';
+    // WW-B01: verify the COMPOSED tx matches the displayed intent BEFORE handing it to the external
+    // signer. The connected wallet's generic prompt is not Counterparty/protocol-aware, so a compromised
+    // composer could return a PSBT whose outputs/recipient/SIGHASH differ from what we showed. Fail closed
+    // — Wonder never hands off a tx it can't prove matches intent. (Input coin-control is the external
+    // wallet's responsibility here, so intent.checkInputs is false for connected flows.)
+    if (intent && window.WonderVerify) {
+      s.textContent = 'Verifying…';
+      try { await window.WonderVerify.verify({ psbt, data: intent.data }, intent); }
+      catch (e) { s.className = 'statusline err'; s.textContent = 'Blocked: ' + (e && e.message ? e.message : 'the composed transaction did not match what you approved'); return; }
+    }
+    s.textContent = 'Waiting for approval in ' + CONN.name + '…';
     try {
       const psbtHex = /^[0-9a-fA-F]+$/.test(psbt) ? psbt : b64ToHex(psbt);
       const signed = await CONN.signPsbt(psbtHex, { autoFinalized: true });
@@ -460,7 +471,7 @@
       <div class="wbtns"><button class="ghost" id="pbBack">Back</button><button class="primary" id="pbSend">Sign in ${esc(CONN.name)}</button></div>`);
     c.querySelectorAll('[data-copy]').forEach((el) => (el.onclick = () => copy(el.dataset.copy, el)));
     c.querySelector('#pbBack').onclick = () => renderConnectedCpSend(t);
-    c.querySelector('#pbSend').onclick = () => connSubmit($('#pbStatus'), cx.psbt);
+    c.querySelector('#pbSend').onclick = () => connSubmit($('#pbStatus'), cx.psbt, { from: CONN.address, dests: [to], allowed: [to], data: cx.data, checkInputs: false });
   }
 
   function renderLocked() {
