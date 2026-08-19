@@ -396,6 +396,41 @@
   function ethMsgParam(params) { var a = (params && params[0]) || '', b = (params && params[1]) || ''; var isAddr = function (x) { return /^0x[0-9a-fA-F]{40}$/.test(String(x)); }; return (isAddr(a) && !isAddr(b) && b) ? b : a; }
   function b64ToBytes(s) { try { var bin = atob(s), u = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; } catch (_) { return new Uint8Array(0); } }
 
+  // WW-C03: decode the Solana Compute Budget priority fee from a base64 transaction so it can be SHOWN
+  // and CAPPED. The approval previously rendered only a generic warning; the audit PoC set a hidden
+  // 1-SOL priority fee (SetComputeUnitPrice) that the dialog reported as no-danger. Fail safe: any parse
+  // failure returns null (fall back to the generic warning), never a crash.
+  function solReadSV(b, o) { var v = 0, s = 0, i = o, x; for (;;) { x = b[i++]; v |= (x & 0x7f) << s; if ((x & 0x80) === 0) break; s += 7; } return [v, i]; }
+  var SOL_COMPUTE_BUDGET = [3, 6, 70, 111, 229, 33, 23, 50, 255, 236, 173, 186, 114, 195, 155, 231, 188, 140, 229, 187, 197, 247, 18, 107, 44, 67, 155, 58, 64, 0, 0, 0];
+  function solPriorityFee(bytes) {
+    try {
+      var b = bytes, o = 0, sv;
+      sv = solReadSV(b, o); o = sv[1] + sv[0] * 64;               // skip signatures
+      if (b[o] & 0x80) o += 1;                                    // versioned (v0) message prefix
+      var numReqSigs = b[o]; o += 3;                              // message header (3 bytes)
+      sv = solReadSV(b, o); var kc = sv[0]; o = sv[1]; var keys = [];
+      for (var k = 0; k < kc; k++) { keys.push(b.slice(o, o + 32)); o += 32; }
+      o += 32;                                                    // recent blockhash
+      sv = solReadSV(b, o); var ic = sv[0]; o = sv[1];
+      var limit = null, price = null;
+      for (var ix = 0; ix < ic; ix++) {
+        var pid = b[o]; o += 1;
+        sv = solReadSV(b, o); o = sv[1] + sv[0];                  // account index array
+        sv = solReadSV(b, o); var dn = sv[0]; o = sv[1]; var d = b.slice(o, o + dn); o += dn;
+        var prog = keys[pid], match = !!prog && prog.length === 32;
+        if (match) { for (var m = 0; m < 32; m++) { if (prog[m] !== SOL_COMPUTE_BUDGET[m]) { match = false; break; } } }
+        if (match) {
+          if (d[0] === 2 && dn >= 5) limit = d[1] | (d[2] << 8) | (d[3] << 16) | (d[4] * 0x1000000);           // SetComputeUnitLimit (u32 LE)
+          else if (d[0] === 3 && dn >= 9) { var p = 0; for (var j = 0; j < 8; j++) p += d[1 + j] * Math.pow(2, 8 * j); price = p; } // SetComputeUnitPrice (u64 LE, µ-lamports/CU)
+        }
+      }
+      if (price == null) return null;                            // no priority fee set → nothing to surface
+      var cu = limit != null ? limit : 200000, pri = Math.ceil(cu * price / 1e6), base = 5000 * Math.max(1, numReqSigs);
+      return { priorityLamports: pri, cuLimit: cu, price: price, baseLamports: base, totalLamports: base + pri };
+    } catch (_) { return null; }
+  }
+  var SOL_FEE_HARD_CAP = 500000000; // 0.5 SOL — a priority fee above this is refused outright (PoC was 1 SOL)
+
   function renderSignEthMessage() {
     var raw = ethMsgParam(req.params);
     var sum = S.summarizeMessage(hexToUtf8Maybe(raw), { origin: hostOf() });
@@ -503,7 +538,10 @@
   function renderSignSolTx() {
     var txB64 = (req.params && req.params[0]) || '';
     var isSend = req.method === 'sol_signAndSendTransaction';
+    var pf = solPriorityFee(b64ToBytes(txB64)); // WW-C03: decode the hidden Compute Budget priority fee
     onApprove = function () {
+      // Hard cap: refuse an abusive priority fee outright — no legitimate action needs > 0.5 SOL in fees.
+      if (pf && pf.priorityLamports > SOL_FEE_HARD_CAP) throw new Error('Refused — this transaction sets a Solana priority fee of ' + (pf.priorityLamports / 1e9).toFixed(4) + ' SOL, above Wonder’s safety cap. A malicious site can drain your balance this way; nothing was signed.');
       var signedB64 = C.solSignTransaction(txB64, pinnedAcct().account);
       if (!isSend) return { result: signedB64 }; // sign only → return the signed tx (dApp broadcasts)
       // signAndSendTransaction: broadcast via our RPC and return the 64-byte signature (Wallet Standard shape).
@@ -516,7 +554,15 @@
     app.innerHTML = '<div class="ap-wrap">' + originBar()
       + '<div class="ap-title">' + (isSend ? 'Sign &amp; send' : 'Sign') + ' transaction · Solana</div>'
       + '<div class="ap-hint">' + esc(hostOf()) + ' is asking you to ' + (isSend ? 'sign &amp; broadcast' : 'sign') + ' a Solana transaction with <span class="mono">' + esc(short(req.sol || req.accountAddress)) + '</span>. Wonder Wallet signs only your slot.</div>'
-      + warns([{ level: 'warn', text: 'Solana transactions can move tokens or invoke programs. Review the action on the site before approving.' }, { level: 'info', text: 'Only sign if you trust ' + esc(hostOf()) + '.' }])
+      + warns((function () {
+          var w = [{ level: 'warn', text: 'Solana transactions can move tokens or invoke programs. Review the action on the site before approving.' }];
+          if (pf) {
+            var lvl = pf.priorityLamports > 10000000 ? 'danger' : (pf.priorityLamports > 1000000 ? 'warn' : 'info'); // >0.01 SOL danger, >0.001 warn
+            w.push({ level: lvl, text: 'Network fee ≈ ' + (pf.totalLamports / 1e9).toFixed(6) + ' SOL — priority fee ' + (pf.priorityLamports / 1e9).toFixed(6) + ' SOL (' + pf.price.toLocaleString() + ' µ-lamports/CU × ' + pf.cuLimit.toLocaleString() + ' CU)' + (lvl === 'danger' ? '. ⚠ UNUSUALLY LARGE — a malicious site can drain your balance through the priority fee. Reject unless you expect exactly this.' : '. Confirm this is expected.') });
+          }
+          w.push({ level: 'info', text: 'Only sign if you trust ' + esc(hostOf()) + '.' });
+          return w;
+        })())
       + '<details class="ap-raw"><summary>Show raw transaction (base64)</summary><div class="ap-msg mono">' + esc(txB64) + '</div></details>'
       + foot('Reject', isSend ? 'Sign & send' : 'Sign', true) + '</div>';
     wireFoot();
