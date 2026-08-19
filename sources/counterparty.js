@@ -119,9 +119,13 @@ async function getProtectedUtxos(utxos) {
     const chunk = keys.slice(i, i + 50);
     try {
       const data = await fetchJson(`${base()}/utxos/withbalances?utxos=${encodeURIComponent(chunk.join(','))}`);
-      const map = data.result || {};
+      // WW-B05: a partial/empty/malformed map must NOT silently clear the omitted UTXOs. Only a key that
+      // came back as an OWN property with a STRICT boolean is "known"; anything missing or non-boolean
+      // stays UNKNOWN (classified never-spendable), so a hiccup can't make an asset UTXO look asset-free.
+      const map = (data && data.result && typeof data.result === 'object' && !Array.isArray(data.result)) ? data.result : {};
       for (const k of chunk) {
-        checkedSet.add(k); // this UTXO's CP status is now KNOWN
+        if (!Object.prototype.hasOwnProperty.call(map, k) || typeof map[k] !== 'boolean') continue; // leave UNKNOWN
+        checkedSet.add(k); // this UTXO's CP status is now genuinely KNOWN
         if (map[k] === true) protectedSet.add(k);
       }
     } catch (_) {
