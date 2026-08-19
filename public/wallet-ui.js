@@ -820,6 +820,25 @@
     body.querySelectorAll('.acf').forEach((b) => (b.onclick = () => { ACT_T.filter = b.dataset.f; renderActT(); }));
     body.querySelectorAll('[data-boost]').forEach((b) => (b.onclick = () => { const it = ACT_T.items.find((x) => x.txid === b.dataset.boost); if (it) termBoost(it); }));
   }
+  // WW-B04: a CPFP "boost" spends a specific owned output as the child input. That output can carry an
+  // on-chain asset (rune / inscription / Stamp / UTXO-bound Counterparty asset) and would be BURNED if
+  // spent as fee. The input is usually the UNCONFIRMED parent output (not in coin-control), so we fail
+  // closed: allow a boost only for a plain Bitcoin transaction, and for a confirmed output additionally
+  // require coin-control to classify the exact outpoint as spendable (not protected / frozen / locked).
+  async function cpfpInputSafe(it) {
+    if (it.source && it.source !== 'btc') return { ok: false, why: 'This transaction carries an on-chain asset (Counterparty / Stamps / SRC-20 / Ordinal). Boosting it via CPFP could spend and burn that asset — not supported.' };
+    try {
+      const cc = await fetch(`api/btc/${ACT_T.addr}/coincontrol`).then((r) => r.json());
+      const u = (cc.utxos || []).find((x) => x.txid === it.txid && x.vout === it.ownVout.vout);
+      if (u) {
+        if (u.category === 'protected') return { ok: false, why: 'That output holds an on-chain asset — refusing to spend it as a fee.' };
+        if (u.category !== 'spendable') return { ok: false, why: 'That output is not confirmed-spendable — refusing to boost.' };
+        if (u.frozen) return { ok: false, why: 'That output is frozen — unfreeze it first.' };
+        if (u.timelocked) return { ok: false, why: 'That output is time-locked — refusing to spend it.' };
+      }
+    } catch (_) { /* unconfirmed / coin-control unavailable → allowed only because the parent is plain BTC */ }
+    return { ok: true };
+  }
   async function termBoost(it) {
     if (!it.ownVout) return;
     const acc = window.__activeAccount;
@@ -836,8 +855,11 @@
     const paint = () => { const cc = calc(Math.max(1, parseInt($('#boRate').value, 10) || rate)); $('#boCalc').innerHTML = `Child fee <b>${fmtN(cc.childFee, 0)} sats</b> · package ≈ <b>${cc.pkgRate} s/vB</b>`; };
     paint(); $('#boRate').oninput = paint; $('#boCancel').onclick = () => openActivity(ACT_T.addr);
     $('#boGo').onclick = async () => {
-      const st = $('#boStatus'); st.hidden = false; st.className = 'statusline load'; st.textContent = 'Building CPFP child & signing…';
+      const st = $('#boStatus'); st.hidden = false; st.className = 'statusline load'; st.textContent = 'Classifying the output…';
       try {
+        const chk = await cpfpInputSafe(it); // WW-B04: fail closed on asset-bearing / frozen / unknown inputs
+        if (!chk.ok) { st.className = 'statusline err'; st.textContent = chk.why; return; }
+        st.textContent = 'Building CPFP child & signing…';
         const r2 = Math.max(1, parseInt($('#boRate').value, 10) || rate), cc = calc(r2);
         const childRate = Math.max(1, cc.childFee / cv);
         const prevTxs = {};
