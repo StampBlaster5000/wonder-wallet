@@ -14,7 +14,14 @@ const DIST = join(ROOT, 'extension', 'dist', 'manifest.json');
 
 let m;
 try { m = JSON.parse(readFileSync(DIST, 'utf8')); }
-catch (_) { console.log('✅ manifest-contract: SKIP — extension/dist/manifest.json not found (run `node extension/build-ext.mjs` first).'); process.exit(0); }
+catch (_) {
+  // WW-C01: a missing built manifest must FAIL, never silently pass. The audit found this test exited
+  // successfully when extension/dist/manifest.json was absent, so CI could not establish that the
+  // published archive was actually built from the reviewed commit. CI builds the extension before the
+  // tests, so an absent manifest here means the build failed or was skipped — that is a hard failure.
+  console.error('❌ manifest-contract: FAIL — extension/dist/manifest.json not found. The extension must be built (`node extension/build-ext.mjs`) before the tests so its permission/injection surface AND its provenance are proven, not skipped.');
+  process.exit(1);
+}
 
 const fails = [];
 const eq = (name, got, want) => { if (JSON.stringify(got) !== JSON.stringify(want)) fails.push(`${name}: got ${JSON.stringify(got)} — want ${JSON.stringify(want)}`); };

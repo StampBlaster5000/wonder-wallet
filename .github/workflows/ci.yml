@@ -36,6 +36,20 @@ jobs:
           npm install -g @resvg/resvg-js   # native SVG→PNG used only to render the extension icons
           NODE_PATH="$(npm root -g)" node extension/build-ext.mjs
 
+      - name: Artifact provenance (WW-C01)
+        # The audit found the published beta zips were pre-audit and CI could not prove an artifact was
+        # built from the reviewed commit. This step FAILS if the built extension is absent, and publishes
+        # the source commit + a deterministic checksum of the built dist tree so every green build has a
+        # verifiable provenance record (compare it to any published zip before distributing).
+        run: |
+          set -e
+          test -f extension/dist/manifest.json || { echo "::error::built extension manifest missing — the extension artifact was not produced"; exit 1; }
+          COMMIT="$(git rev-parse HEAD)"
+          SHA="$(find extension/dist -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
+          echo "Extension built from commit: $COMMIT"
+          echo "Extension dist tree SHA-256: $SHA"
+          { echo "### Extension artifact provenance"; echo "- commit: \`$COMMIT\`"; echo "- dist SHA-256: \`$SHA\`"; } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+
       - name: Syntax check (server + browser scripts)
         run: |
           set -e
