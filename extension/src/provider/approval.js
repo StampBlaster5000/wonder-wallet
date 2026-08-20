@@ -484,6 +484,9 @@
         + '<div class="ap-title">' + (isSignOnly ? 'Sign transaction' : 'Confirm transaction') + ' · Ethereum</div>' + warns(sum.warnings)
         + '<div class="ap-sec">' + (isSignOnly ? 'Transaction' : 'Sending') + '</div>' + row(short(sum.to || 'contract creation'), sum.valueEth, sum.isContract ? 'asset' : 'send')
         + '<div class="ap-kv"><span>From</span><span class="mono">' + esc(short(from)) + '</span></div>'
+        // WW-B09: structured token-action row so approvals aren't blind (spender/operator + amount).
+        + (sum.decoded && sum.decoded.kind === 'approve' ? '<div class="ap-kv"><span>Approve spend</span><span class="mono">' + esc(short(sum.decoded.spender || '—')) + ' · ' + (sum.decoded.unlimited ? '<b style="color:#e66">UNLIMITED</b>' : esc(sum.decoded.amount)) + '</span></div>' : '')
+        + (sum.decoded && sum.decoded.kind === 'setApprovalForAll' ? '<div class="ap-kv"><span>' + (sum.decoded.approved ? 'Approve ALL to' : 'Revoke ALL from') + '</span><span class="mono">' + esc(short(sum.decoded.operator || '—')) + '</span></div>' : '')
         + (sum.isContract ? '<div class="ap-kv"><span>Call data</span><span class="ap-fine">' + ((sum.data.length - 2) / 2) + ' bytes — contract interaction</span></div>' : '')
         + feeRow
         + '<details class="ap-raw"><summary>Show raw data</summary><div class="ap-msg mono">' + esc(sum.data) + '</div></details>'
