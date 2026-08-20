@@ -142,7 +142,7 @@
         const r = await fetch('api/stamps/src20/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: BTC, params }) }).then((x) => x.json());
         if (r.error) throw new Error(r.detail || r.error);
         if (r.dryRun) return dryPreview(`SRC-20 ${op} · ${esc(tick)}`, r, () => src20Form(op));
-        preview(`SRC-20 ${op} · ${esc(tick)}`, r, op === 'deploy' ? `${$('#s_max').value} max · ${$('#s_lim').value}/mint` : (op === 'mint' ? `mint ${$('#s_amt').value}` : `send ${$('#s_amt').value}`), () => src20Form(op));
+        preview(`SRC-20 ${op} · ${esc(tick)}`, r, op === 'deploy' ? `${$('#s_max').value} max · ${$('#s_lim').value}/mint` : (op === 'mint' ? `mint ${$('#s_amt').value}` : `send ${$('#s_amt').value}`), () => src20Form(op), fee);
       } catch (e) { s.className = 'statusline err'; s.textContent = e.message === 'compose_failed' || /No spendable/i.test(e.message) ? 'Insufficient BTC on this address to compose the mint.' : ('Failed: ' + e.message); }
     };
   }
@@ -232,7 +232,7 @@
         const params = { filename: FILE.filename, file: FILE.b64, qty, locked: $('#a_lock').checked, divisible: $('#a_div').checked, satsPerVB: fee };
         const r = await fetch('api/stamps/olga/mint', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: BTC, params }) }).then((x) => x.json());
         if (r.error) throw new Error(r.detail || r.error);
-        preview('Stamp · ' + esc(FILE.filename), r, `${(FILE.size / 1024).toFixed(1)} KB · supply ${qty}`, stampForm);
+        preview('Stamp · ' + esc(FILE.filename), r, `${(FILE.size / 1024).toFixed(1)} KB · supply ${qty}`, stampForm, fee);
       } catch (e) { s.className = 'statusline err'; s.textContent = /No spendable|compose_failed/i.test(e.message) ? 'Insufficient BTC on this address to compose the stamp.' : ('Failed: ' + (e.message || 'compose error')); }
     };
   }
@@ -259,18 +259,41 @@
     $('#m_done').onclick = close;
   }
 
-  function preview(label, r, detail, back) {
+  // WW-C15: the TRUE signed vsize by output SCRIPT type. P2WSH / P2TR outputs are 43 vB, not the flat
+  // 31 a naive estimator assumes — so a composer (e.g. stampchain, whose SRC-20 data outputs are P2WSH)
+  // can under-count size and bake a fee well below the sat/vB you asked for. We recompute it honestly.
+  function outVb(addr) {
+    if (!addr) return 43;                                            // data / OP_RETURN — conservative
+    if (/^(bc1p|tb1p)/i.test(addr)) return 43;                       // P2TR
+    if (/^(bc1|tb1)/i.test(addr)) return addr.length > 50 ? 43 : 31; // P2WSH : P2WPKH
+    if (/^[23]/.test(addr)) return 32;                               // P2SH
+    return 34;                                                       // P2PKH
+  }
+  function realFeeRate(r) {
+    try {
+      if (r == null || r.fee == null || !r.hex) return null;
+      const nIn = (C.psbtInputs(r.hex) || []).length || 1;
+      const outs = C.decodeTxOutputs(r.hex) || [];
+      if (!outs.length) return null;
+      const vb = Math.ceil(nIn * 68 + outs.reduce((a, o) => a + outVb(o.address), 0) + 10.5); // 68 vB/native-segwit input
+      return vb > 0 ? { vsize: vb, rate: r.fee / vb } : null;
+    } catch (_) { return null; }
+  }
+  function preview(label, r, detail, back, reqRate) {
+    const rr = realFeeRate(r);
+    const short = !!(rr && reqRate && rr.rate < reqRate * 0.9); // composed materially below what you set
     modal(`<button class="m-close-x" id="m_x" title="Close" aria-label="Close">✕</button><h3 class="m-title" style="padding-right:34px">Confirm · ${label}</h3>
       <div class="m-grid">
         <div><span class="k">Miner fee</span><span class="v">${sat(r.fee)}${usdTag(r.fee)}</span></div>
-        <div><span class="k">Est. size</span><span class="v">${r.vsize || '—'} vB</span></div>
+        <div><span class="k">Fee rate</span><span class="v">${rr ? rr.rate.toFixed(2) + ' sat/vB · ' + rr.vsize + ' vB' : ((r.vsize || '—') + ' vB')}</span></div>
         ${r.cpid ? `<div><span class="k">Asset / CPID</span><span class="v">${esc(r.cpid)}</span></div>` : ''}
         ${r.change != null ? `<div><span class="k">Change</span><span class="v">${sat(r.change)}</span></div>` : ''}
       </div>
       ${detail ? `<div class="cp-data"><span class="k">Minting</span><code>${esc(detail)}</code></div>` : ''}
+      ${short ? `<div class="warn" style="margin-top:10px;border-color:#c0392b">⚠ You set <b>${esc(String(reqRate))} sat/vB</b>, but this transaction actually composes at only <b>${rr.rate.toFixed(2)} sat/vB</b> (${rr.vsize} vB — the composer under-counted its data outputs). At this rate it may confirm slowly or stall. Go Back to raise the fee, or broadcast anyway if you accept that.</div>` : ''}
       <div class="warn" style="margin-top:10px">Signed locally on your device, then broadcast. This writes permanent data to Bitcoin — it cannot be undone.</div>
       <div id="m_status" class="statusline" hidden></div>
-      <div class="wbtns"><button class="ghost" id="m_back">Back</button><button class="primary" id="m_go">Sign &amp; broadcast</button></div>`);
+      <div class="wbtns"><button class="ghost" id="m_back">Back</button><button class="primary" id="m_go">${short ? 'Broadcast anyway' : 'Sign &amp; broadcast'}</button></div>`);
     $('#m_back').onclick = (typeof back === 'function') ? back : close;
     if ($('#m_x')) $('#m_x').onclick = close;
     $('#m_go').onclick = async () => {
