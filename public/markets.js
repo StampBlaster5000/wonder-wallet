@@ -20,16 +20,18 @@
   }
   // Closing the Market clears the session — no stale quote/qty when it's reopened (fresh estimates every time).
   function resetSession() {
-    Object.assign(S, { dir: 'buy', token: '', tokenDiv: true, amount: '', quote: null, quoteErr: false, slippage: 'auto',
+    Object.assign(S, { sell: 'XCP', sellDiv: true, buy: '', buyDiv: true, amount: '', quote: null, quoteErr: false, slippage: 'auto',
       dispMode: 'buy', dispAsset: '', dispensers: null, dispErr: false, dispPick: 0, dispCount: 1, dispRecv: '', routeMode: 'auto', dispSel: null, sellAsset: '', sellComp: null });
     Object.assign(L, { dir: 'buy', token: '', tokenDiv: true, price: '', amount: '', bestBid: null, bestAsk: null, pool: null });
-    Object.assign(Q, { sub: 'add', token: '', pool: null, tokenDiv: true, amtA: '', lpAmt: '' });
+    Object.assign(Q, { sub: 'add', a: '', aDiv: true, b: 'XCP', bDiv: true, pool: null, loaded: false, amtA: '', amtB: '', lpAmt: '' });
     TABS = 'swap';
   }
   const close = () => { const m = $('#mktModal'); if (m) m.hidden = true; resetSession(); };
 
-  // Swap state: one side is always XCP (XCP-69 pools are TOKEN/XCP); `dir` = which way.
-  const S = { dir: 'buy', token: '', tokenDiv: true, amount: '', quote: null, slippage: 'auto', feeRate: 6, dispMode: 'buy', dispAsset: '', dispensers: null, dispErr: false, dispPick: 0, dispCount: 1, dispRecv: '', routeMode: 'auto', dispSel: null, sellAsset: '', sellComp: null };
+  // Swap state: `sell`/`buy` are BOTH freely-chosen assets (Counterparty AMM + DEX support any pair, not
+  // just TOKEN/XCP). Defaults to selling XCP; the middle ⇅ swaps the two sides.
+  const S = { sell: 'XCP', sellDiv: true, buy: '', buyDiv: true, amount: '', quote: null, slippage: 'auto', feeRate: 6, dispMode: 'buy', dispAsset: '', dispensers: null, dispErr: false, dispPick: 0, dispCount: 1, dispRecv: '', routeMode: 'auto', dispSel: null, sellAsset: '', sellComp: null };
+  const assetSize = (a) => Math.max(5, Math.min(13, (a || '').length || 5)); // input width to fit the ticker
   const DISP_TX_VB = 154; // ~vsize of one dispense tx (1-2 inputs, dispenser payment + change) for miner-fee estimates
   const DIVCACHE = { XCP: true, BTC: true };
   let TABS = 'swap', BTCUSD = 0;
@@ -41,13 +43,13 @@
     let d = true; try { const i = await fetch('api/cp/asset/' + encodeURIComponent(asset)).then((r) => r.json()); d = i && i.divisible != null ? !!i.divisible : true; } catch (_) {}
     DIVCACHE[asset] = d; return d;
   }
-  const pair = () => (S.dir === 'buy' ? { give: 'XCP', giveDiv: true, get: S.token, getDiv: S.tokenDiv } : { give: S.token, giveDiv: S.tokenDiv, get: 'XCP', getDiv: true });
+  const pair = () => ({ give: S.sell, giveDiv: S.sellDiv, get: S.buy, getDiv: S.buyDiv });
 
   let _qt = null;
   async function refreshQuote() {
     clearTimeout(_qt);
     S.quote = null; paintQuote();
-    const p = pair(); if (!p.get || !p.give || !RE_ASSET.test(S.token)) return;
+    const p = pair(); if (!RE_ASSET.test(S.sell) || !RE_ASSET.test(S.buy) || S.sell === S.buy) return;
     const raw = toRaw(S.amount, p.giveDiv); if (!raw) return;
     _qt = setTimeout(async () => {
       const q = document.getElementById('mktQuote'); if (q) q.innerHTML = '<span class="fine">Quoting…</span>';
@@ -505,25 +507,26 @@
   }
 
   function renderSwap() {
-    const p = pair();
     $('#mktBody').innerHTML = `
       <div class="mkt-side"><div class="mkt-lbl">Sell</div>
         <div class="mkt-in"><input id="mktSell" class="mkt-amt" type="number" min="0" step="any" placeholder="0.0" value="${esc(S.amount)}"/>
-          <span class="mkt-asset">${esc(p.give)}</span></div></div>
-      <div class="mkt-flip"><button id="mktFlip" title="Flip direction">↓↑</button></div>
+          <input id="mktSellAsset" class="mkt-asset mkt-tokenin" style="width:auto" size="${assetSize(S.sell)}" maxlength="26" placeholder="XCP" spellcheck="false" value="${esc(S.sell)}"/></div></div>
+      <div class="mkt-flip"><button id="mktFlip" title="Swap the pair">⇅</button></div>
       <div class="mkt-side"><div class="mkt-lbl">Buy</div>
         <div class="mkt-in"><input id="mktGet" class="mkt-amt" type="text" readonly placeholder="0.0"/>
-          <input id="mktToken" class="mkt-asset mkt-tokenin" style="width:auto" size="${Math.max(5, Math.min(13, (S.token || '').length || 5))}" maxlength="26" placeholder="TOKEN" spellcheck="false" value="${esc(S.token)}"/></div></div>
+          <input id="mktBuyAsset" class="mkt-asset mkt-tokenin" style="width:auto" size="${assetSize(S.buy)}" maxlength="26" placeholder="TOKEN" spellcheck="false" value="${esc(S.buy)}"/></div></div>
       <div id="mktQuote" class="mkt-quote"></div>
       <div id="mktStatus" class="statusline" hidden></div>
       <div class="wbtns"><button class="ghost sm" id="mktGear" title="Slippage & fee">⚙ ${S.slippage === 'auto' ? 'Auto' : S.slippage + '%'}</button><button class="primary" id="mktGo">Review swap</button></div>`;
-    const sell = $('#mktSell'), tok = $('#mktToken');
-    sell.oninput = () => { S.amount = sell.value; refreshQuote(); };
-    tok.oninput = async () => { S.token = tok.value.trim().toUpperCase(); tok.value = S.token; tok.size = Math.max(5, Math.min(13, S.token.length || 5)); S.tokenDiv = S.token ? await divisible(S.token) : true; refreshQuote(); };
-    $('#mktFlip').onclick = () => { S.dir = S.dir === 'buy' ? 'sell' : 'buy'; S.amount = ''; S.quote = null; render(); };
+    const amt = $('#mktSell'), sa = $('#mktSellAsset'), ba = $('#mktBuyAsset');
+    amt.oninput = () => { S.amount = amt.value; refreshQuote(); };
+    sa.oninput = async () => { S.sell = sa.value.trim().toUpperCase(); sa.value = S.sell; sa.size = assetSize(S.sell); S.sellDiv = S.sell ? await divisible(S.sell) : true; refreshQuote(); };
+    ba.oninput = async () => { S.buy = ba.value.trim().toUpperCase(); ba.value = S.buy; ba.size = assetSize(S.buy); S.buyDiv = S.buy ? await divisible(S.buy) : true; refreshQuote(); };
+    // Middle icon swaps the two sides of the pair (not just buy/sell direction).
+    $('#mktFlip').onclick = () => { const a = S.sell, d = S.sellDiv; S.sell = S.buy; S.sellDiv = S.buyDiv; S.buy = a; S.buyDiv = d; S.amount = ''; S.quote = null; render(); };
     $('#mktGear').onclick = gearMenu;
     $('#mktGo').onclick = reviewSwap;
-    if (S.token && S.amount) refreshQuote(); else paintQuote();
+    if (S.sell && S.buy && S.amount) refreshQuote(); else paintQuote();
   }
 
   function gearMenu() {
@@ -538,7 +541,7 @@
   async function reviewSwap() {
     const s = $('#mktStatus'); if (!s) return;
     const p = pair();
-    if (!RE_ASSET.test(S.token)) { s.hidden = false; s.className = 'statusline err'; s.textContent = 'Enter a token symbol to swap.'; return; }
+    if (!RE_ASSET.test(S.sell) || !RE_ASSET.test(S.buy) || S.sell === S.buy) { s.hidden = false; s.className = 'statusline err'; s.textContent = 'Choose two different assets to swap.'; return; }
     if (!S.quote || !(S.quote.estimated_output > 0)) { s.hidden = false; s.className = 'statusline err'; s.textContent = 'No quote yet — enter an amount for a pair with liquidity.'; return; }
     s.hidden = false; s.className = 'statusline load'; s.textContent = 'Composing & verifying…';
     try {
@@ -571,51 +574,62 @@
     }
   }
 
-  // ── Liquidity (AMM pool deposit / withdraw) ──
-  const Q = { sub: 'add', token: '', pool: null, tokenDiv: true, amtA: '', lpAmt: '' };
+  // ── Liquidity (AMM pool deposit / withdraw) — ANY asset/asset pair, not just TOKEN/XCP ──
+  const Q = { sub: 'add', a: '', aDiv: true, b: 'XCP', bDiv: true, pool: null, loaded: false, amtA: '', amtB: '', lpAmt: '' };
+  const pairLbl = () => `${esc(Q.a || 'A')} / ${esc(Q.b || 'B')}`;
   async function renderLiquidity() {
     $('#mktBody').innerHTML = `
       <div class="lp-tabs" style="margin-bottom:10px"><button class="lp-tab${Q.sub === 'add' ? ' on' : ''}" data-q="add">Add</button><button class="lp-tab${Q.sub === 'remove' ? ' on' : ''}" data-q="remove">Remove</button></div>
-      <div class="mkt-side"><div class="mkt-lbl">Pool · TOKEN / XCP</div><div class="mkt-in"><input id="liqTok" class="mkt-tokenin" style="width:160px;text-align:left;font-size:15px" placeholder="TOKEN" spellcheck="false" value="${esc(Q.token)}"/><button class="ghost sm" id="liqLoad">Load</button></div></div>
+      <div class="mkt-side"><div class="mkt-lbl">Pool pair</div><div class="mkt-in" style="gap:6px">
+        <input id="liqA" class="mkt-tokenin" style="width:118px;text-align:left;font-size:15px" placeholder="TOKEN" spellcheck="false" value="${esc(Q.a)}"/>
+        <span style="color:var(--muted)">/</span>
+        <input id="liqB" class="mkt-tokenin" style="width:118px;text-align:left;font-size:15px" placeholder="XCP" spellcheck="false" value="${esc(Q.b)}"/>
+        <button class="ghost sm" id="liqLoad">Load</button></div></div>
       <div id="liqBody"></div>
       <div id="mktStatus" class="statusline" hidden></div>`;
     $('#mktCard').querySelectorAll('[data-q]').forEach((b) => (b.onclick = () => { Q.sub = b.dataset.q; renderLiquidity(); }));
-    const tok = $('#liqTok');
-    $('#liqLoad').onclick = loadPool; tok.onkeydown = (e) => { if (e.key === 'Enter') loadPool(); };
-    if (Q.token && Q.pool) paintLiq();
+    const kd = (e) => { if (e.key === 'Enter') loadPool(); };
+    $('#liqA').onkeydown = kd; $('#liqB').onkeydown = kd; $('#liqLoad').onclick = loadPool;
+    if (Q.loaded) paintLiq();
   }
   async function loadPool() {
-    const tok = $('#liqTok'); Q.token = (tok.value || '').trim().toUpperCase(); tok.value = Q.token;
-    if (!RE_ASSET.test(Q.token)) return;
-    const body = $('#liqBody'); if (body) body.innerHTML = '<div class="fine">Loading pool…</div>';
-    Q.tokenDiv = await divisible(Q.token);
-    try { const j = await fetch(`api/cp/pool/${encodeURIComponent(Q.token)}/XCP`).then((r) => r.json()); Q.pool = j.result || null; } catch (_) { Q.pool = null; }
-    paintLiq();
+    Q.a = ($('#liqA').value || '').trim().toUpperCase(); Q.b = ($('#liqB').value || '').trim().toUpperCase();
+    const body = $('#liqBody'); if (!body) return;
+    if (!RE_ASSET.test(Q.a) || !RE_ASSET.test(Q.b) || Q.a === Q.b) { body.innerHTML = `<div class="dash-empty">Enter two different assets (e.g. CAPTAINDAN / STOLEYERGIRL).</div>`; return; }
+    body.innerHTML = '<div class="fine">Loading pool…</div>';
+    [Q.aDiv, Q.bDiv] = await Promise.all([divisible(Q.a), divisible(Q.b)]);
+    try { const j = await fetch(`api/cp/pool/${encodeURIComponent(Q.a)}/${encodeURIComponent(Q.b)}`).then((r) => r.json()); Q.pool = j.result || null; } catch (_) { Q.pool = null; }
+    Q.loaded = true; Q.amtA = ''; Q.amtB = ''; paintLiq();
   }
-  function poolSides() { const p = Q.pool; if (!p) return null; const aIsXcp = p.asset_a === 'XCP'; return { xcpReserve: Number(aIsXcp ? p.reserve_a : p.reserve_b), tokReserve: Number(aIsXcp ? p.reserve_b : p.reserve_a), lpAsset: p.lp_asset, aIsXcp }; }
+  // Map the pool's canonical asset_a/asset_b to OUR chosen A/B; reserves are normalized (human) strings.
+  function poolSides() { const p = Q.pool; if (!p) return null; const aIsA = p.asset_a === Q.a; return { resA: Number(aIsA ? p.reserve_a_normalized : p.reserve_b_normalized), resB: Number(aIsA ? p.reserve_b_normalized : p.reserve_a_normalized), lpAsset: p.lp_asset }; }
   function paintLiq() {
     const body = $('#liqBody'); if (!body) return;
-    if (!Q.pool) { body.innerHTML = `<div class="dash-empty">No AMM pool for ${esc(Q.token)} / XCP.</div>`; return; }
-    const ps = poolSides();
-    if (Q.sub === 'add') {
-      body.innerHTML = `
-        <div class="mkt-side"><div class="mkt-lbl">Deposit XCP</div><div class="mkt-in"><input id="liqXcp" class="mkt-amt" type="number" min="0" step="any" placeholder="0.0" value="${esc(Q.amtA)}"/><span class="mkt-asset">XCP</span></div></div>
-        <div class="mkt-flip"><span style="color:var(--muted);font-size:16px">＋</span></div>
-        <div class="mkt-side"><div class="mkt-lbl">Paired ${esc(Q.token)}</div><div class="mkt-in"><input id="liqTokAmt" class="mkt-amt" type="text" readonly placeholder="0.0"/><span class="mkt-asset">${esc(Q.token)}</span></div></div>
-        <div class="lp-cost">Pool ratio · 1 XCP ≈ ${(ps.tokReserve / ps.xcpReserve).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${esc(Q.token)}. Deposit both sides in ratio; you receive LP tokens (liquidity is locked).</div>
-        <div class="wbtns"><button class="primary" id="liqAddGo">Review add</button></div>`;
-      const xEl = $('#liqXcp'), tEl = $('#liqTokAmt');
-      const upd = () => { Q.amtA = xEl.value; const x = Number(xEl.value); const t = x > 0 ? x * (ps.tokReserve / ps.xcpReserve) : 0; tEl.value = t ? t.toLocaleString('en-US', { maximumFractionDigits: 8 }) : ''; };
-      xEl.oninput = upd; upd();
-      $('#liqAddGo').onclick = () => doPool('pooldeposit', ps);
-    } else {
+    if (Q.sub === 'remove') {
+      if (!Q.pool) { body.innerHTML = `<div class="dash-empty">No pool for ${pairLbl()} to remove from.</div>`; return; }
+      const ps = poolSides();
       body.innerHTML = `
         <div class="mkt-side"><div class="mkt-lbl">Burn LP tokens</div><div class="mkt-in"><input id="liqLp" class="mkt-amt" type="number" min="0" step="any" placeholder="0.0" value="${esc(Q.lpAmt)}"/><span class="mkt-asset">LP</span></div></div>
-        <div class="lp-cost">LP asset · <span class="vmono">${esc(ps.lpAsset)}</span>. Burning LP returns your share of both reserves.</div>
+        <div class="lp-cost">LP asset · <span class="vmono">${esc(ps.lpAsset)}</span>. Burning LP returns your share of both ${pairLbl()} reserves.</div>
         <div class="wbtns"><button class="primary" id="liqRemGo">Review remove</button></div>`;
       const lpEl = $('#liqLp'); lpEl.oninput = () => { Q.lpAmt = lpEl.value; };
       $('#liqRemGo').onclick = () => doPool('poolwithdraw', ps);
+      return;
     }
+    // ADD — existing pool ⇒ ratio-locked; no pool ⇒ CREATE (you set both amounts = the starting price).
+    const ps = Q.pool ? poolSides() : null;
+    const ratio = ps && ps.resA > 0 ? ps.resB / ps.resA : null; // units of B per 1 A
+    body.innerHTML = `
+      ${ps ? `<div class="lp-cost">Existing pool · 1 ${esc(Q.a)} ≈ ${ratio.toLocaleString('en-US', { maximumFractionDigits: 8 })} ${esc(Q.b)}. Both sides deposit in ratio; you receive LP tokens.</div>`
+           : `<div class="warn" style="margin:2px 0 6px">No pool for ${pairLbl()} yet — you’ll <b>create</b> it. The two amounts you enter set the <b>starting price</b>; a mispriced new pool can be arbitraged. Match the real market rate.</div>`}
+      <div class="mkt-side"><div class="mkt-lbl">Deposit ${esc(Q.a)}</div><div class="mkt-in"><input id="liqAmtA" class="mkt-amt" type="number" min="0" step="any" placeholder="0.0" value="${esc(Q.amtA)}"/><span class="mkt-asset">${esc(Q.a)}</span></div></div>
+      <div class="mkt-flip"><span style="color:var(--muted);font-size:16px">＋</span></div>
+      <div class="mkt-side"><div class="mkt-lbl">Deposit ${esc(Q.b)}</div><div class="mkt-in"><input id="liqAmtB" class="mkt-amt" type="${ps ? 'text' : 'number'}" ${ps ? 'readonly' : 'min="0" step="any"'} placeholder="0.0" value="${esc(Q.amtB)}"/><span class="mkt-asset">${esc(Q.b)}</span></div></div>
+      <div class="wbtns"><button class="primary" id="liqAddGo">${ps ? 'Review add' : 'Review · create pool'}</button></div>`;
+    const aEl = $('#liqAmtA'), bEl = $('#liqAmtB');
+    if (ps) { const upd = () => { Q.amtA = aEl.value; const a = Number(aEl.value); const b = a > 0 ? a * ratio : 0; Q.amtB = b ? String(b) : ''; bEl.value = b ? b.toLocaleString('en-US', { maximumFractionDigits: 8 }) : ''; }; aEl.oninput = upd; upd(); }
+    else { aEl.oninput = () => { Q.amtA = aEl.value; }; bEl.oninput = () => { Q.amtB = bEl.value; }; }
+    $('#liqAddGo').onclick = () => doPool('pooldeposit', ps);
   }
   async function doPool(type, ps) {
     const s = $('#mktStatus'); if (!s) return;
@@ -623,20 +637,22 @@
     try {
       let params, summary;
       if (type === 'pooldeposit') {
-        const x = Number(Q.amtA); if (!(x > 0)) throw new Error('Enter an XCP amount.');
-        const tok = x * (ps.tokReserve / ps.xcpReserve);
-        const xcpRaw = String(Math.round(x * SATS)), tokRaw = String(Math.round(tok * (Q.tokenDiv ? SATS : 1)));
-        const p = Q.pool;
-        params = { asset_a: p.asset_a, asset_b: p.asset_b, quantity_a: ps.aIsXcp ? xcpRaw : tokRaw, quantity_b: ps.aIsXcp ? tokRaw : xcpRaw, sat_per_vbyte: S.feeRate };
-        summary = `${x} XCP + ${tok.toLocaleString('en-US', { maximumFractionDigits: 8 })} ${Q.token}`;
+        const a = Number(Q.amtA), b = Number(Q.amtB);
+        if (!(a > 0) || !(b > 0)) throw new Error(`Enter both ${Q.a} and ${Q.b} amounts.`);
+        const rawA = String(Math.round(a * (Q.aDiv ? SATS : 1))), rawB = String(Math.round(b * (Q.bDiv ? SATS : 1)));
+        // Align quantities to the pool's canonical asset_a/asset_b (existing), else our A/B (new pool).
+        const assetA = Q.pool ? Q.pool.asset_a : Q.a, assetB = Q.pool ? Q.pool.asset_b : Q.b;
+        const rawByAsset = { [Q.a]: rawA, [Q.b]: rawB };
+        params = { asset_a: assetA, asset_b: assetB, quantity_a: rawByAsset[assetA], quantity_b: rawByAsset[assetB], sat_per_vbyte: S.feeRate };
+        summary = `${a.toLocaleString('en-US', { maximumFractionDigits: 8 })} ${Q.a} + ${b.toLocaleString('en-US', { maximumFractionDigits: 8 })} ${Q.b}${Q.pool ? '' : ' · new pool'}`;
       } else {
         const lp = Number(Q.lpAmt); if (!(lp > 0)) throw new Error('Enter an LP amount.');
         params = { lp_asset: ps.lpAsset, quantity: String(Math.round(lp * SATS)), sat_per_vbyte: S.feeRate };
-        summary = `Burn ${lp} LP → your share of ${Q.token} / XCP`;
+        summary = `Burn ${lp} LP → your share of ${pairLbl()}`;
       }
       const { compose, report } = await window.WonderCpFlow.composeVerify(type, params, { feeRatePerVb: S.feeRate });
       const feeSats = compose.btc_fee != null ? nfmt(compose.btc_fee) : '—';
-      modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Confirm · ${type === 'pooldeposit' ? 'Add liquidity' : 'Remove liquidity'}</h3><div class="cp-addr">${esc(Q.token)} / XCP pool</div></div></div>
+      modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Confirm · ${type === 'pooldeposit' ? (Q.pool ? 'Add liquidity' : 'Create pool') : 'Remove liquidity'}</h3><div class="cp-addr">${pairLbl()} pool</div></div></div>
         <div class="m-rows"><div class="m-row"><span class="k">${type === 'pooldeposit' ? 'Deposit' : 'Withdraw'}</span><span class="v">${esc(summary)}</span></div><div class="m-row"><span class="k">Miner fee</span><span class="v">${feeSats} sats</span></div></div>
         ${window.WonderVerify.bannerHtml(report)}
         <div id="pcStatus" class="statusline" hidden></div>
@@ -648,5 +664,5 @@
     } catch (e) { s.className = 'statusline err'; s.textContent = /insufficient/i.test(e.message || '') ? 'Insufficient balance for this pool action.' : (e.message || 'Compose/verify failed.'); }
   }
 
-  window.WonderMarket = { open: async (token) => { TABS = 'swap'; if (token) { S.token = String(token).toUpperCase(); S.dir = 'buy'; S.tokenDiv = await divisible(S.token); } try { const f = await fetch('api/btc/fees').then((r) => r.json()); S.feeRate = f.halfHourFee || 6; } catch (_) {} try { const pr = await fetch('api/prices').then((r) => r.json()); BTCUSD = pr.bitcoin || 0; } catch (_) {} render(); } };
+  window.WonderMarket = { open: async (token) => { TABS = 'swap'; if (token) { S.buy = String(token).toUpperCase(); S.sell = 'XCP'; S.sellDiv = true; S.buyDiv = await divisible(S.buy); } try { const f = await fetch('api/btc/fees').then((r) => r.json()); S.feeRate = f.halfHourFee || 6; } catch (_) {} try { const pr = await fetch('api/prices').then((r) => r.json()); BTCUSD = pr.bitcoin || 0; } catch (_) {} render(); } };
 })();
