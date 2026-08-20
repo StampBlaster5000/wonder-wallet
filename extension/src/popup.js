@@ -274,13 +274,17 @@
   // would abort a restore mid-read. A tab also gives this guard-with-your-life flow room + persistence.
   function openBackupTab() {
     var url = chrome.runtime.getURL('sidepanel.html') + '?backup=1';
+    // A COMPACT window sized like the extension — not a maximized tab, and NOT the action popup (Chrome
+    // closes the popup the instant the OS file picker opens, which would abort a Restore mid-read). A real
+    // window keeps file import/export reliable. Reuse an already-open backup window if there is one.
     try {
       chrome.tabs.query({}, function (tabs) {
-        var existing = (tabs || []).filter(function (t) { return t.url && t.url.indexOf('sidepanel.html') >= 0 && t.url.indexOf('backup=1') >= 0; })[0];
-        if (existing) { try { chrome.tabs.update(existing.id, { active: true }); if (existing.windowId != null && chrome.windows) chrome.windows.update(existing.windowId, { focused: true }); } catch (e) {} }
+        var ex = (tabs || []).filter(function (t) { return t.url && t.url.indexOf('backup=1') >= 0; })[0];
+        if (ex && ex.windowId != null && chrome.windows) { try { chrome.windows.update(ex.windowId, { focused: true }); chrome.tabs.update(ex.id, { active: true }); } catch (e) {} return; }
+        if (chrome.windows && chrome.windows.create) chrome.windows.create({ url: url, type: 'popup', width: 420, height: 680, focused: true });
         else chrome.tabs.create({ url: url, active: true });
       });
-    } catch (e) { try { chrome.tabs.create({ url: url, active: true }); } catch (x) { try { window.open(url, '_blank'); } catch (y) {} } }
+    } catch (e) { try { chrome.windows.create({ url: url, type: 'popup', width: 420, height: 680, focused: true }); } catch (x) { try { chrome.tabs.create({ url: url, active: true }); } catch (y) {} } }
   }
   // Settings = every ww:* localStorage key (labels, watch-list, freeze flags, favorites, vault deposit
   // addrs). The vault (seed) lives in IndexedDB, NOT localStorage, so it is never swept in as "settings".
