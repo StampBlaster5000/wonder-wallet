@@ -73,6 +73,15 @@
   }
   // SECURITY (audit §4): clear modal contents on close so revealed seed/keys don't linger in the DOM.
   function closeModal() { const m = $('#wmodal'); if (m) { m.hidden = true; const c = $('#wmodalCard'); if (c) c.innerHTML = ''; } }
+  // Persistent post-send footer (no auto-close): swap the confirm modal's button row for a single Done,
+  // so the explorer link in the status line stays clickable until the user dismisses. `after` re-renders
+  // the home view on Done. Falls back to a long auto-close only if the modal has no button row.
+  function sentDone(after) {
+    const go = () => { closeModal(); try { if (after) after(); } catch (_) {} };
+    const btns = $('#wmodalCard .wbtns');
+    if (btns) { btns.innerHTML = '<button class="primary" id="wwDone">Done</button>'; const d = $('#wwDone'); if (d) d.onclick = go; }
+    else setTimeout(go, 6000);
+  }
   // WW-C05: on auto-lock, synchronously tear down every secret-bearing / in-progress surface so nothing
   // signable or secret survives the advertised lock boundary — the seed/private-key reveal modal (scrub
   // its DOM, which also drops the copy-button closures capturing the key), and every other tool overlay
@@ -373,8 +382,8 @@
         const pushed = await CONN.pushPsbt(signedStr);
         id = typeof pushed === 'string' ? pushed : (pushed && (pushed.txid || pushed.result)) || String(pushed);
       }
-      s.className = 'statusline'; s.innerHTML = `Broadcast ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(id)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(id).slice(0, 18))}…</a>`;
-      setTimeout(() => { closeModal(); DASH_ASSETS = null; renderConnected(); }, 2600);
+      s.className = 'statusline'; s.innerHTML = `Sent ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(id)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(id).slice(0, 18))}…</a>`;
+      sentDone(() => { DASH_ASSETS = null; renderConnected(); });
     } catch (err) { const m = err && err.message ? err.message : String(err); s.className = 'statusline err'; s.textContent = 'Failed: ' + (/reject|cancel|4001|denied/i.test(m) ? 'you declined in ' + CONN.name : m); }
   }
   // Cached BTC price for connected-wallet confirm screens (USD on network fees).
@@ -1718,8 +1727,9 @@
         if (x.kind === 'eth') { r = await fetch('api/eth/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raw: x.signed.raw, network: (window.WWNet ? window.WWNet.evm() : 'ethereum') }) }).then((z) => z.json()); id = r.txhash; }
         else { r = await fetch('api/sol/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txBase64: x.signed.txBase64 }) }).then((z) => z.json()); id = r.signature; }
         if (r.error) throw new Error(r.detail || r.error);
-        s.className = 'statusline load'; s.innerHTML = `Sent ✓ — <span style="color:var(--green)">${esc(String(id).slice(0, 20))}…</span>`;
-        setTimeout(() => { closeModal(); renderUnlocked(); }, 1800);
+        const exUrl = x.kind === 'eth' ? `https://etherscan.io/tx/${encodeURIComponent(id)}` : `https://solscan.io/tx/${encodeURIComponent(id)}`;
+        s.className = 'statusline'; s.innerHTML = `Sent ✓ — <a href="${exUrl}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(id).slice(0, 20))}…</a>`;
+        sentDone(() => renderUnlocked());
       } catch (err) { s.className = 'statusline err'; s.textContent = 'Failed: ' + (err.message || 'broadcast error'); }
     };
   }
@@ -2228,7 +2238,8 @@
         s.textContent = 'Broadcasting…';
         const r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: tx.txhex }) }).then((x) => x.json());
         if (r.error) throw new Error(r.detail || r.error);
-        s.className = 'statusline load'; s.innerHTML = `Broadcast ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(r.txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(r.txid).slice(0, 18))}…</a>`;
+        s.className = 'statusline'; s.innerHTML = `Sent ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(r.txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(r.txid).slice(0, 18))}…</a>`;
+        sentDone(() => renderUnlocked());
       } catch (err) { s.className = 'statusline err'; s.textContent = 'Rejected: ' + (err.message || 'broadcast failed'); }
     };
   }

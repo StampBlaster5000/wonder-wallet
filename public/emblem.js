@@ -238,8 +238,9 @@
       try {
         const r = await fetch('api/eth/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raw: signed.raw, network: (window.WWNet ? window.WWNet.evm() : 'ethereum') }) }).then((x) => x.json());
         if (r.error) throw new Error(r.detail || r.error);
-        statusEl.className = 'statusline load'; statusEl.innerHTML = `Broadcast ✓ — <a href="https://etherscan.io/tx/${encodeURIComponent(r.txhash)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(r.txhash).slice(0, 18))}…</a>`;
-        if (onDone) try { onDone(); } catch (_) {}
+        statusEl.className = 'statusline'; statusEl.innerHTML = `Sent ✓ — <a href="https://etherscan.io/tx/${encodeURIComponent(r.txhash)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(r.txhash).slice(0, 18))}…</a>`;
+        // Keep the receipt visible: turn Broadcast into Done (runs onDone on click) — no auto-return.
+        const eb = $('#embBroadcast'); if (eb) { eb.textContent = 'Done'; eb.disabled = false; eb.onclick = () => { try { if (onDone) onDone(); } catch (_) {} }; }
       } catch (err) { statusEl.className = 'statusline err'; statusEl.textContent = 'Rejected: ' + (err.message || 'broadcast failed'); }
     };
   }
