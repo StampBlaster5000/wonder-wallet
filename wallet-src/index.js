@@ -1113,6 +1113,16 @@ async function exportVaultBlob(password) {
   await decryptVault(blob, password); // throws 'wrong_password' if it won't open
   return blob;
 }
+// Export a backup whose file has its OWN password, decoupled from the wallet password. `walletPassword`
+// authorizes + reads the seed (re-auth, like Reveal seed); `backupPassword` is what the FILE is encrypted
+// with — and what you type to restore it. So forgetting the wallet password never locks the backup: you
+// restore with the backup password (which then becomes the wallet password on the restored device).
+async function exportBackup(walletPassword, backupPassword) {
+  const blob = await idb('get', 'vault');
+  if (!blob) throw new Error('no_vault');
+  const plain = await decryptVault(blob, walletPassword); // verify wallet pw + read the seed json
+  return encryptVault(plain, backupPassword);             // re-encrypt under the file's own password
+}
 async function importVaultBlob(blob, password) {
   if (!blob || !blob.ct || !blob.salt || !blob.iv) throw new Error('bad_backup');
   await decryptVault(blob, password); // verify BEFORE touching stored state
@@ -1279,7 +1289,7 @@ function selfTest() {
 
 const WonderCore = {
   generateMnemonic, validateMnemonic, deriveAccounts, deriveSecrets, deriveCustom, deriveReceiveAddrs,
-  fromWIF, hasVault, createVault, unlock, lock, isUnlocked, destroyVault, exportVaultBlob, importVaultBlob,
+  fromWIF, hasVault, createVault, unlock, lock, isUnlocked, destroyVault, exportVaultBlob, exportBackup, importVaultBlob,
   importKey, importKeys, removeImportedKey, importedAccounts, importedAddresses,
   accounts, secrets, revealSeed, armAutoLock, selfTest,
   isCwPhrase, cwSeedHex, cwDeriveAddrs, // Counterwallet / FreeWallet legacy passphrase (Electrum-v1)
@@ -1292,7 +1302,7 @@ const WonderCore = {
 // primitives (personalSignWithKey/bip322SignWithKey/signEvm/buildSend/build*Transfer/…).
 // Reduces blast radius if any script runs in-origin. (Strong CSP is the primary defense.)
 const PUBLIC_API = {
-  generateMnemonic, validateMnemonic, hasVault, createVault, unlock, lock, isUnlocked, destroyVault, exportVaultBlob, importVaultBlob,
+  generateMnemonic, validateMnemonic, hasVault, createVault, unlock, lock, isUnlocked, destroyVault, exportVaultBlob, exportBackup, importVaultBlob,
   importKey, importKeys, removeImportedKey, importedAccounts, importedAddresses,
   accounts, secrets, revealSeed, deriveCustom, deriveReceiveAddrs, isCwPhrase, cwDeriveAddrs, send, signMessage, signMessageImported, signCp, signStamp, psbtInputs, decodeTxOutputs, describePsbt, signProviderPsbt, signProvider, buildUnsignedSend, addrHash, sendEvm, sendSol, sendSpl, sendCnft, solSignMessage, solSignTransaction,
   buildHwSend, finalizeHwSend, txidOf, // hardware (Ledger) BTC send — keyless: builds an annotated PSBT, finalizes with device sigs

@@ -59,8 +59,10 @@
         <div><span class="k">UTXO labels/locks</span><span class="v">${c.utxo}</span></div>
         <div><span class="k">Pending vaults</span><span class="v">${c.vaults}</span></div>
       </div>
-      <label class="fine" for="bkPw">Wallet password — encrypts the backup, and is required to restore it</label>
-      <input type="password" id="bkPw" class="m-in" placeholder="Your wallet password" autocomplete="off" spellcheck="false" />
+      <label class="fine" for="bkWpw">Wallet password <span style="opacity:.7">— confirms it’s you (needed to export)</span></label>
+      <input type="password" id="bkWpw" class="m-in" placeholder="Wallet password" autocomplete="off" spellcheck="false" />
+      <label class="fine" for="bkFpw" style="margin-top:6px;display:block">Backup password <span style="opacity:.7">— you’ll type THIS to restore. Can differ from your wallet password; write it down.</span></label>
+      <input type="password" id="bkFpw" class="m-in" placeholder="Backup password" autocomplete="off" spellcheck="false" />
       <div id="bkStatus" class="statusline" hidden></div>
       <div class="wbtns">
         <button class="primary" id="bkExport">Export backup</button>
@@ -73,15 +75,17 @@
 
     // EXPORT — verify the password opens the vault, then bundle the ENCRYPTED vault blob + settings.
     $('#bkExport').onclick = async () => {
-      const pw = $('#bkPw').value; if (!pw) return setS('err', 'Enter your wallet password to export.');
+      const w = $('#bkWpw').value, f = $('#bkFpw').value;
+      if (!w) return setS('err', 'Enter your wallet password to confirm it’s you.');
+      if (!f || f.length < 8) return setS('err', 'Choose a backup password of at least 8 characters.');
       setS('load', 'Verifying &amp; packaging…');
       try {
-        if (!C || !C.exportVaultBlob) throw new Error('Wallet core not ready — reload the page.');
-        const vault = await C.exportVaultBlob(pw); // throws wrong_password / no_vault
+        if (!C || !C.exportBackup) throw new Error('Wallet core not ready — reload the page.');
+        const vault = await C.exportBackup(w, f); // decrypt with wallet pw, re-encrypt under the backup pw
         download({ _type: 'wonder-wallet-backup', _version: 2, exportedAt: new Date().toISOString(), vault, settings: collectSettings() }, 'wonder-wallet-backup.json');
-        setS('', 'Downloaded <b>wonder-wallet-backup.json</b> ✓ — store it somewhere safe &amp; offline.');
+        setS('', 'Downloaded <b>wonder-wallet-backup.json</b> ✓ — store it offline, and remember the <b>backup password</b>.');
       } catch (err) {
-        setS('err', err.message === 'wrong_password' ? 'Wrong password — nothing was exported.' : err.message === 'no_vault' ? 'No wallet on this device to back up.' : ('Failed: ' + (err.message || 'export error')));
+        setS('err', err.message === 'wrong_password' ? 'Wrong wallet password — nothing was exported.' : err.message === 'no_vault' ? 'No wallet on this device to back up.' : ('Failed: ' + (err.message || 'export error')));
       }
     };
 
@@ -96,12 +100,12 @@
         if (!obj || (obj._type !== 'wonder-wallet-backup' && obj._type !== 'wonder-wallet-settings')) return setS('err', 'Not a Wonder Wallet backup file.');
         try {
           if (obj.vault) { // full backup → restores the WALLET; needs the password; replaces any wallet here
-            const pw = $('#bkPw').value; if (!pw) return setS('err', 'Enter the backup’s password above, then choose the file again.');
+            const pw = $('#bkFpw').value; if (!pw) return setS('err', 'Enter the file’s <b>backup password</b> above, then choose the file again.');
             if (!C || !C.importVaultBlob) throw new Error('Wallet core not ready — reload the page.');
             if ((await C.hasVault()) && !confirm('This REPLACES the wallet currently on this device with the one in the backup. If you don’t have the current wallet’s seed, it will be lost. Continue?')) return setS('', 'Restore cancelled.');
-            await C.importVaultBlob(obj.vault, pw); // verifies password BEFORE overwriting
+            await C.importVaultBlob(obj.vault, pw); // verifies the backup password BEFORE overwriting
             const n = importSettings(obj);
-            setS('', `Wallet restored ✓ (+${n} settings) — reloading, then unlock with your password…`);
+            setS('', `Wallet restored ✓ (+${n} settings) — reloading. Unlock with this <b>backup password</b> (it’s your wallet password now).`);
           } else { // legacy settings-only
             const n = importSettings(obj);
             setS('', `Imported ${n} settings ✓ — reloading…`);

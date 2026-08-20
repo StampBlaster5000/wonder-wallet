@@ -315,9 +315,9 @@
   function backupPage() {
     app.innerHTML = '<div class="hw-page"><div class="hw-card">'
       + '<div class="p-name" style="font-size:19px">Restore from Backup</div>'
-      + '<div class="disp-panel" style="display:block;margin-top:10px"><div class="disp-hit">Restore your wallet from a <b>wonder-wallet-backup.json</b> file, using the password it was made with (a legacy settings-only file works too). If a wallet already exists on this device, restoring <b>replaces</b> it — so keep its seed.</div></div>'
+      + '<div class="disp-panel" style="display:block;margin-top:10px"><div class="disp-hit">Restore your wallet from a <b>wonder-wallet-backup.json</b> file, using the <b>backup password</b> you set when you exported it (not necessarily your old wallet password — a legacy settings-only file needs no password). If a wallet already exists here, restoring <b>replaces</b> it.</div></div>'
       + '<label class="p-hint" for="bkPw" style="margin-top:10px;display:block">Backup password</label>'
-      + '<input type="password" id="bkPw" class="p-in" placeholder="Password the backup was made with" autocomplete="off" spellcheck="false" />'
+      + '<input type="password" id="bkPw" class="p-in" placeholder="Backup password" autocomplete="off" spellcheck="false" />'
       + '<div id="bkMsg" style="min-height:18px;margin:6px 0"></div>'
       + '<button class="btn" id="bkRestore" style="white-space:nowrap">Choose backup file…</button>'
       + '<input type="file" id="bkFile" accept="application/json,.json" hidden />'
@@ -339,7 +339,7 @@
         var pw = pwEl.value; if (!pw) return msg('p-err', 'Enter the backup’s password above, then choose the file again.');
         var doRestore = async function () {
           msg('p-hint', 'Restoring…');
-          try { await C.importVaultBlob(obj.vault, pw); var n = restoreWwSettings(obj); msg('p-hint', 'Wallet restored ✓ (+' + n + ' settings) — opening your wallet, unlock with your password…'); setTimeout(home, 1400); }
+          try { await C.importVaultBlob(obj.vault, pw); var n = restoreWwSettings(obj); msg('p-hint', 'Wallet restored ✓ (+' + n + ' settings) — opening your wallet. Unlock with this <b>backup password</b> (it’s your wallet password now).'); setTimeout(home, 1700); }
           catch (e2) { msg('p-err', e2.message === 'wrong_password' ? 'Wrong password for this backup — nothing changed.' : e2.message === 'bad_backup' ? 'That backup file is corrupt or incomplete.' : ('Failed: ' + (e2.message || 'restore error'))); }
         };
         if (await C.hasVault()) {
@@ -355,24 +355,29 @@
   // close the popup). Hybrid: back up where you are; restore in a window that can hold a file dialog.
   function advBackup() {
     overlay('<div class="stamp-detail"><div class="st-head"><div class="st-htitle">Backup &amp; Restore</div><button class="m-close-x" id="bkX" title="Close" aria-label="Close">✕</button></div>'
-      + '<div class="disp-panel" style="display:block"><div class="disp-hit">⚠ <b>Handle with care — guard it with your life.</b> This is your <b>entire wallet</b> in one file: your seed (encrypted with your password) plus watch-list, labels, UTXO freeze flags, favorites &amp; vault deposit addresses. Anyone with this file <b>and</b> your password can take your funds. Store it offline — never in cloud, chat, or email.</div></div>'
-      + '<label class="p-hint" for="bkPw" style="margin-top:8px;display:block">Wallet password — encrypts the backup</label>'
-      + '<input type="password" id="bkPw" class="p-in" placeholder="Your wallet password" autocomplete="off" spellcheck="false" />'
+      + '<div class="disp-panel" style="display:block"><div class="disp-hit">⚠ <b>Handle with care — guard it with your life.</b> This is your <b>entire wallet</b> in one file: your seed (encrypted) plus watch-list, labels, UTXO freeze flags, favorites &amp; vault deposit addresses. Anyone with this file <b>and</b> its password can take your funds. Store it offline — never in cloud, chat, or email.</div></div>'
+      + '<label class="p-hint" for="bkWpw" style="margin-top:8px;display:block">Wallet password <span style="opacity:.7">— confirms it’s you</span></label>'
+      + '<input type="password" id="bkWpw" class="p-in" placeholder="Wallet password" autocomplete="off" spellcheck="false" />'
+      + '<label class="p-hint" for="bkFpw" style="margin-top:8px;display:block">Backup password <span style="opacity:.7">— you’ll type THIS to restore. Can differ from your wallet password. Write it down.</span></label>'
+      + '<input type="password" id="bkFpw" class="p-in" placeholder="Backup password" autocomplete="off" spellcheck="false" />'
       + '<div id="bkMsg" style="min-height:16px;margin:6px 0"></div>'
       + '<div class="actions"><button class="btn" id="bkExport">Export backup</button><button class="btn ghost" id="bkRestoreWin">Restore from file…</button></div>'
       + '<button class="btn ghost" id="bkClose" style="margin-top:8px">Close</button></div>');
-    var pwEl = document.getElementById('bkPw'); if (typeof addPwReveal === 'function') addPwReveal(pwEl);
+    var wpw = document.getElementById('bkWpw'), fpw = document.getElementById('bkFpw');
+    if (typeof addPwReveal === 'function') { addPwReveal(wpw); addPwReveal(fpw); }
     var msg = function (cls, t) { var m = document.getElementById('bkMsg'); if (m) { m.className = cls; m.innerHTML = t; } };
     document.getElementById('bkX').onclick = closeOv; document.getElementById('bkClose').onclick = closeOv;
     document.getElementById('bkRestoreWin').onclick = function () { closeOv(); openBackupTab(); }; // restore = the compact window
     document.getElementById('bkExport').onclick = async function () {
-      var pw = pwEl.value; if (!pw) return msg('p-err', 'Enter your wallet password to export.');
+      var w = wpw.value, f = fpw.value;
+      if (!w) return msg('p-err', 'Enter your wallet password to confirm it’s you.');
+      if (!f || f.length < 8) return msg('p-err', 'Choose a backup password of at least 8 characters.');
       msg('p-hint', 'Verifying &amp; packaging…');
       try {
-        var vault = await C.exportVaultBlob(pw);
+        var vault = await C.exportBackup(w, f); // decrypt with wallet pw, re-encrypt under the backup pw
         bkDownload({ _type: 'wonder-wallet-backup', _version: 2, exportedAt: new Date().toISOString(), vault: vault, settings: collectWwSettings() }, 'wonder-wallet-backup.json');
-        msg('p-hint', 'Downloaded <b>wonder-wallet-backup.json</b> ✓ — store it safe &amp; offline.');
-      } catch (e) { msg('p-err', e.message === 'wrong_password' ? 'Wrong password — nothing was exported.' : e.message === 'no_vault' ? 'No wallet on this device to back up.' : ('Failed: ' + (e.message || 'export error'))); }
+        msg('p-hint', 'Downloaded <b>wonder-wallet-backup.json</b> ✓ — store it offline, and remember the <b>backup password</b>.');
+      } catch (e) { msg('p-err', e.message === 'wrong_password' ? 'Wrong wallet password — nothing was exported.' : e.message === 'no_vault' ? 'No wallet on this device to back up.' : ('Failed: ' + (e.message || 'export error'))); }
     };
   }
   document.addEventListener('click', function (e) { if (!e.target.closest) return; if (e.target.closest('#bPanel')) openSidePanel(); else if (e.target.closest('#bTerm')) openTerminal(); });
