@@ -319,7 +319,7 @@
       + '<label class="p-hint" for="bkPw" style="margin-top:10px;display:block">Backup password</label>'
       + '<input type="password" id="bkPw" class="p-in" placeholder="Password the backup was made with" autocomplete="off" spellcheck="false" />'
       + '<div id="bkMsg" style="min-height:18px;margin:6px 0"></div>'
-      + '<div class="actions"><button class="btn" id="bkRestore">Choose backup file…</button></div>'
+      + '<button class="btn" id="bkRestore" style="white-space:nowrap">Choose backup file…</button>'
       + '<input type="file" id="bkFile" accept="application/json,.json" hidden />'
       + '<div class="hw-foot">🔒 Nothing changes until the password verifies the file.</div>'
       + '</div></div>';
