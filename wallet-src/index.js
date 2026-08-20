@@ -253,21 +253,35 @@ function deriveReceiveAddrs(pubHex, chainCodeHex, type = 'nativeSegwit', count =
 // vbytes estimate for a P2WPKH spend.
 // Per-input vbyte weight by source address type (P2PKH legacy is ~2× a segwit input).
 const IN_VB = { legacy: 148, nestedSegwit: 91, nativeSegwit: 68, taproot: 58 };
-function estimateVsize(nIn, nOut, type = 'nativeSegwit') { return Math.ceil(nIn * (IN_VB[type] || 68) + nOut * 31 + 11); }
+// WW-C15: serialized vbytes of ONE output by its script type — value(8) + scriptLen varint(1) + script.
+// P2WPKH=31, P2SH=32, P2PKH=34, P2WSH/P2TR=43. A flat 31 (the old assumption) UNDERFUNDS any send to a
+// P2TR/P2WSH/legacy recipient, so the broadcast feerate falls below what the user set.
+const OUT_VB = { legacy: 34, nestedSegwit: 32, nativeSegwit: 31, taproot: 43 };
+function outVbForAddr(addr, network = 'mainnet') {
+  try { const spk = btc.OutScript.encode(btc.Address(btcNet(network)).decode(addr)); return 8 + (spk.length < 253 ? 1 : 3) + spk.length; }
+  catch (_) { return 34; } // conservative fallback (over-, never under-estimate) if the address won't parse
+}
+// `outs` may be an output COUNT (back-compat: assumes P2WPKH 31 vB each) OR an ARRAY of per-output vB sizes.
+function estimateVsize(nIn, outs, type = 'nativeSegwit') {
+  const outVb = Array.isArray(outs) ? outs.reduce((a, b) => a + b, 0) : outs * 31;
+  return Math.ceil(nIn * (IN_VB[type] || 68) + outVb + 11);
+}
 
 /** Asset-safe coin selection (caller passes ONLY spendable UTXOs). Largest-first. */
-function selectUtxos(utxos, targetSats, feeRate, sendMax, type = 'nativeSegwit') {
+// recipVb/changeVb: the real vbyte size of the recipient + change outputs (WW-C15). Default 31 (P2WPKH)
+// keeps legacy callers byte-for-byte identical; buildSend/buildUnsignedSend/buildHwSend pass true sizes.
+function selectUtxos(utxos, targetSats, feeRate, sendMax, type = 'nativeSegwit', recipVb = 31, changeVb = 31) {
   const sorted = [...utxos].sort((a, b) => b.value - a.value);
   if (sendMax) {
     const totalIn = sorted.reduce((a, u) => a + u.value, 0);
-    const fee = estimateVsize(sorted.length, 1, type) * feeRate;
+    const fee = estimateVsize(sorted.length, [recipVb], type) * feeRate; // send-max: recipient only, no change
     if (totalIn <= fee) throw new Error('insufficient_funds');
     return { selected: sorted, totalIn, fee: Math.ceil(fee), amount: totalIn - Math.ceil(fee), change: 0 };
   }
   const selected = []; let totalIn = 0;
   for (const u of sorted) {
     selected.push(u); totalIn += u.value;
-    const fee = Math.ceil(estimateVsize(selected.length, 2, type) * feeRate);
+    const fee = Math.ceil(estimateVsize(selected.length, [recipVb, changeVb], type) * feeRate);
     if (totalIn >= targetSats + fee) return { selected, totalIn, fee, amount: targetSats, change: totalIn - targetSats - fee };
   }
   throw new Error('insufficient_funds');
@@ -312,7 +326,8 @@ function buildSend({ mnemonic, passphrase = '', account = 0, index = 0, type = '
   else { seed = masterSeed(mnemonic, passphrase); node = HDKey.fromMasterSeed(seed).derive(btcPathStr(mnemonic, network, type, account, index)); }
   const p = btcPayment(node.publicKey, type, network);
   const fromAddress = p.address;
-  const sel = selectUtxos(utxos, amountSats, feeRate, sendMax, type);
+  const recipVb = outVbForAddr(recipient, network), changeVb = OUT_VB[type] || 31; // WW-C15: size by real script type
+  const sel = selectUtxos(utxos, amountSats, feeRate, sendMax, type, recipVb, changeVb);
   const seq = rbf ? 0xfffffffd : 0xffffffff;
   const tx = new btc.Transaction({});
   for (const u of sel.selected) addTypedInput(tx, u, type, p, seq, prevTxs);
@@ -322,9 +337,10 @@ function buildSend({ mnemonic, passphrase = '', account = 0, index = 0, type = '
   if (!sendMax && change >= 294) tx.addOutputAddress(fromAddress, BigInt(change), net); // change back to the same source type
   else change = 0; // dust change rolls into the fee
 
+  const outVbs = change ? [recipVb, changeVb] : [recipVb];
   const result = { fromAddress, recipient, amountSats: outAmount, change, fee: sel.totalIn - outAmount - change, inputs: sel.selected.map((u) => ({ utxo: `${u.txid}:${u.vout}`, value: u.value })), totalIn: sel.totalIn };
   // local verification: re-read what we built before signing (or exporting the PSBT)
-  verifyBuiltOutputs(tx, { recipient, outAmount, fromAddress, change, totalIn: sel.totalIn, feeRate, expectVsize: estimateVsize(sel.selected.length, change ? 2 : 1, type), network });
+  verifyBuiltOutputs(tx, { recipient, outAmount, fromAddress, change, totalIn: sel.totalIn, feeRate, expectVsize: estimateVsize(sel.selected.length, outVbs, type), network });
   if (sign) {
     tx.sign(node.privateKey); tx.finalize();
     result.txhex = hex.encode(tx.extract());
@@ -332,7 +348,7 @@ function buildSend({ mnemonic, passphrase = '', account = 0, index = 0, type = '
     result.vsize = tx.vsize;
   } else {
     result.psbt = base64.encode(tx.toPSBT(0)); // unsigned PSBT for export
-    result.vsize = estimateVsize(sel.selected.length, change ? 2 : 1, type);
+    result.vsize = estimateVsize(sel.selected.length, outVbs, type);
   }
   if (seed) seed.fill(0);
   return result;
@@ -348,7 +364,8 @@ function buildUnsignedSend({ pubkey, type = 'nativeSegwit', utxos, recipient, am
   const pub = pubkey instanceof Uint8Array ? pubkey : hex.decode(String(pubkey).replace(/^0x/, ''));
   const p = btcPayment(pub, type, network);
   const fromAddress = p.address;
-  const sel = selectUtxos(utxos, amountSats, feeRate, sendMax, type);
+  const recipVb = outVbForAddr(recipient, network), changeVb = OUT_VB[type] || 31; // WW-C15
+  const sel = selectUtxos(utxos, amountSats, feeRate, sendMax, type, recipVb, changeVb);
   const seq = rbf ? 0xfffffffd : 0xffffffff;
   const tx = new btc.Transaction({});
   for (const u of sel.selected) addTypedInput(tx, u, type, p, seq, prevTxs);
@@ -357,7 +374,7 @@ function buildUnsignedSend({ pubkey, type = 'nativeSegwit', utxos, recipient, am
   let change = sel.change;
   if (!sendMax && change >= 294) tx.addOutputAddress(fromAddress, BigInt(change), net);
   else change = 0;
-  const expectVsize = estimateVsize(sel.selected.length, change ? 2 : 1, type);
+  const expectVsize = estimateVsize(sel.selected.length, change ? [recipVb, changeVb] : [recipVb], type);
   verifyBuiltOutputs(tx, { recipient, outAmount, fromAddress, change, totalIn: sel.totalIn, feeRate, expectVsize, network });
   return { psbt: base64.encode(tx.toPSBT(0)), fromAddress, recipient, amountSats: outAmount, change, fee: sel.totalIn - outAmount - change, vsize: expectVsize, inputs: sel.selected.map((u) => ({ utxo: `${u.txid}:${u.vout}`, value: u.value })), totalIn: sel.totalIn };
 }
@@ -376,7 +393,8 @@ function bipPathArr(str) {
 function buildHwSend({ utxos, recipient, amountSats, feeRate, sendMax = false, rbf = true, mfp, accountPath, sourcePath, sourcePub, type = 'nativeSegwit' }) {
   if (type !== 'nativeSegwit') throw new Error('hw_send_type_unsupported'); // P2WPKH only for v1
   const fpr = parseInt(String(mfp).replace(/^0x/, ''), 16) >>> 0;
-  const sel = selectUtxos(utxos, amountSats, feeRate, sendMax, type);
+  const recipVb = outVbForAddr(recipient), changeVb = OUT_VB[type] || 31; // WW-C15 (source is P2WPKH; recipient may not be)
+  const sel = selectUtxos(utxos, amountSats, feeRate, sendMax, type, recipVb, changeVb);
   const seq = rbf ? 0xfffffffd : 0xffffffff;
   const tx = new btc.Transaction({});
   for (const u of sel.selected) {
@@ -399,7 +417,7 @@ function buildHwSend({ utxos, recipient, amountSats, feeRate, sendMax = false, r
   return {
     psbt: base64.encode(tx.toPSBT(0)),
     fee: sel.totalIn - outAmount - change, change, amountSats: outAmount,
-    vsize: estimateVsize(sel.selected.length, change ? 2 : 1, type),
+    vsize: estimateVsize(sel.selected.length, change ? [recipVb, changeVb] : [recipVb], type),
     inputs: sel.selected.map((u) => ({ utxo: `${u.txid}:${u.vout}`, value: u.value })), totalIn: sel.totalIn,
   };
 }
