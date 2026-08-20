@@ -212,7 +212,14 @@
     let fees = { fastestFee: 2, halfHourFee: 1, hourFee: 1 };
     try { fees = await fetch('api/btc/fees').then((r) => r.json()); } catch (_) {}
     let btcUsd = 0; try { btcUsd = (await fetch('api/prices').then((r) => r.json())).bitcoin || 0; } catch (_) {}
-    let rate = fees.halfHourFee || 1;
+    // Stagger the presets strictly descending (Fast > Med > Econ, ≥1 sat/vB apart). Mempool often returns
+    // equal rates at low load; keeping them distinct means exactly ONE preset lights up (no tie), and Fast
+    // is always a touch above Med, as users expect.
+    const econ = Math.max(1, Math.round(fees.hourFee || fees.economyFee || 1));
+    const med = Math.max(Math.round(fees.halfHourFee || econ), econ + 1);
+    const fast = Math.max(Math.round(fees.fastestFee || med), med + 1);
+    const preset = { fastestFee: fast, halfHourFee: med, hourFee: econ };
+    let rate = med;
     const usd = (sats) => (btcUsd && sats ? ` <span class="fine">≈ $${((sats / 1e8) * btcUsd).toLocaleString('en-US', { maximumFractionDigits: 2 })}</span>` : '');
 
     // Legacy inputs need the full prev-tx (nonWitnessUtxo) even to ESTIMATE — fetch once, reuse for sign.
@@ -230,7 +237,7 @@
     $('#ccCard').insertAdjacentHTML('beforeend', `<div class="cc-preview" id="ccPrev">
       <div class="cc-prev-h">Consolidate ${sel.length} UTXOs → 1</div>
       <div class="cc-prev-row"><span>Inputs</span><b>${sel.length} · ${sat2btc(total)} BTC</b></div>
-      <div class="fee-row" id="ccFeeRow" style="margin-top:10px">${[['fastestFee', 'Fast'], ['halfHourFee', 'Med'], ['hourFee', 'Econ']].map(([k, l]) => `<button type="button" class="feeopt${(fees[k] || 1) === rate ? ' on' : ''}" data-r="${fees[k] || 1}">${l} · ${fees[k] || '–'}</button>`).join('')}<input id="ccFeeCustom" class="m-in fee-custom" type="number" min="0.1" step="0.1" placeholder="custom s/vB"/></div>
+      <div class="fee-row" id="ccFeeRow" style="margin-top:10px">${[['fastestFee', 'Fast'], ['halfHourFee', 'Med'], ['hourFee', 'Econ']].map(([k, l]) => `<button type="button" class="feeopt${preset[k] === rate ? ' on' : ''}" data-r="${preset[k]}">${l} · ${preset[k]}</button>`).join('')}<input id="ccFeeCustom" class="m-in fee-custom" type="number" min="0.1" step="0.1" placeholder="custom s/vB"/></div>
       <div id="ccFeeHint" class="fee-hint" hidden></div>
       <div id="ccPrevCalc"></div>
       <div class="fine" style="margin-top:8px">Combines into one UTXO at <b>${esc(STATE.address.slice(0, 10))}…</b> (same address).</div>

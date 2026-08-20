@@ -437,7 +437,7 @@ function finalizeHwSend(psbtB64, entries) {
 }
 // Compute the txid of an already-signed raw transaction hex (e.g. when the Ledger lib finalizes for us).
 function txidOf(txhex) {
-  const tx = btc.Transaction.fromRaw(hex.decode(String(txhex).replace(/^0x/, '')), { allowUnknownOutputs: true, allowUnknownInputs: true, allowLegacyWitnessUtxo: true });
+  const tx = btc.Transaction.fromRaw(hex.decode(String(txhex).replace(/^0x/, '')), { allowUnknownOutputs: true, allowUnknownInputs: true, allowLegacyWitnessUtxo: true, disableScriptCheck: true });
   return tx.id;
 }
 
@@ -493,7 +493,7 @@ function addrHash(address) {
 // txid and (b) its output[vout] value equals the claimed value. (SegWit amounts are BIP143-committed.)
 function verifyLegacyPrevout(prevHex, txid, vout, claimedValue) {
   let ptx;
-  try { ptx = btc.Transaction.fromRaw(hex.decode(String(prevHex).replace(/^0x/, '')), { allowUnknownOutputs: true, allowLegacyWitnessUtxo: true }); }
+  try { ptx = btc.Transaction.fromRaw(hex.decode(String(prevHex).replace(/^0x/, '')), { allowUnknownOutputs: true, allowLegacyWitnessUtxo: true, disableScriptCheck: true }); }
   catch (_) { throw new Error('prevtx_undecodable:' + txid); }
   if (ptx.id !== txid) throw new Error('prevtx_mismatch:' + txid); // proxy handed the wrong previous transaction
   let o; try { o = ptx.getOutput(vout); } catch (_) { o = null; }
@@ -532,7 +532,7 @@ function decodeTxOutputs(psbtHexOrB64, network = 'mainnet') {
   const bytes = /^[0-9a-fA-F]+$/.test(s) ? hex.decode(s) : base64.decode(s);
   let tx;
   try { tx = btc.Transaction.fromPSBT(bytes, { allowUnknownOutputs: true, allowUnknownInputs: true }); }
-  catch (_) { tx = btc.Transaction.fromRaw(bytes, { allowUnknownOutputs: true, allowLegacyWitnessUtxo: true }); }
+  catch (_) { tx = btc.Transaction.fromRaw(bytes, { allowUnknownOutputs: true, allowLegacyWitnessUtxo: true, disableScriptCheck: true }); }
   const net = btcNet(network);
   const out = [];
   for (let i = 0; i < tx.outputsLength; i++) {
@@ -559,7 +559,7 @@ function psbtInputs(psbtHexOrB64) {
 function nwOut(nw, index) {
   if (!nw) return null;
   try {
-    if (nw instanceof Uint8Array) { const ptx = btc.Transaction.fromRaw(nw, { allowUnknownOutputs: true, allowLegacyWitnessUtxo: true }); return ptx.getOutput(index); }
+    if (nw instanceof Uint8Array) { const ptx = btc.Transaction.fromRaw(nw, { allowUnknownOutputs: true, allowLegacyWitnessUtxo: true, disableScriptCheck: true }); return ptx.getOutput(index); }
     if (nw.outputs && nw.outputs[index]) return nw.outputs[index];
   } catch (_) {}
   return null;
@@ -696,7 +696,7 @@ function bip322SignWithKey(message, privKey) {
 
   // to_spend: output first (btc-signer locks outputs once an input is finalized),
   // then the null input with scriptSig = OP_0 PUSH32 <mhash>.
-  const toSpend = new btc.Transaction({ version: 0, lockTime: 0, allowUnknownInputs: true, allowUnknownOutputs: true, allowLegacyWitnessUtxo: true });
+  const toSpend = new btc.Transaction({ version: 0, lockTime: 0, allowUnknownInputs: true, allowUnknownOutputs: true, allowLegacyWitnessUtxo: true, disableScriptCheck: true });
   toSpend.addOutput({ script, amount: 0n });
   toSpend.addInput({ txid: new Uint8Array(32), index: 0xffffffff, sequence: 0, finalScriptSig: concatBytes(new Uint8Array([0x00, 0x20]), mhash) });
 
