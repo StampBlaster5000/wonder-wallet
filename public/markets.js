@@ -530,12 +530,13 @@
   }
 
   function gearMenu() {
+    const box = document.getElementById('mktQuote'); if (!box) return;
+    // Toggle: if the slippage picker is already open, the gear hides it (don't stack rows).
+    const open = box.querySelector('.mkt-slip'); if (open) { open.remove(); return; }
     const opts = ['auto', '0.5', '1', '2', '3'];
-    const box = document.getElementById('mktQuote');
-    // lightweight inline slippage picker
     const pick = document.createElement('div'); pick.className = 'mkt-slip';
     pick.innerHTML = 'Max slippage: ' + opts.map((o) => `<button class="mini${String(S.slippage) === o ? ' on' : ''}" data-s="${o}">${o === 'auto' ? 'Auto' : o + '%'}</button>`).join('');
-    if (box) { box.prepend(pick); pick.querySelectorAll('[data-s]').forEach((b) => (b.onclick = () => { S.slippage = b.dataset.s; render(); })); }
+    box.prepend(pick); pick.querySelectorAll('[data-s]').forEach((b) => (b.onclick = () => { S.slippage = b.dataset.s; render(); }));
   }
 
   async function reviewSwap() {
