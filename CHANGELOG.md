@@ -3,6 +3,40 @@
 Notable changes to Wonder Wallet. The project is pre-1.0 and in active development; the extension and
 the hosted Terminal version independently. Dates are approximate to the release window.
 
+## Encrypted Backup & security hardening — Extension v0.54.7 (2026-08-20)
+
+- **Backup & Restore (all-in-one, encrypted).** A new Advanced-menu tool exports your whole wallet — the
+  seed (encrypted) plus settings (watch-list, labels, UTXO freeze flags, favorites, vault deposit
+  addresses) — into a single `wonder-wallet-backup.json`. The file has its **own password**, set at
+  export and separate from the wallet password, so forgetting the wallet password never locks the backup;
+  the backup password becomes the wallet password on the restored device. The seed is never serialized in
+  plaintext (the vault blob stays Argon2id→AES-GCM ciphertext). **Export** runs inline in the popup;
+  **Restore** opens a compact window anchored top-right (like the signing popup, reliable file picker) and
+  is also offered on the fresh-wallet screen next to Create / Restore-seed. Wrong passwords are rejected on
+  both export and import before anything is written.
+- **dApp provider hardening (pentest Phase H).** Clear-signing flags mutable sighashes
+  (`SINGLE|ANYONECANPAY`) and decodes EVM token approvals — unlimited `approve` / `setApprovalForAll` raise
+  a loud danger. The generic RPC route no longer serves `eth_sendRawTransaction` to unconnected origins;
+  every signature re-checks that the grant still exists and still points at the granted account + network
+  before it's released; grant-store races and approval-window fan-out are bounded; the Ledger path
+  re-checks input coin-control immediately before the device signs; PSBT addresses render for the active
+  network on testnet.
+- **Versioned download** — the beta zip is now `wonder-wallet-extension-<version>.zip`, so a stale build
+  can't be served from an edge cache after an update.
+
+## Fees, receipts & encrypted Backup — Terminal (2026-08-20)
+
+- **Backup & Restore** — the same all-in-one encrypted backup (seed + settings, own backup password) is in
+  the Terminal's Advanced menu.
+- **Honest fee rate on SRC-20 / Stamp compose.** The confirm screen recomputes the true signed vsize by
+  output *script type* and warns when a composer priced the fee below the sat/vB you asked for (P2WSH data
+  outputs are 43 vB, not the flat 31 estimators assumed). Wonder's own send estimator (WW-C15) now sizes
+  non-P2WPKH recipients correctly, so sends to taproot / legacy addresses don't underpay.
+- **Connected-wallet fee display** — Counterparty sends via a connected wallet now show the real miner fee
+  (the server bakes per-input `witnessUtxo` into the PSBT so external signers can compute it).
+- **Persistent send receipt** — after broadcast the confirm screen stays put with a clickable
+  mempool/explorer link and a **Done** button on every send type, instead of auto-closing.
+
 ## Extension v0.53.9 (2026-08-16)
 
 - **Password floor lowered 12 → 8** on Create and Restore, matching the "8+ characters" placeholders and
