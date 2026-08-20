@@ -112,6 +112,23 @@
     return { address: b.address, publicKey: b.publicKey || null, legacy: (acct.bitcoin.legacy || {}).address, taproot: (acct.bitcoin.taproot || {}).address, eth: (acct.ethereum || {}).address || null, sol: (acct.solana || {}).address || null };
   }
 
+  // WW-B08 / WW-C10: before releasing ANY signature, prove the account we're about to sign with STILL
+  // derives to the address this site was granted. If the vault was destroyed + recreated with a
+  // DIFFERENT seed (B08 — persistent grant now points at a stranger's key), or the mainnet/testnet
+  // toggle changed the derivation (C10 — grant wasn't network-bound), the freshly-derived address no
+  // longer matches the granted one. Fail closed and tell the user to reconnect. Called at the top of
+  // every sign onApprove so it runs at signing time, against the CURRENT vault + network.
+  function assertGrantIntegrity(chain) {
+    var reconnect = 'The connected account no longer matches what "' + hostOf() + '" approved — the wallet or network changed. Reconnect the site, then try again.';
+    var cur; try { cur = deriveActive(pinnedAcct()); } catch (_) { cur = null; }
+    if (!cur) throw new Error(reconnect);
+    if (chain === 'eth') { if (!req.eth || !cur.eth || String(req.eth).toLowerCase() !== String(cur.eth).toLowerCase()) throw new Error(reconnect); return; }
+    if (chain === 'sol') { if (!req.sol || !cur.sol || req.sol !== cur.sol) throw new Error(reconnect); return; }
+    // BTC: the freshly-derived active address must be one the site was actually granted.
+    var granted = {}; (req.myAddresses || []).forEach(function (a) { granted[a] = true; }); if (req.accountAddress) granted[req.accountAddress] = true;
+    if (!cur.address || !granted[cur.address]) throw new Error(reconnect);
+  }
+
   // Origin banner shown on EVERY dialog — the anti-phishing anchor.
   function originBar() {
     var host = '';
@@ -293,7 +310,7 @@
   function renderSignMessage() {
     var P = pinnedAcct();
     var sum = S.summarizeMessage(req.params && req.params[0], { origin: hostOf() });
-    onApprove = function () { var m = req.params && req.params[0]; var sm = (P.kind === 'imported') ? C.signMessageImported(m, P.importedId, P.type) : C.signMessage(m, P.account, P.type, netMode()); return { result: (sm && sm.signature) || sm }; };
+    onApprove = function () { assertGrantIntegrity('btc'); var m = req.params && req.params[0]; var sm = (P.kind === 'imported') ? C.signMessageImported(m, P.importedId, P.type) : C.signMessage(m, P.account, P.type, netMode()); return { result: (sm && sm.signature) || sm }; };
     app.innerHTML = '<div class="ap-wrap">' + originBar()
       + '<div class="ap-title">Signature request</div>'
       + '<div class="ap-hint">The site wants you to sign this message with <span class="mono">' + esc(short(req.accountAddress)) + '</span> (' + esc(sum.scheme) + '):</div>'
@@ -313,7 +330,7 @@
     var opts = (req.params && typeof req.params[1] === 'object' && req.params[1]) || (raw && typeof raw === 'object' ? raw : {});
     var P = pinnedAcct();
     var types = req.paired ? (P.type === 'legacy' ? ['legacy'] : [P.type, 'legacy']) : undefined;
-    onApprove = function () { return { result: C.signProvider({ psbt: psbtHex, toSignInputs: opts.signInputs || opts.toSignInputs, autoFinalized: opts.autoFinalized, account: P.account, index: 0, type: P.type, types: types, importedId: P.importedId, prevTxs: opts.prevTxs || {}, network: netMode() }) }; };
+    onApprove = function () { assertGrantIntegrity('btc'); return { result: C.signProvider({ psbt: psbtHex, toSignInputs: opts.signInputs || opts.toSignInputs, autoFinalized: opts.autoFinalized, account: P.account, index: 0, type: P.type, types: types, importedId: P.importedId, prevTxs: opts.prevTxs || {}, network: netMode() }) }; };
     var d;
     try {
       d = C.describePsbt(psbtHex);
@@ -437,7 +454,7 @@
     // Sign the DECODED message bytes (personal_sign carries hex) — signing the literal "0x…" string
     // would produce a signature over the wrong data and dApps (SIWE login) would reject it.
     var msg = /^0x[0-9a-fA-F]*$/.test(raw) ? hexToBytes(raw) : raw;
-    onApprove = function () { return { result: C.ethPersonalSign(msg, pinnedAcct().account) }; };
+    onApprove = function () { assertGrantIntegrity('eth'); return { result: C.ethPersonalSign(msg, pinnedAcct().account) }; };
     app.innerHTML = '<div class="ap-wrap">' + originBar()
       + '<div class="ap-title">Signature request · Ethereum</div>'
       + '<div class="ap-hint">Sign this message with <span class="mono">' + esc(short(req.eth || req.accountAddress)) + '</span>:</div>'
@@ -455,6 +472,7 @@
 
     function draw() {
       onApprove = function () {
+        assertGrantIntegrity('eth');
         var p = prep ? Promise.resolve(prep) : postJson('/api/eth/prepare', prepBody);
         return p.then(function (pp) {
           if (!pp || pp.error) throw new Error((pp && (pp.detail || pp.error)) || 'Could not prepare the transaction (gas/nonce).');
@@ -505,7 +523,7 @@
     var td = asTd(params[1]) || asTd(params[0]);
     if (!td) return renderError('Could not parse the EIP-712 typed-data payload.');
     var dom = td.domain || {};
-    onApprove = function () { return { result: C.ethSignTypedData(td, pinnedAcct().account) }; };
+    onApprove = function () { assertGrantIntegrity('eth'); return { result: C.ethSignTypedData(td, pinnedAcct().account) }; };
     var msgStr = ''; try { msgStr = JSON.stringify(td.message, null, 2); } catch (_) { msgStr = String(td.message); }
     var domRows = '';
     if (dom.name) domRows += kv('Domain', dom.name + (dom.version ? ' · v' + dom.version : ''));
@@ -529,7 +547,7 @@
     var msgB64 = (req.params && req.params[0]) || '';
     var text = ''; try { text = new TextDecoder().decode(b64ToBytes(msgB64)); } catch (_) {}
     var sum = S.summarizeMessage(text, { origin: hostOf() });
-    onApprove = function () { return { result: C.solSignMessage(msgB64, pinnedAcct().account) }; };
+    onApprove = function () { assertGrantIntegrity('sol'); return { result: C.solSignMessage(msgB64, pinnedAcct().account) }; };
     app.innerHTML = '<div class="ap-wrap">' + originBar()
       + '<div class="ap-title">Signature request · Solana</div>'
       + '<div class="ap-hint">Sign this message with <span class="mono">' + esc(short(req.sol || req.accountAddress)) + '</span>:</div>'
@@ -543,6 +561,7 @@
     var isSend = req.method === 'sol_signAndSendTransaction';
     var pf = solPriorityFee(b64ToBytes(txB64)); // WW-C03: decode the hidden Compute Budget priority fee
     onApprove = function () {
+      assertGrantIntegrity('sol');
       // Hard cap: refuse an abusive priority fee outright — no legitimate action needs > 0.5 SOL in fees.
       if (pf && pf.priorityLamports > SOL_FEE_HARD_CAP) throw new Error('Refused — this transaction sets a Solana priority fee of ' + (pf.priorityLamports / 1e9).toFixed(4) + ' SOL, above Wonder’s safety cap. A malicious site can drain your balance this way; nothing was signed.');
       var signedB64 = C.solSignTransaction(txB64, pinnedAcct().account);
