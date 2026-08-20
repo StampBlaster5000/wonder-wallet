@@ -434,7 +434,7 @@
 
   async function render() {
     stopCd();
-    if (IS_HW_WIN) return; // the dedicated hardware-connect tab drives its own pages (hwLandingPage/hwSuccessPage)
+    if (IS_HW_WIN || IS_BACKUP_WIN) return; // dedicated tabs drive their own pages (hwLandingPage / backupPage); don't let lock/storage events repaint the wallet over them
     if (acctKind === 'hardware' && HW) return hwRenderMain(); // a paired Ledger renders even with no seed vault
     try {
       var has = await C.hasVault();
