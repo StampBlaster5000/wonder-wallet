@@ -293,29 +293,22 @@
   function bkDownload(obj, name) { var b = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' }); var a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000); }
   // Full-page Backup & Restore (the ?backup=1 tab). Export packages the ENCRYPTED vault blob + settings;
   // Restore verifies the password before overwriting, then re-opens the wallet to unlock.
+  // The compact window is RESTORE-only (export lives inline in the popup — see advBackup). Restore needs
+  // a real window because the OS file picker closes the action popup; it's also the natural home screen
+  // action (bring a wallet ONTO this device), so it's linked from the fresh-wallet screen too.
   function backupPage() {
     app.innerHTML = '<div class="hw-page"><div class="hw-card">'
-      + '<div class="p-name" style="font-size:19px">Backup &amp; Restore</div>'
-      + '<div class="disp-panel" style="display:block;margin-top:10px"><div class="disp-hit">⚠ <b>Handle with care — guard it with your life.</b> This is your <b>entire wallet</b> in one file: your seed (encrypted with your password) plus watch-list, labels, UTXO freeze flags, favorites &amp; vault deposit addresses. Anyone who gets this file <b>and</b> your password can take your funds. Store it offline — never in cloud, chat, or email.</div></div>'
-      + '<label class="p-hint" for="bkPw" style="margin-top:10px;display:block">Wallet password — encrypts the backup, and is required to restore it</label>'
-      + '<input type="password" id="bkPw" class="p-in" placeholder="Your wallet password" autocomplete="off" spellcheck="false" />'
+      + '<div class="p-name" style="font-size:19px">Restore from Backup</div>'
+      + '<div class="disp-panel" style="display:block;margin-top:10px"><div class="disp-hit">Restore your wallet from a <b>wonder-wallet-backup.json</b> file, using the password it was made with (a legacy settings-only file works too). If a wallet already exists on this device, restoring <b>replaces</b> it — so keep its seed.</div></div>'
+      + '<label class="p-hint" for="bkPw" style="margin-top:10px;display:block">Backup password</label>'
+      + '<input type="password" id="bkPw" class="p-in" placeholder="Password the backup was made with" autocomplete="off" spellcheck="false" />'
       + '<div id="bkMsg" style="min-height:18px;margin:6px 0"></div>'
-      + '<div class="actions"><button class="btn" id="bkExport">Export backup</button><button class="btn ghost" id="bkRestore">Restore from file…</button></div>'
+      + '<div class="actions"><button class="btn" id="bkRestore">Choose backup file…</button></div>'
       + '<input type="file" id="bkFile" accept="application/json,.json" hidden />'
-      + '<div class="hw-foot">🔒 Your seed is encrypted with your password — never stored in plain text.</div>'
+      + '<div class="hw-foot">🔒 Nothing changes until the password verifies the file.</div>'
       + '</div></div>';
     var msg = function (cls, t) { var m = document.getElementById('bkMsg'); if (m) { m.className = cls; m.innerHTML = t; } };
     var pwEl = document.getElementById('bkPw'); if (typeof addPwReveal === 'function') addPwReveal(pwEl);
-
-    document.getElementById('bkExport').onclick = async function () {
-      var pw = pwEl.value; if (!pw) return msg('p-err', 'Enter your wallet password to export.');
-      msg('p-hint', 'Verifying &amp; packaging…');
-      try {
-        var vault = await C.exportVaultBlob(pw);
-        bkDownload({ _type: 'wonder-wallet-backup', _version: 2, exportedAt: new Date().toISOString(), vault: vault, settings: collectWwSettings() }, 'wonder-wallet-backup.json');
-        msg('p-hint', 'Downloaded <b>wonder-wallet-backup.json</b> ✓ — store it safe &amp; offline.');
-      } catch (e) { msg('p-err', e.message === 'wrong_password' ? 'Wrong password — nothing was exported.' : e.message === 'no_vault' ? 'No wallet on this device to back up.' : ('Failed: ' + (e.message || 'export error'))); }
-    };
 
     document.getElementById('bkRestore').onclick = function () { document.getElementById('bkFile').click(); };
     document.getElementById('bkFile').onchange = function (e) {
@@ -339,6 +332,31 @@
         } else { doRestore(); }
       };
       rd.readAsText(f);
+    };
+  }
+  // In-popup Backup overlay (Advanced menu). EXPORT runs right here — a download doesn't need a file
+  // picker, so the popup survives it. RESTORE hands off to the compact window (its file picker would
+  // close the popup). Hybrid: back up where you are; restore in a window that can hold a file dialog.
+  function advBackup() {
+    overlay('<div class="stamp-detail"><div class="st-head"><div class="st-htitle">Backup &amp; Restore</div><button class="m-close-x" id="bkX" title="Close" aria-label="Close">✕</button></div>'
+      + '<div class="disp-panel" style="display:block"><div class="disp-hit">⚠ <b>Handle with care — guard it with your life.</b> This is your <b>entire wallet</b> in one file: your seed (encrypted with your password) plus watch-list, labels, UTXO freeze flags, favorites &amp; vault deposit addresses. Anyone with this file <b>and</b> your password can take your funds. Store it offline — never in cloud, chat, or email.</div></div>'
+      + '<label class="p-hint" for="bkPw" style="margin-top:8px;display:block">Wallet password — encrypts the backup</label>'
+      + '<input type="password" id="bkPw" class="p-in" placeholder="Your wallet password" autocomplete="off" spellcheck="false" />'
+      + '<div id="bkMsg" style="min-height:16px;margin:6px 0"></div>'
+      + '<div class="actions"><button class="btn" id="bkExport">Export backup</button><button class="btn ghost" id="bkRestoreWin">Restore from file…</button></div>'
+      + '<button class="btn ghost" id="bkClose" style="margin-top:8px">Close</button></div>');
+    var pwEl = document.getElementById('bkPw'); if (typeof addPwReveal === 'function') addPwReveal(pwEl);
+    var msg = function (cls, t) { var m = document.getElementById('bkMsg'); if (m) { m.className = cls; m.innerHTML = t; } };
+    document.getElementById('bkX').onclick = closeOv; document.getElementById('bkClose').onclick = closeOv;
+    document.getElementById('bkRestoreWin').onclick = function () { closeOv(); openBackupTab(); }; // restore = the compact window
+    document.getElementById('bkExport').onclick = async function () {
+      var pw = pwEl.value; if (!pw) return msg('p-err', 'Enter your wallet password to export.');
+      msg('p-hint', 'Verifying &amp; packaging…');
+      try {
+        var vault = await C.exportVaultBlob(pw);
+        bkDownload({ _type: 'wonder-wallet-backup', _version: 2, exportedAt: new Date().toISOString(), vault: vault, settings: collectWwSettings() }, 'wonder-wallet-backup.json');
+        msg('p-hint', 'Downloaded <b>wonder-wallet-backup.json</b> ✓ — store it safe &amp; offline.');
+      } catch (e) { msg('p-err', e.message === 'wrong_password' ? 'Wrong password — nothing was exported.' : e.message === 'no_vault' ? 'No wallet on this device to back up.' : ('Failed: ' + (e.message || 'export error'))); }
     };
   }
   document.addEventListener('click', function (e) { if (!e.target.closest) return; if (e.target.closest('#bPanel')) openSidePanel(); else if (e.target.closest('#bTerm')) openTerminal(); });
@@ -461,10 +479,12 @@
       + '<div class="p-hint">Create a new self-custodial wallet, restore one from a seed phrase, or connect a hardware wallet. Keys are generated &amp; encrypted <b>in this browser</b> — they never leave this device.</div>'
       + '<button class="btn" id="bCreate">Create wallet</button>'
       + '<button class="btn ghost" id="bRestore">Restore from seed</button>'
+      + '<button class="btn ghost" id="bRestoreFile">Restore from backup file</button>'
       + '<button class="btn ghost" id="bHardware">Connect hardware wallet</button></div>'
       + '<div class="foot-note">Self-custodial · your keys never leave this device.</div></div>';
     document.getElementById('bCreate').onclick = createChooseLen;
     document.getElementById('bRestore').onclick = restoreForm;
+    document.getElementById('bRestoreFile').onclick = openBackupTab; // restore a .json backup → compact window (holds the file picker)
     // Hardware (Ledger via WebHID): connect natively in the popup UI. WebHID needs a top-level context,
     // so unless we're already in the dedicated hardware window we open one (same popup UI, not the Terminal).
     document.getElementById('bHardware').onclick = function () { if (IS_HW_WIN) hwConnect(); else openHardwareTab(); };
@@ -2282,7 +2302,7 @@
       else if (a === 'custom') advCustomPath();
       else if (a === 'reveal') advRevealSeed();
       else if (a === 'secrets') advExportKeys();
-      else if (a === 'backup') { closeOv(); openBackupTab(); }
+      else if (a === 'backup') advBackup();
       else if (a === 'autolock') advAutoLock();
       else if (a === 'theme') advTheme();
       else if (a === 'network') advNetwork();
