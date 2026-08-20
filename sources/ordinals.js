@@ -33,9 +33,9 @@ async function outputProtected(utxo) {
  * Scan a list of utxos for inscriptions (capped + concurrency-limited to stay
  * friendly to the public ord server and the host watchdog).
  */
-async function getProtectedUtxos(utxos, { cap = 25 } = {}) {
+async function getProtectedUtxos(utxos, { cap = 120 } = {}) {
   const scanned = utxos.slice(0, cap);
-  const flags = await pool(scanned, (u) => outputProtected(`${u.txid}:${u.vout}`), 4);
+  const flags = await pool(scanned, (u) => outputProtected(`${u.txid}:${u.vout}`), 6);
   const protectedSet = new Set();
   scanned.forEach((u, i) => { if (flags[i] === true) protectedSet.add(`${u.txid}:${u.vout}`); });
   return { protectedSet, scannedCount: scanned.length, capped: utxos.length > cap };

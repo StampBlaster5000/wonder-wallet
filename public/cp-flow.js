@@ -20,10 +20,20 @@
     if (!c || c.error) throw new Error((c && (c.detail || c.error)) || 'Counterparty rejected the transaction.');
     if (!window.WonderVerify) throw new Error('Signing verifier unavailable — refusing to sign.');
     const iv = Object.assign({ from: source }, intent || {});
-    // Derive a fee ceiling from the approved rate × estimated size (catches a grossly inflated fee).
+    // Derive a fee ceiling from the approved rate × the tx's REAL size (catches a grossly inflated fee).
+    // Counterparty's own signed_tx_estimated_size undershoots for orders paid with many small inputs
+    // (esp. legacy P2PKH ≈148 vB each), so we also size the actual composed inputs/outputs and take the
+    // larger — otherwise a legitimate multi-input fee trips the ceiling. Rate-based, so it still catches
+    // a fee that's grossly above what the chosen sat/vB warrants.
     if (iv.feeMaxSats == null && iv.feeRatePerVb) {
-      const vsize = (c.signed_tx_estimated_size && c.signed_tx_estimated_size.vsize) || 600;
-      iv.feeMaxSats = Math.ceil(iv.feeRatePerVb * vsize * 2.5);
+      let vsize = (c.signed_tx_estimated_size && c.signed_tx_estimated_size.vsize) || 0;
+      try {
+        const nIn = (C().psbtInputs(c.psbt) || []).length;
+        const nOut = (C().decodeTxOutputs(c.psbt) || []).length;
+        const legacy = (acct() && acct().btcType) === 'legacy';
+        vsize = Math.max(vsize, Math.ceil(nIn * (legacy ? 148 : 68) + nOut * 34 + 11));
+      } catch (_) {}
+      iv.feeMaxSats = Math.ceil(iv.feeRatePerVb * (vsize || 600) * 2.5);
     }
     const report = await window.WonderVerify.verify(c, iv); // throws on any failure — nothing proceeds
     return { compose: c, report, source };
