@@ -190,6 +190,7 @@
   var ASSETS = null, loadSeq = 0, PRICES = {}, _cd = null;
   var IN_PANEL = /sidepanel/i.test(location.pathname), _winId = null;
   var IS_HW_WIN = /[?&]hw=1/.test(location.search); // dedicated top-level window for the Ledger connect (reliable WebHID)
+  var IS_BACKUP_WIN = /[?&]backup=1/.test(location.search); // dedicated tab for Backup & Restore — MV3 popups close on the OS file picker, so file import/export must run in a real tab
   try { if (window.chrome && chrome.windows) chrome.windows.getCurrent(function (w) { _winId = w && w.id; }); } catch (e) {}
   if (IN_PANEL) document.documentElement.classList.add('in-panel');
   var VER = ''; try { VER = (window.chrome && chrome.runtime && chrome.runtime.getManifest && chrome.runtime.getManifest().version) || ''; } catch (e) {}
@@ -268,6 +269,73 @@
         else chrome.tabs.create({ url: url, active: true });
       });
     } catch (e) { try { chrome.tabs.create({ url: url, active: true }); } catch (x) { try { window.open(url, '_blank'); } catch (y) {} } }
+  }
+  // Backup & Restore opens in its OWN tab (like hardware): the OS file picker closes an MV3 popup, which
+  // would abort a restore mid-read. A tab also gives this guard-with-your-life flow room + persistence.
+  function openBackupTab() {
+    var url = chrome.runtime.getURL('sidepanel.html') + '?backup=1';
+    try {
+      chrome.tabs.query({}, function (tabs) {
+        var existing = (tabs || []).filter(function (t) { return t.url && t.url.indexOf('sidepanel.html') >= 0 && t.url.indexOf('backup=1') >= 0; })[0];
+        if (existing) { try { chrome.tabs.update(existing.id, { active: true }); if (existing.windowId != null && chrome.windows) chrome.windows.update(existing.windowId, { focused: true }); } catch (e) {} }
+        else chrome.tabs.create({ url: url, active: true });
+      });
+    } catch (e) { try { chrome.tabs.create({ url: url, active: true }); } catch (x) { try { window.open(url, '_blank'); } catch (y) {} } }
+  }
+  // Settings = every ww:* localStorage key (labels, watch-list, freeze flags, favorites, vault deposit
+  // addrs). The vault (seed) lives in IndexedDB, NOT localStorage, so it is never swept in as "settings".
+  function collectWwSettings() { var o = {}; for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && k.indexOf('ww:') === 0) { try { o[k] = JSON.parse(localStorage.getItem(k)); } catch (e) { o[k] = localStorage.getItem(k); } } } return o; }
+  function restoreWwSettings(obj) { var s = obj && obj.settings; if (!s || typeof s !== 'object') return 0; var n = 0; Object.keys(s).forEach(function (k) { if (k.indexOf('ww:') !== 0) return; var v = s[k]; localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v)); n++; }); return n; }
+  function bkDownload(obj, name) { var b = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' }); var a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000); }
+  // Full-page Backup & Restore (the ?backup=1 tab). Export packages the ENCRYPTED vault blob + settings;
+  // Restore verifies the password before overwriting, then re-opens the wallet to unlock.
+  function backupPage() {
+    app.innerHTML = '<div class="hw-page"><div class="hw-card">'
+      + '<div class="p-name" style="font-size:19px">Backup &amp; Restore</div>'
+      + '<div class="disp-panel" style="display:block;margin-top:10px"><div class="disp-hit">⚠ <b>Handle with care — guard it with your life.</b> This is your <b>entire wallet</b> in one file: your seed (encrypted with your password) plus watch-list, labels, UTXO freeze flags, favorites &amp; vault deposit addresses. Anyone who gets this file <b>and</b> your password can take your funds. Store it offline — never in cloud, chat, or email.</div></div>'
+      + '<label class="p-hint" for="bkPw" style="margin-top:10px;display:block">Wallet password — encrypts the backup, and is required to restore it</label>'
+      + '<input type="password" id="bkPw" class="p-in" placeholder="Your wallet password" autocomplete="off" spellcheck="false" />'
+      + '<div id="bkMsg" style="min-height:18px;margin:6px 0"></div>'
+      + '<div class="actions"><button class="btn" id="bkExport">Export backup</button><button class="btn ghost" id="bkRestore">Restore from file…</button></div>'
+      + '<input type="file" id="bkFile" accept="application/json,.json" hidden />'
+      + '<div class="hw-foot">🔒 Your seed is encrypted with your password — never stored in plain text.</div>'
+      + '</div></div>';
+    var msg = function (cls, t) { var m = document.getElementById('bkMsg'); if (m) { m.className = cls; m.innerHTML = t; } };
+    var pwEl = document.getElementById('bkPw'); if (typeof addPwReveal === 'function') addPwReveal(pwEl);
+
+    document.getElementById('bkExport').onclick = async function () {
+      var pw = pwEl.value; if (!pw) return msg('p-err', 'Enter your wallet password to export.');
+      msg('p-hint', 'Verifying &amp; packaging…');
+      try {
+        var vault = await C.exportVaultBlob(pw);
+        bkDownload({ _type: 'wonder-wallet-backup', _version: 2, exportedAt: new Date().toISOString(), vault: vault, settings: collectWwSettings() }, 'wonder-wallet-backup.json');
+        msg('p-hint', 'Downloaded <b>wonder-wallet-backup.json</b> ✓ — store it safe &amp; offline.');
+      } catch (e) { msg('p-err', e.message === 'wrong_password' ? 'Wrong password — nothing was exported.' : e.message === 'no_vault' ? 'No wallet on this device to back up.' : ('Failed: ' + (e.message || 'export error'))); }
+    };
+
+    document.getElementById('bkRestore').onclick = function () { document.getElementById('bkFile').click(); };
+    document.getElementById('bkFile').onchange = function (e) {
+      var f = e.target.files[0]; if (!f) return; e.target.value = '';
+      msg('p-hint', 'Reading file…');
+      var rd = new FileReader();
+      rd.onload = async function () {
+        var obj; try { obj = JSON.parse(String(rd.result)); } catch (_) { return msg('p-err', 'That is not a valid backup file.'); }
+        if (!obj || (obj._type !== 'wonder-wallet-backup' && obj._type !== 'wonder-wallet-settings')) return msg('p-err', 'Not a Wonder Wallet backup file.');
+        var home = function () { location.href = chrome.runtime.getURL('sidepanel.html'); };
+        if (!obj.vault) { var n0 = restoreWwSettings(obj); msg('p-hint', 'Imported ' + n0 + ' settings ✓ — opening wallet…'); setTimeout(home, 1200); return; }
+        var pw = pwEl.value; if (!pw) return msg('p-err', 'Enter the backup’s password above, then choose the file again.');
+        var doRestore = async function () {
+          msg('p-hint', 'Restoring…');
+          try { await C.importVaultBlob(obj.vault, pw); var n = restoreWwSettings(obj); msg('p-hint', 'Wallet restored ✓ (+' + n + ' settings) — opening your wallet, unlock with your password…'); setTimeout(home, 1400); }
+          catch (e2) { msg('p-err', e2.message === 'wrong_password' ? 'Wrong password for this backup — nothing changed.' : e2.message === 'bad_backup' ? 'That backup file is corrupt or incomplete.' : ('Failed: ' + (e2.message || 'restore error'))); }
+        };
+        if (await C.hasVault()) {
+          msg('p-err', '⚠ This <b>replaces</b> the wallet on this device with the backup. If you don’t have the current wallet’s seed, it will be lost.<br><button class="btn danger" id="bkConfirm" style="margin-top:8px">Yes, replace my wallet</button>');
+          var cb = document.getElementById('bkConfirm'); if (cb) cb.onclick = doRestore;
+        } else { doRestore(); }
+      };
+      rd.readAsText(f);
+    };
   }
   document.addEventListener('click', function (e) { if (!e.target.closest) return; if (e.target.closest('#bPanel')) openSidePanel(); else if (e.target.closest('#bTerm')) openTerminal(); });
   function copy(t, el) { navigator.clipboard.writeText(t).then(function () { if (el) { el.classList.add('copyok'); setTimeout(function () { el.classList.remove('copyok'); }, 1000); } }).catch(function () {}); }
@@ -2193,6 +2261,7 @@
       + (isImp ? '' : '<button class="adv-opt" data-adv="custom"><b>Custom derivation path</b><span>Derive an address at a specific path</span></button>'
         + '<button class="adv-opt danger" data-adv="reveal"><b>Reveal seed phrase</b><span>Show your 12/24-word recovery phrase</span></button>'
         + '<button class="adv-opt danger" data-adv="secrets"><b>Export private keys</b><span>Export raw keys for this account</span></button>')
+      + '<button class="adv-opt danger" data-adv="backup"><b>Backup &amp; Restore</b><span>Full encrypted wallet backup — seed + settings in one file. Guard it like your seed.</span></button>'
       + '<button class="adv-opt" data-adv="autolock"><b>Auto-lock timer</b><span>Change or turn off the idle lock</span></button>'
       + '<button class="adv-opt" data-adv="theme"><b>Appearance</b><span>Dark or light wallet skin</span></button>'
       + '<button class="adv-opt" data-adv="network"><b>Network</b><span>Currently on <b>' + (isTN() ? 'Testnet' : 'Mainnet') + '</b> · switch for testing</span></button>'
@@ -2209,6 +2278,7 @@
       else if (a === 'custom') advCustomPath();
       else if (a === 'reveal') advRevealSeed();
       else if (a === 'secrets') advExportKeys();
+      else if (a === 'backup') { closeOv(); openBackupTab(); }
       else if (a === 'autolock') advAutoLock();
       else if (a === 'theme') advTheme();
       else if (a === 'network') advNetwork();
@@ -3220,6 +3290,6 @@
   window.addEventListener('storage', function (e) { if (e.key === 'ww:ledger') { try { HW = lsGet('ww:ledger', null); } catch (x) { HW = null; } if (HW && acctKind !== 'hardware') { /* keep current view; Ledger now available in the dropdown */ } render(); } });
   (window.WWSession ? window.WWSession.ready : Promise.resolve()).then(function () {
     try { restoreLast(); } catch (e) {}
-    if (IS_HW_WIN) hwLandingPage(); else render(); // the ?hw=1 tab shows the dedicated hardware-connect page
+    if (IS_HW_WIN) hwLandingPage(); else if (IS_BACKUP_WIN) backupPage(); else render(); // ?hw=1 → hardware; ?backup=1 → Backup & Restore; else the wallet
   });
 })();
