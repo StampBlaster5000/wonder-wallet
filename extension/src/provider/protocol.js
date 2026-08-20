@@ -47,6 +47,23 @@
   };
   var EVENTS = ['accountsChanged', 'networkChanged', 'chainChanged', 'disconnect'];
 
+  // WW-C12: generic JSON-RPC methods we will proxy to a node WITHOUT a connection — an explicit
+  // read-only allowlist. Each is stateless and exposes NO wallet data. Anything generic that is NOT
+  // on this list — notably eth_sendRawTransaction — is refused: an unconnected (or any) origin must
+  // never push raw bytes through our relay. dApps that want to broadcast use eth_sendTransaction,
+  // which is in METHODS.sign and goes through the Sign approval + our own sign→broadcast path.
+  var PUBLIC_READ = {};
+  ['eth_call', 'eth_getBalance', 'eth_getCode', 'eth_getStorageAt', 'eth_getTransactionCount',
+    'eth_getTransactionByHash', 'eth_getTransactionByBlockHashAndIndex', 'eth_getTransactionByBlockNumberAndIndex',
+    'eth_getTransactionReceipt', 'eth_getBlockByHash', 'eth_getBlockByNumber',
+    'eth_getBlockTransactionCountByHash', 'eth_getBlockTransactionCountByNumber',
+    'eth_getLogs', 'eth_getFilterLogs', 'eth_estimateGas', 'eth_gasPrice', 'eth_feeHistory',
+    'eth_maxPriorityFeePerGas', 'eth_blockNumber', 'eth_getProof', 'eth_syncing', 'eth_protocolVersion',
+    'eth_getUncleCountByBlockHash', 'eth_getUncleCountByBlockNumber',
+    'net_listening', 'net_peerCount', 'web3_clientVersion', 'web3_sha3',
+  ].forEach(function (m) { PUBLIC_READ[m] = true; });
+  function isPublicRead(method) { return PUBLIC_READ[method] === true; }
+
   // Which bucket a method falls in — the broker keys all of its decisions off this.
   function classify(method) {
     if (METHODS.connect.indexOf(method) >= 0) return 'connect';
@@ -55,7 +72,8 @@
     if (METHODS.manage.indexOf(method) >= 0) return 'manage';
     // Generic EVM JSON-RPC (eth_call, eth_getBalance, eth_blockNumber, eth_estimateGas, …) → a public
     // read the background proxies to a node, so Wonder Wallet is a FULL EIP-1193 provider on any dApp.
-    if (/^eth_/.test(method) || /^net_/.test(method) || /^web3_/.test(method)) return 'read';
+    // ONLY allowlisted reads pass; a non-read generic (eth_sendRawTransaction) falls through to reject.
+    if (isPublicRead(method)) return 'read';
     return 'unsupported';
   }
   // Which chain a method belongs to — the background uses this to serve the right address/chainId.
@@ -70,6 +88,7 @@
     CHANNEL_REQ: CHANNEL_REQ, CHANNEL_RES: CHANNEL_RES, CHANNEL_EVT: CHANNEL_EVT,
     INIT_EVENT: INIT_EVENT, DISCOVER_EVENT: DISCOVER_EVENT,
     ERR: ERR, METHODS: METHODS, EVENTS: EVENTS, classify: classify, chainOf: chainOf,
+    isPublicRead: isPublicRead, PUBLIC_READ: PUBLIC_READ,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = WWP;

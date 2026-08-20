@@ -50,8 +50,10 @@
       // chainId / network are PUBLIC — dApps read them before connecting.
       if (['ww_chainId', 'ww_getNetwork', 'eth_chainId', 'net_version'].indexOf(method) >= 0) return { action: 'serve', method: method };
       // Generic EVM/web3 RPC (eth_call, eth_getBalance, eth_estimateGas, …) is a PUBLIC chain query —
-      // dApps fire these before connecting to render their UI, and they expose no wallet data.
-      if (/^eth_/.test(method) || /^net_/.test(method) || /^web3_/.test(method)) return { action: 'serve', method: method };
+      // dApps fire these before connecting to render their UI, and they expose no wallet data. Only
+      // ALLOWLISTED reads pass without a connection (WW-C12: eth_sendRawTransaction never gets here —
+      // classify() already routes it to 'unsupported' → reject 4200).
+      if (P.isPublicRead(method)) return { action: 'serve', method: method };
       if (!permitted) return reject(ERR.UNAUTHORIZED, 'Not connected. Request accounts first.');
       return { action: 'serve', method: method, accounts: PERM.accountsFor(store, origin) };
     }

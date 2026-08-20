@@ -19,6 +19,10 @@ ok(P.classify('ww_signPsbt') === 'sign', 'signPsbt → sign');
 ok(P.classify('ww_disconnect') === 'manage', 'disconnect → manage');
 ok(P.classify('foo_bar_baz') === 'unsupported', 'unknown → unsupported');
 ok(P.ERR.USER_REJECTED === 4001 && P.ERR.UNAUTHORIZED === 4100 && P.ERR.UNSUPPORTED === 4200, 'error codes match XCP-style (4001/4100/4200)');
+// WW-C12: generic reads are public; eth_sendRawTransaction is NOT — it must never be a proxied read.
+ok(P.classify('eth_call') === 'read' && P.isPublicRead('eth_call'), 'eth_call → public read');
+ok(P.classify('eth_getBalance') === 'read', 'eth_getBalance → public read');
+ok(P.classify('eth_sendRawTransaction') === 'unsupported' && !P.isPublicRead('eth_sendRawTransaction'), 'WW-C12: eth_sendRawTransaction → unsupported (not a public read)');
 
 console.log('\npermissions:');
 ok(PERM.normalizeOrigin('https://stampchain.io/mint?x=1') === O, 'https URL normalizes to bare origin');
@@ -48,6 +52,10 @@ ok(B.decide({ method: 'ww_getPublicKey', origin: O, store: conn }).action === 's
 ok(B.decide({ method: 'ww_signPsbt', origin: O, store: empty }).code === 4100, 'signPsbt (not connected) → reject 4100');
 const sd = B.decide({ method: 'ww_signPsbt', origin: O, store: conn });
 ok(sd.action === 'approve' && sd.kind === 'sign', 'signPsbt (connected) → approve/sign (every call)');
+// WW-C12: a public read is served even without a connection; a raw broadcast is refused either way.
+ok(B.decide({ method: 'eth_call', origin: O, store: empty }).action === 'serve', 'eth_call (not connected) → serve (public read)');
+ok(B.decide({ method: 'eth_sendRawTransaction', origin: O, store: empty }).code === 4200, 'WW-C12: eth_sendRawTransaction (not connected) → reject 4200');
+ok(B.decide({ method: 'eth_sendRawTransaction', origin: O, store: conn }).code === 4200, 'WW-C12: eth_sendRawTransaction (connected) → still refused (no raw relay)');
 
 console.log('\n' + (failed ? `❌ ${failed} check(s) FAILED` : '✅ Provider spine correct (classification, per-origin permissions, and broker routing all pass)'));
 process.exit(failed ? 1 : 0);

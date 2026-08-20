@@ -21,14 +21,53 @@
     chrome.storage.local.get('ww:reader', function (o) { var c = o && o['ww:reader']; if (c && /^https:\/\//.test(c)) PROXY = c.replace(/\/+$/, ''); });
     chrome.storage.onChanged.addListener(function (ch, area) { if (area === 'local' && ch['ww:reader']) { var c = ch['ww:reader'].newValue; PROXY = (c && /^https:\/\//.test(c)) ? c.replace(/\/+$/, '') : DEFAULT_READER; } });
   } catch (_) {}
-  var PENDING = {}; // id -> { origin, method, params, tabId, kind, resolve }
+  var PENDING = {}; // id -> { origin, method, params, tabId, kind, resolve, snapshot, winId, expireT }
   var WINDOWS = {}; // approvalWindowId -> requestId
+  var MAX_PENDING = 6;               // WW-B23: global ceiling on concurrent approval windows
+  var PENDING_TTL_MS = 5 * 60 * 1000; // WW-B23: auto-reject a request left unanswered this long
 
   function loadStore(cb) { chrome.storage.local.get(PERM.STORAGE_KEY, function (o) { cb((o && o[PERM.STORAGE_KEY]) || {}); }); }
   function saveStore(store, cb) { var o = {}; o[PERM.STORAGE_KEY] = store; chrome.storage.local.set(o, cb || function () {}); }
   function nowMs() { return Date.now(); }
   function genId() { return 'req-' + ((typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : (nowMs() + '-' + Math.floor(Math.random() * 1e6))); } // crypto UUID (audit #7c)
   function faviconFor(origin) { try { return new URL(origin).origin + '/favicon.ico'; } catch (_) { return ''; } }
+  function pendingCount() { return Object.keys(PENDING).length; }
+
+  // WW-B15: serialize every read-modify-write of the permission store. chrome.storage get→set is async,
+  // so two concurrent flows (e.g. a grant landing while a revoke runs) can each load the OLD store and
+  // the later save clobbers the earlier — resurrecting a revoked grant. Chaining all mutations through
+  // one promise makes them atomic: each fn sees the result of the previous. `fn(store)` returns the new
+  // store (or undefined to keep it); the optional result is passed to cb.
+  var _writeChain = Promise.resolve();
+  function mutateStore(fn, cb) {
+    _writeChain = _writeChain.then(function () {
+      return new Promise(function (done) {
+        loadStore(function (store) {
+          var next; try { next = fn(store); } catch (_) { next = undefined; }
+          var toSave = next && next.store ? next.store : (next || store);
+          saveStore(toSave, function () { try { if (cb) cb(next); } catch (_) {} done(); });
+        });
+      });
+    });
+    return _writeChain;
+  }
+
+  // WW-B13: cancel every pending request for an origin (called the instant a grant is revoked) so a
+  // request that was in-flight when the user hit "revoke" can never still resolve into a signature.
+  function cancelPending(origin, reason) {
+    var target = PERM.normalizeOrigin(origin);
+    Object.keys(PENDING).forEach(function (id) {
+      var pnd = PENDING[id]; if (!pnd || PERM.normalizeOrigin(pnd.origin) !== target) return;
+      closePending(id, { code: P.ERR.UNAUTHORIZED, message: reason || 'Connection was revoked before this request completed' });
+    });
+  }
+  // Tear down one pending request: clear its expiry, close its window, resolve the caller with an error.
+  function closePending(id, err) {
+    var pnd = PENDING[id]; if (!pnd) return; delete PENDING[id];
+    if (pnd.expireT) { try { clearTimeout(pnd.expireT); } catch (_) {} }
+    if (pnd.winId != null) { delete WINDOWS[pnd.winId]; try { chrome.windows.remove(pnd.winId); } catch (_) {} }
+    try { pnd.resolve({ error: err || { code: P.ERR.USER_REJECTED, message: 'Request closed' } }); } catch (_) {}
+  }
 
   // Content script → background. Returns a Promise resolving to { result } | { error:{code,message} }.
   function handleProviderRequest(origin, method, params, tabId) {
@@ -37,9 +76,12 @@
       loadStore(function (store) {
         var d = B.decide({ method: method, origin: origin, store: store });
         if (d.action === 'reject') return resolve({ error: { code: d.code, message: d.message } });
-        if (d.action === 'revoke') { var rr = PERM.revoke(store, origin); saveStore(rr.store); if (rr.existed) emitEvent(origin, 'disconnect'); return resolve({ result: true }); }
+        if (d.action === 'revoke') {
+          cancelPending(origin, 'Disconnected'); // WW-B13: kill in-flight sign requests first
+          return mutateStore(function (s) { return PERM.revoke(s, origin); }, function (rr) { if (rr && rr.existed) emitEvent(origin, 'disconnect'); resolve({ result: true }); });
+        }
         if (d.action === 'serve') return serveRead(origin, method, params, store, resolve);
-        if (d.action === 'approve') return openApproval(origin, method, params, tabId, d.kind, resolve);
+        if (d.action === 'approve') return openApproval(origin, method, params, tabId, d.kind, resolve, store);
         resolve({ error: { code: P.ERR.INTERNAL, message: 'unhandled' } });
       });
     });
@@ -68,7 +110,8 @@
       case 'sol_connect': return resolve({ result: p.sol ? { address: p.sol } : null });  // already permitted
       default:
         // Generic EVM/web3 JSON-RPC → proxy to a node so we're a full EIP-1193 provider on any dApp.
-        if (/^eth_/.test(method) || /^net_/.test(method) || /^web3_/.test(method)) return ethRpc(method, params, resolve);
+        // Defense-in-depth (WW-C12): only allowlisted reads are ever proxied — never a raw broadcast.
+        if (P.isPublicRead(method)) return ethRpc(method, params, resolve);
         return resolve({ error: { code: P.ERR.UNSUPPORTED, message: method } });
     }
   }
@@ -86,9 +129,27 @@
       .catch(function () { resolve({ error: { code: P.ERR.INTERNAL, message: 'balance fetch failed' } }); });
   }
 
-  function openApproval(origin, method, params, tabId, kind, resolve) {
+  function openApproval(origin, method, params, tabId, kind, resolve, store) {
+    // WW-B23: bound the fan-out. If this origin already has a pending approval window, focus it and
+    // reject the new duplicate instead of stacking popups; and never exceed a global ceiling.
+    var target = PERM.normalizeOrigin(origin);
+    var existingId = Object.keys(PENDING).find(function (pid) { return PERM.normalizeOrigin(PENDING[pid].origin) === target; });
+    if (existingId) {
+      var ex = PENDING[existingId];
+      if (ex && ex.winId != null) { try { chrome.windows.update(ex.winId, { focused: true }); } catch (_) {} }
+      return resolve({ error: { code: P.ERR.USER_REJECTED, message: 'Finish the pending Wonder Wallet request for this site first.' } });
+    }
+    if (pendingCount() >= MAX_PENDING) return resolve({ error: { code: P.ERR.USER_REJECTED, message: 'Too many pending wallet requests — resolve the open ones first.' } });
+
     var id = genId();
-    PENDING[id] = { origin: origin, method: method, params: params, tabId: tabId, kind: kind, resolve: resolve };
+    // WW-B13: for a SIGN request, FREEZE the granted account now. The window will sign with this exact
+    // account (getPending returns the snapshot, not the live store), and onDecision re-checks the live
+    // grant against it before relaying — so a mid-flight revoke/account-switch cannot redirect the sig.
+    var perm = (store && PERM.getPermission(store, origin)) || null;
+    var snapshot = (kind === 'sign' && perm) ? { accountRef: perm.accountRef || null, account: (perm.accounts || [])[0] || null } : null;
+    PENDING[id] = { origin: origin, method: method, params: params, tabId: tabId, kind: kind, resolve: resolve, snapshot: snapshot, winId: null, expireT: null };
+    // Auto-reject if left unanswered (WW-B23) — frees the origin slot and closes the orphaned window.
+    PENDING[id].expireT = setTimeout(function () { closePending(id, { code: P.ERR.USER_REJECTED, message: 'Request timed out' }); }, PENDING_TTL_MS);
     var url = chrome.runtime.getURL('provider/approval.html?id=' + id);
     var W = 400, H = 660;
     function make(win) {
@@ -96,7 +157,7 @@
       // Anchor to the TOP-RIGHT of the dApp's window (under the toolbar / extension button) — exactly
       // like UniSat's notification popup, so it reads as part of the extension, not a floating window.
       if (win && win.width) { o.top = Math.max(0, (win.top || 0) + 74); o.left = Math.max(0, (win.left || 0) + win.width - W - 20); }
-      chrome.windows.create(o, function (w) { if (w) WINDOWS[w.id] = id; });
+      chrome.windows.create(o, function (w) { if (w && PENDING[id]) { WINDOWS[w.id] = id; PENDING[id].winId = w.id; } });
     }
     try {
       if (tabId != null && chrome.tabs && chrome.tabs.get) {
@@ -113,10 +174,14 @@
     var pnd = PENDING[id]; if (!pnd) return sendResponse(null);
     loadStore(function (store) {
       var p = PERM.getPermission(store, pnd.origin) || {};
+      // WW-B13: a sign request signs with the account FROZEN at request time, not whatever the live
+      // store says now (which a concurrent switch could have changed).
+      var acctRef = (pnd.snapshot && pnd.snapshot.accountRef != null) ? pnd.snapshot.accountRef : (p.accountRef || null);
+      var acctAddr = (pnd.snapshot && pnd.snapshot.account != null) ? pnd.snapshot.account : ((p.accounts || [])[0] || null);
       sendResponse({
         id: id, origin: pnd.origin, favicon: faviconFor(pnd.origin), method: pnd.method, params: pnd.params, kind: pnd.kind,
         tabId: pnd.tabId != null ? pnd.tabId : null, // the dApp tab — so the approval window can open the side panel in its window
-        accountRef: p.accountRef || null, accountAddress: (p.accounts || [])[0] || null,
+        accountRef: acctRef, accountAddress: acctAddr,
         eth: p.eth || null, sol: p.sol || null,
         myAddresses: p.myAddresses || p.accounts || [], paired: !!p.pairedAddresses, assetTags: {}, locked: false,
       });
@@ -125,17 +190,37 @@
 
   // Approval window posts the user's decision. For CONNECT it also sends the computed account info;
   // for SIGN it sends the already-signed result (signing happened in the window, which holds the keys).
+  // Detach a pending request on a SUCCESSFUL decision: clear its expiry + window mapping, return it.
+  function finishPending(id) {
+    var pnd = PENDING[id]; if (!pnd) return null; delete PENDING[id];
+    if (pnd.expireT) { try { clearTimeout(pnd.expireT); } catch (_) {} }
+    if (pnd.winId != null) delete WINDOWS[pnd.winId];
+    return pnd;
+  }
+  // WW-B13: right before we RELEASE a signature/broadcast, prove the grant that authorized it still
+  // exists AND still points at the same account it was frozen to. If the user revoked or switched
+  // accounts while the approval window was open, refuse — the signature is never handed back.
+  function grantStillValid(pnd, cb) {
+    loadStore(function (store) {
+      var p = PERM.getPermission(store, pnd.origin);
+      if (!p) return cb(false);
+      if (pnd.snapshot && pnd.snapshot.accountRef != null && p.accountRef !== pnd.snapshot.accountRef) return cb(false);
+      cb(true);
+    });
+  }
+
   function onDecision(id, approved, extra, sendResponse) {
-    var pnd = PENDING[id]; if (!pnd) { if (sendResponse) sendResponse({ ok: false }); return; }
-    delete PENDING[id];
-    if (!approved) { pnd.resolve({ error: { code: P.ERR.USER_REJECTED, message: 'User rejected the request' } }); if (sendResponse) sendResponse({ ok: true }); return; }
+    var pnd = finishPending(id); if (!pnd) { if (sendResponse) sendResponse({ ok: false }); return; }
+    if (sendResponse) sendResponse({ ok: true });
+    if (!approved) { pnd.resolve({ error: { code: P.ERR.USER_REJECTED, message: 'User rejected the request' } }); return; }
     if (pnd.kind === 'connect') {
-      loadStore(function (store) {
-        var accts = (extra && extra.accounts) || [];
+      var accts = (extra && extra.accounts) || [];
+      mutateStore(function (store) {
         store = PERM.grant(store, pnd.origin, { accounts: accts, accountRef: extra && extra.accountRef, chains: ['btc'], pairedAddresses: extra && extra.pairedAddresses }, nowMs());
         var key = PERM.normalizeOrigin(pnd.origin);
         if (store[key]) { store[key].publicKey = (extra && extra.publicKey) || null; store[key].addresses = (extra && extra.addresses) || null; store[key].myAddresses = (extra && extra.myAddresses) || accts; store[key].eth = (extra && extra.eth) || null; store[key].sol = (extra && extra.sol) || null; }
-        saveStore(store);
+        return store;
+      }, function () {
         var chain = P.chainOf(pnd.method);
         var eth = (extra && extra.eth) || null, sol = (extra && extra.sol) || null;
         emitEvent(pnd.origin, 'accountsChanged', chain === 'eth' ? (eth ? [eth] : []) : accts);
@@ -143,17 +228,21 @@
         if (pnd.method === 'wallet_requestPermissions') out = eth ? [{ parentCapability: 'eth_accounts', caveats: [{ type: 'restrictReturnedAccounts', value: [eth] }] }] : [];
         else out = chain === 'eth' ? (eth ? [eth] : []) : chain === 'sol' ? (sol ? { address: sol } : null) : { accounts: accts, proof: extra && extra.proof };
         pnd.resolve({ result: out });
-        if (sendResponse) sendResponse({ ok: true });
       });
     } else if (extra && extra.broadcast) { // ww_broadcastTransaction: window approved → SW pushes via proxy
-      fetch(PROXY + '/api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: extra.rawhex }) })
-        .then(function (r) { return r.json(); })
-        .then(function (j) { pnd.resolve(j && j.error ? { error: { code: P.ERR.INTERNAL, message: j.detail || j.error } } : { result: { txid: j.txid } }); })
-        .catch(function () { pnd.resolve({ error: { code: P.ERR.INTERNAL, message: 'broadcast failed' } }); });
-      if (sendResponse) sendResponse({ ok: true });
-    } else { // sign: the approval window already signed; relay its result
-      pnd.resolve(extra && extra.error ? { error: extra.error } : { result: extra && extra.result });
-      if (sendResponse) sendResponse({ ok: true });
+      grantStillValid(pnd, function (okGrant) {
+        if (!okGrant) return pnd.resolve({ error: { code: P.ERR.UNAUTHORIZED, message: 'Connection changed before broadcast — cancelled.' } });
+        fetch(PROXY + '/api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: extra.rawhex }) })
+          .then(function (r) { return r.json(); })
+          .then(function (j) { pnd.resolve(j && j.error ? { error: { code: P.ERR.INTERNAL, message: j.detail || j.error } } : { result: { txid: j.txid } }); })
+          .catch(function () { pnd.resolve({ error: { code: P.ERR.INTERNAL, message: 'broadcast failed' } }); });
+      });
+    } else { // sign: the approval window already signed; relay its result only if the grant still holds
+      if (extra && extra.error) { pnd.resolve({ error: extra.error }); return; }
+      grantStillValid(pnd, function (okGrant) {
+        if (!okGrant) return pnd.resolve({ error: { code: P.ERR.UNAUTHORIZED, message: 'Connection changed before signing completed — the signature was not released.' } });
+        pnd.resolve({ result: extra && extra.result });
+      });
     }
   }
 
@@ -164,15 +253,18 @@
     });
   }
 
-  // An approval window closed without a decision → reject the pending request.
+  // An approval window closed without a decision → reject the pending request (clears its expiry too).
   if (chrome.windows && chrome.windows.onRemoved) chrome.windows.onRemoved.addListener(function (winId) {
-    var id = WINDOWS[winId]; if (!id) return; delete WINDOWS[winId];
-    var pnd = PENDING[id]; if (pnd) { delete PENDING[id]; pnd.resolve({ error: { code: P.ERR.USER_REJECTED, message: 'Request window closed' } }); }
+    var id = WINDOWS[winId]; if (!id) return;
+    closePending(id, { code: P.ERR.USER_REJECTED, message: 'Request window closed' });
   });
 
   // For the "Connected sites" manager in the popup.
   function listSites(sendResponse) { loadStore(function (store) { sendResponse(PERM.list(store)); }); }
-  function revokeSite(origin, sendResponse) { loadStore(function (store) { var r = PERM.revoke(store, origin); saveStore(r.store); if (r.existed) emitEvent(origin, 'disconnect'); sendResponse({ ok: true }); }); }
+  function revokeSite(origin, sendResponse) {
+    cancelPending(origin, 'Disconnected'); // WW-B13: cancel any in-flight request for this site
+    mutateStore(function (s) { return PERM.revoke(s, origin); }, function (r) { if (r && r.existed) emitEvent(origin, 'disconnect'); sendResponse({ ok: true }); });
+  }
 
   root.WWProviderBg = { handleProviderRequest: handleProviderRequest, getPending: getPending, onDecision: onDecision, listSites: listSites, revokeSite: revokeSite };
 })(self);
