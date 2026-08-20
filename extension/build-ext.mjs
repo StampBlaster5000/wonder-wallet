@@ -166,12 +166,17 @@ console.log('✓ built extension/dist (' + readdirSync(DIST).length + ' entries)
 // 6. Repackage the downloadable zip (public/wonder-wallet-extension.zip) from the fresh dist so the
 //    homepage "Download the beta" link never serves a stale build. Wrapped in a top-level folder.
 const { makeZip } = await import('./make-zip.mjs');
-const ZIP_OUT = join(PUB, 'wonder-wallet-extension.zip');
-const z = makeZip(DIST, ZIP_OUT, 'wonder-wallet-extension');
+// VERSIONED filename so the download URL changes every build — a Cloudflare/edge cache can't serve a
+// stale zip under a fresh version (build-info.json is fetched no-store, so the shown version updated
+// while the fixed-name zip stayed cached at the edge). status.js points the download at build-info.zip.
+const ZIP_NAME = 'wonder-wallet-extension-' + PKG.version + '.zip';
+const ZIP_OUT = join(PUB, ZIP_NAME);
+const z = makeZip(DIST, ZIP_OUT, 'wonder-wallet-extension'); // inner folder stays version-agnostic
+try { copyFileSync(ZIP_OUT, join(PUB, 'wonder-wallet-extension.zip')); } catch (_) {} // keep the legacy fixed name fresh too
 console.log('✓ repackaged ' + ZIP_OUT.replace(ROOT + '/', '') + ' (' + z.files + ' files, ' + Math.round(z.bytes / 1024) + ' KB)');
 
 // 7. Stamp build-info.json so the site's "latest build" download shows the live version + freshness.
 let commit = '';
 try { commit = execSync('git rev-parse --short HEAD', { cwd: ROOT }).toString().trim(); } catch (_) {}
-writeFileSync(join(PUB, 'build-info.json'), JSON.stringify({ version: PKG.version, builtAt: new Date().toISOString(), commit, zip: 'wonder-wallet-extension.zip' }, null, 2) + '\n');
+writeFileSync(join(PUB, 'build-info.json'), JSON.stringify({ version: PKG.version, builtAt: new Date().toISOString(), commit, zip: ZIP_NAME }, null, 2) + '\n');
 console.log('✓ wrote public/build-info.json (v' + PKG.version + (commit ? ' · ' + commit : '') + ')');
