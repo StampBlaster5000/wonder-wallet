@@ -129,6 +129,23 @@
     if (!cur.address || !granted[cur.address]) throw new Error(reconnect);
   }
 
+  // WW-B12: honor the user's OWN local UTXO locks in dApp signing. The freeze/timelock overlay lives
+  // in shared localStorage (ww:utxo:<addr>, written by the wallet's coin-control UI), keyed by the
+  // "txid:vout" the server's /coincontrol returns. Return any of OUR inputs that the user has frozen
+  // or time-locked — spending one means overriding an explicit "don't spend this". Read fresh each call
+  // so it reflects the CURRENT lock state at signing time (recheck, not a stale snapshot).
+  function lockedInputs(d) {
+    var now = Date.now(), hits = [];
+    (d && d.inputs || []).forEach(function (i) {
+      if (!i.mine || !i.address) return;
+      var meta; try { meta = JSON.parse(localStorage.getItem('ww:utxo:' + i.address) || '{}'); } catch (_) { meta = {}; }
+      var m = meta[i.txid + ':' + i.index] || {};
+      var timelocked = !!(m.freezeUntil && new Date(m.freezeUntil).getTime() > now);
+      if (m.frozen || timelocked) hits.push({ id: i.txid + ':' + i.index, why: m.frozen ? 'frozen' : 'time-locked' });
+    });
+    return hits;
+  }
+
   // Origin banner shown on EVERY dialog — the anti-phishing anchor.
   function originBar() {
     var host = '';
@@ -330,7 +347,12 @@
     var opts = (req.params && typeof req.params[1] === 'object' && req.params[1]) || (raw && typeof raw === 'object' ? raw : {});
     var P = pinnedAcct();
     var types = req.paired ? (P.type === 'legacy' ? ['legacy'] : [P.type, 'legacy']) : undefined;
-    onApprove = function () { assertGrantIntegrity('btc'); return { result: C.signProvider({ psbt: psbtHex, toSignInputs: opts.signInputs || opts.toSignInputs, autoFinalized: opts.autoFinalized, account: P.account, index: 0, type: P.type, types: types, importedId: P.importedId, prevTxs: opts.prevTxs || {}, network: netMode() }) }; };
+    onApprove = function () {
+      assertGrantIntegrity('btc');
+      var lk = lockedInputs(d); // WW-B12: fail closed on the user's own frozen/time-locked UTXOs (rechecked here)
+      if (lk.length) throw new Error('Blocked — this transaction spends ' + lk.length + ' UTXO' + (lk.length > 1 ? 's' : '') + ' you ' + lk[0].why + ' in Wonder Wallet. Unlock ' + (lk.length > 1 ? 'them' : 'it') + ' first if you really mean to spend ' + (lk.length > 1 ? 'them' : 'it') + '. Nothing was signed.');
+      return { result: C.signProvider({ psbt: psbtHex, toSignInputs: opts.signInputs || opts.toSignInputs, autoFinalized: opts.autoFinalized, account: P.account, index: 0, type: P.type, types: types, importedId: P.importedId, prevTxs: opts.prevTxs || {}, network: netMode() }) };
+    };
     var d;
     try {
       d = C.describePsbt(psbtHex);
@@ -349,6 +371,10 @@
   }
   function paintPsbt(d, psbtHex) {
     var sum = S.summarizePsbt(d, { origin: hostOf() });
+    // WW-B12: if any input is a UTXO the user locked, prepend a hard-block danger so it shows up top
+    // (and the Sign button enters its danger state). The sign-time recheck in onApprove is the real gate.
+    var lk = lockedInputs(d);
+    if (lk.length) sum.warnings.unshift({ level: 'danger', text: 'This spends ' + lk.length + ' UTXO' + (lk.length > 1 ? 's' : '') + ' you locked (' + lk[0].why + ') in Wonder Wallet. Signing is blocked until you unlock ' + (lk.length > 1 ? 'them' : 'it') + '.' });
     var sendsHtml = sum.sends.map(function (s2) { return row(short(s2.address), btc(s2.value), 'send'); }).join('') || '<div class="ap-fine" style="padding:6px 0">No external payments (self-transfer / consolidation).</div>';
     var changeHtml = sum.change.map(function (c2) { return row(short(c2.address) + ' (change)', btc(c2.value), 'you'); }).join('');
     var inputsHtml = sum.mineInputs.map(function (i) { return row(short(i.address) + (i.asset ? ' · ' + esc(i.asset.label || i.asset.kind) : ''), btc(i.value), i.asset ? 'asset' : 'in'); }).join('');
