@@ -355,7 +355,7 @@
     };
     var d;
     try {
-      d = C.describePsbt(psbtHex);
+      d = C.describePsbt(psbtHex, netMode()); // WW-B18: decode addresses for the active network
       var mine = {}; (req.myAddresses || []).forEach(function (a) { mine[a] = true; });
       var tags = req.assetTags || {};
       d.inputs.forEach(function (i) { i.mine = !!mine[i.address]; i.asset = tags[i.txid + ':' + i.index] || null; });
@@ -419,7 +419,7 @@
   function renderBroadcast() {
     var rawhex = req.params && req.params[0];
     onApprove = function () { return { broadcast: true, rawhex: rawhex }; }; // background pushes via the proxy
-    var outs = []; try { outs = C.decodeTxOutputs(rawhex); } catch (_) {}
+    var outs = []; try { outs = C.decodeTxOutputs(rawhex, netMode()); } catch (_) {} // WW-B18: active-network addresses
     var mine = {}; (req.myAddresses || []).forEach(function (a) { mine[a] = true; });
     var rows = outs.map(function (o) { return o.opReturn ? row('OP_RETURN (data)', '', 'in') : row(short(o.address) + (mine[o.address] ? ' (you)' : ''), btc(o.value), mine[o.address] ? 'you' : 'send'); }).join('');
     app.innerHTML = '<div class="ap-wrap">' + originBar()

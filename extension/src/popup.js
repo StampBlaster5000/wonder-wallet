@@ -103,7 +103,7 @@
   function setTheme(t) { try { localStorage.setItem('ww:theme', t === 'light' ? 'light' : 'dark'); } catch (e) {} document.documentElement.classList.toggle('theme-light', t === 'light'); }
   // SECURITY: abort before signing if a SERVER-composed tx pays BTC to any address not in `allowed`.
   function assertOutputs(psbt, allowed) {
-    var outs; try { outs = C.decodeTxOutputs(psbt); } catch (e) { return; }
+    var outs; try { outs = C.decodeTxOutputs(psbt, NET()); } catch (e) { return; } // WW-B18: active-network encode (else testnet false-blocks)
     var set = {}; (allowed || []).forEach(function (a) { if (a) set[a] = 1; });
     for (var i = 0; i < outs.length; i++) { var o = outs[i]; if (o.opReturn || !o.value || !o.address) continue; if (!set[o.address]) throw new Error('Aborted — the composed transaction pays BTC to an unexpected address (' + o.address + '). It may have been tampered with; nothing was signed.'); }
   }
@@ -116,7 +116,7 @@
     if (!dest) return null;
     var inData = false, h = null; try { h = C.addrHash(dest); } catch (e) {}
     if (h && String(data || '').toLowerCase().indexOf(h.toLowerCase()) >= 0) inData = true;
-    var inOut = false; try { var outs = C.decodeTxOutputs(psbt); for (var i = 0; i < outs.length; i++) if (outs[i].address === dest) inOut = true; } catch (e) {}
+    var inOut = false; try { var outs = C.decodeTxOutputs(psbt, NET()); for (var i = 0; i < outs.length; i++) if (outs[i].address === dest) inOut = true; } catch (e) {} // WW-B18: active-network encode
     if (!inData && !inOut) return { ok: false };
     return { ok: true, via: inData ? 'Counterparty data' : 'payment output' };
   }
@@ -659,6 +659,29 @@
     return e ? { path: e.path, pub: e.pub, address: e.address } : null;
   }
   var hwSpendable = function (u) { return u.category === 'spendable' && !u.frozen && !u.timelocked; };
+  // WW-C09: re-validate the EXACT input set against FRESH coin-control immediately before the Ledger
+  // signs. UTXOs are classified at build time, but an asset can land on one (or the user can freeze /
+  // time-lock it) in the gap before the device signs — the hardware path never re-checked. Re-fetch
+  // coincontrol + re-apply the local freeze overlay for each input's address and require every spent
+  // outpoint to still exist AND still be spendable. Fail closed — nothing reaches the device otherwise.
+  async function hwAssertInputsFresh(built, gutxos) {
+    var ins; try { ins = C.psbtInputs(built.psbt) || []; } catch (e) { throw new Error('Could not read the transaction inputs to re-verify them — nothing was signed.'); }
+    var addrByOp = {}; (gutxos || []).forEach(function (u) { addrByOp[u.txid + ':' + u.vout] = u.address; });
+    var ops = ins.map(function (i) { return { op: i.txid + ':' + i.index, addr: addrByOp[i.txid + ':' + i.index] || null }; });
+    var addrs = {}; ops.forEach(function (x) { if (x.addr) addrs[x.addr] = true; });
+    var addrList = Object.keys(addrs);
+    if (!addrList.length) throw new Error('Could not match the transaction inputs to your addresses — nothing was signed. Rebuild the transaction.');
+    var fresh = {};
+    await Promise.all(addrList.map(async function (a) {
+      var cc = ccApplyMeta(a, await fetch('api/btc/' + a + '/coincontrol').then(function (r) { return r.json(); }));
+      (cc.utxos || []).forEach(function (u) { fresh[u.txid + ':' + u.vout] = u; });
+    }));
+    for (var k = 0; k < ops.length; k++) {
+      var u = fresh[ops[k].op];
+      if (!u) throw new Error('An input this transaction spends is no longer available (spent or reorged). Nothing was signed — rebuild the transaction.');
+      if (!hwSpendable(u)) throw new Error('An input this transaction spends became protected (asset-bearing, frozen, or time-locked) since you built it. Nothing was signed — rebuild the transaction.');
+    }
+  }
   // Gather spendable UTXOs (each tagged with its OWN pub + derivation path so the Ledger can sign each
   // input). Single-address mode → the viewed address; portfolio mode → every derived address, so the
   // wallet is "smart" and spends whatever's available across the account. Change always returns to the
@@ -668,14 +691,14 @@
     if (!agg) {
       var src = hwSourceEntry(); if (!src) return null;
       var cc = ccApplyMeta(src.address, await fetch('api/btc/' + src.address + '/coincontrol').then(function (r) { return r.json(); }));
-      return { utxos: (cc.utxos || []).filter(hwSpendable).map(function (u) { return { txid: u.txid, vout: u.vout, value: u.value, pub: src.pub, path: src.path }; }), change: src, from: src.address };
+      return { utxos: (cc.utxos || []).filter(hwSpendable).map(function (u) { return { txid: u.txid, vout: u.vout, value: u.value, pub: src.pub, path: src.path, address: src.address }; }), change: src, from: src.address };
     }
     if (!acct || !acct.pub || !acct.chainCode) return null;
     var derived = C.deriveReceiveAddrs(acct.pub, acct.chainCode, bt, 20, 0);
     var all = [], N = 5;
     for (var i = 0; i < derived.length; i += N) {
       await Promise.all(derived.slice(i, i + N).map(async function (d) {
-        try { var cc = ccApplyMeta(d.address, await fetch('api/btc/' + d.address + '/coincontrol').then(function (r) { return r.json(); })); (cc.utxos || []).filter(hwSpendable).forEach(function (u) { all.push({ txid: u.txid, vout: u.vout, value: u.value, pub: d.pub, path: d.path }); }); } catch (e) {}
+        try { var cc = ccApplyMeta(d.address, await fetch('api/btc/' + d.address + '/coincontrol').then(function (r) { return r.json(); })); (cc.utxos || []).filter(hwSpendable).forEach(function (u) { all.push({ txid: u.txid, vout: u.vout, value: u.value, pub: d.pub, path: d.path, address: d.address }); }); } catch (e) {}
       }));
     }
     return { utxos: all, change: { pub: derived[0].pub, path: derived[0].path, address: derived[0].address }, from: 'all addresses' };
@@ -718,11 +741,11 @@
         var g = await hwGatherUtxos(agg);
         if (!g || !g.utxos.length) throw new Error(agg ? 'No spendable UTXOs across your addresses.' : 'No spendable UTXOs on this address.');
         var built = C.buildHwSend({ utxos: g.utxos, recipient: to, amountSats: amountSats, feeRate: feeRate, sendMax: sendMax, rbf: true, mfp: HW.mfp, accountPath: "84'/0'/" + (HW.account || 0) + "'", sourcePath: g.change.path, sourcePub: g.change.pub, type: hwBt });
-        renderHwSendPreview(built, g.from, to);
+        renderHwSendPreview(built, g.from, to, g.utxos);
       } catch (err) { s.className = 'p-err'; s.textContent = err.message === 'insufficient_funds' ? 'Insufficient spendable balance for that + fee.' : (err.message || 'Could not build transaction.'); }
     };
   }
-  function renderHwSendPreview(built, from, to) {
+  function renderHwSendPreview(built, from, to, gutxos) {
     var usd = function (sats) { var p = PRICES.bitcoin || 0; return p ? ' · ≈ $' + fmt((sats / 1e8) * p, 2) : ''; };
     app.innerHTML = '<div class="p-head"><button class="p-ibtn" id="bBack" title="Back">←</button><div class="p-brand-mid"><div class="p-name">Review · Ledger</div></div><div class="p-icons"></div></div>'
       + '<div class="p-card" style="display:flex;flex-direction:column;gap:7px">'
@@ -735,15 +758,17 @@
       + '<div class="actions"><button class="btn ghost" id="hcBack">Back</button><button class="btn" id="hcGo">Sign on Ledger</button></div>';
     document.getElementById('bBack').onclick = renderHwSend;
     document.getElementById('hcBack').onclick = renderHwSend;
-    document.getElementById('hcGo').onclick = function () { hwSignBroadcast(built, to); };
+    document.getElementById('hcGo').onclick = function () { hwSignBroadcast(built, to, gutxos); };
   }
-  async function hwSignBroadcast(built, to) {
+  async function hwSignBroadcast(built, to, gutxos) {
     var s = document.getElementById('hcStatus'); s.className = 'p-hint'; s.textContent = 'Verifying transaction…';
     var step = 'verify', nIn = 0;
     try {
       // SECURITY: the tx must pay ONLY the recipient you entered (+ change back to the source). Verify before signing.
-      var outs = C.decodeTxOutputs(built.psbt) || [];
+      var outs = C.decodeTxOutputs(built.psbt, NET()) || []; // WW-B18: active-network encode
       if (!outs.some(function (o) { return o.address === to; })) throw new Error('Safety check failed — the transaction does not pay the address you entered. Aborted.');
+      // WW-C09: re-validate the input set against FRESH coin-control immediately before the device signs.
+      await hwAssertInputsFresh(built, gutxos);
       try { nIn = (built.inputs && built.inputs.length) || (C.psbtInputs(built.psbt) || []).length; } catch (e) {}
       step = 'load-device';
       var HWm = await hwLoadBundle();

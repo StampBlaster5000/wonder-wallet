@@ -506,18 +506,22 @@ function verifyBuiltOutputs(tx, { recipient, outAmount, fromAddress, change, tot
 
 // Decode a composed tx/PSBT's OUTPUTS so the client can verify a server-composed transaction
 // pays only expected addresses (change back to source, user-entered recipients) before signing.
-function decodeTxOutputs(psbtHexOrB64) {
+// WW-B18: `network` selects the address encoder (default mainnet, backward-compatible). On testnet the
+// script → address encode MUST use TEST_NETWORK or every output/change renders as a mainnet bc1…/1…,
+// which both misleads the Sign dialog and breaks address-equality verification against tb1… intents.
+function decodeTxOutputs(psbtHexOrB64, network = 'mainnet') {
   const s = String(psbtHexOrB64).replace(/^0x/, '');
   const bytes = /^[0-9a-fA-F]+$/.test(s) ? hex.decode(s) : base64.decode(s);
   let tx;
   try { tx = btc.Transaction.fromPSBT(bytes, { allowUnknownOutputs: true, allowUnknownInputs: true }); }
   catch (_) { tx = btc.Transaction.fromRaw(bytes, { allowUnknownOutputs: true, allowLegacyWitnessUtxo: true }); }
+  const net = btcNet(network);
   const out = [];
   for (let i = 0; i < tx.outputsLength; i++) {
     const o = tx.getOutput(i);
     const script = o.script || new Uint8Array(0);
     let address = null; const opReturn = script[0] === 0x6a;
-    if (!opReturn) { try { address = btc.Address().encode(btc.OutScript.decode(script)); } catch (_) { address = null; } }
+    if (!opReturn) { try { address = btc.Address(net).encode(btc.OutScript.decode(script)); } catch (_) { address = null; } }
     out.push({ address, value: o.amount != null ? Number(o.amount) : 0, opReturn });
   }
   return out;
@@ -546,10 +550,11 @@ function nwOut(nw, index) {
 // Full decode of a PSBT for the dApp-provider Sign dialog (clear-signing): each input's prevout
 // address + value + requested sighash, plus the outputs. Keyless + pure (like decodeTxOutputs) — the
 // approval UI adds "mine?" (address match) and asset tags (coin-control) on top before summarizing.
-function describePsbt(psbtHexOrB64) {
+function describePsbt(psbtHexOrB64, network = 'mainnet') {
   const s = String(psbtHexOrB64).replace(/^0x/, '');
   const bytes = /^[0-9a-fA-F]+$/.test(s) ? hex.decode(s) : base64.decode(s);
   const tx = btc.Transaction.fromPSBT(bytes, { allowUnknownOutputs: true, allowUnknownInputs: true });
+  const net = btcNet(network); // WW-B18: encode prevout addresses for the ACTIVE network
   const inputs = [];
   for (let i = 0; i < tx.inputsLength; i++) {
     const inp = tx.getInput(i);
@@ -557,10 +562,10 @@ function describePsbt(psbtHexOrB64) {
     if (inp.witnessUtxo) { script = inp.witnessUtxo.script; amount = inp.witnessUtxo.amount; }
     else { const o = nwOut(inp.nonWitnessUtxo, inp.index); if (o) { script = o.script; amount = o.amount; } }
     let address = null;
-    if (script) { try { address = btc.Address().encode(btc.OutScript.decode(script)); } catch (_) {} }
+    if (script) { try { address = btc.Address(net).encode(btc.OutScript.decode(script)); } catch (_) {} }
     inputs.push({ txid: hex.encode(inp.txid), index: inp.index, address: address, value: amount != null ? Number(amount) : null, sighashType: inp.sighashType != null ? Number(inp.sighashType) : null });
   }
-  return { inputs: inputs, outputs: decodeTxOutputs(psbtHexOrB64) };
+  return { inputs: inputs, outputs: decodeTxOutputs(psbtHexOrB64, network) };
 }
 
 // Sign a dApp-provided PSBT (provider `ww_signPsbt`). Signs ONLY the inputs that belong to us (or the
