@@ -274,17 +274,33 @@
   // would abort a restore mid-read. A tab also gives this guard-with-your-life flow room + persistence.
   function openBackupTab() {
     var url = chrome.runtime.getURL('sidepanel.html') + '?backup=1';
-    // A COMPACT window sized like the extension — not a maximized tab, and NOT the action popup (Chrome
-    // closes the popup the instant the OS file picker opens, which would abort a Restore mid-read). A real
-    // window keeps file import/export reliable. Reuse an already-open backup window if there is one.
+    var W = 400, H = 660; // match the signing/approval window's footprint
+    // A COMPACT window — not a maximized tab, and NOT the action popup (Chrome closes the popup the instant
+    // the OS file picker opens, which would abort a Restore mid-read). Anchor it to the TOP-RIGHT of the
+    // current browser window, under the toolbar / extension button, so it reads as dropping from the Wonder
+    // Wallet icon — the same illusion the signing approval window uses.
+    var make = function (win) {
+      var o = { url: url, type: 'popup', width: W, height: H, focused: true };
+      if (win && win.width) { o.top = Math.max(0, (win.top || 0) + 74); o.left = Math.max(0, (win.left || 0) + win.width - W - 20); }
+      if (chrome.windows && chrome.windows.create) chrome.windows.create(o);
+      else chrome.tabs.create({ url: url, active: true });
+    };
+    var anchored = function () {
+      try {
+        chrome.tabs.query({ active: true, lastFocusedWindow: true }, function (tabs) {
+          var t = tabs && tabs[0];
+          if (t && t.windowId != null && chrome.windows && chrome.windows.get) chrome.windows.get(t.windowId, function (win) { make(win); });
+          else make(null);
+        });
+      } catch (e) { make(null); }
+    };
     try {
       chrome.tabs.query({}, function (tabs) {
         var ex = (tabs || []).filter(function (t) { return t.url && t.url.indexOf('backup=1') >= 0; })[0];
         if (ex && ex.windowId != null && chrome.windows) { try { chrome.windows.update(ex.windowId, { focused: true }); chrome.tabs.update(ex.id, { active: true }); } catch (e) {} return; }
-        if (chrome.windows && chrome.windows.create) chrome.windows.create({ url: url, type: 'popup', width: 420, height: 680, focused: true });
-        else chrome.tabs.create({ url: url, active: true });
+        anchored();
       });
-    } catch (e) { try { chrome.windows.create({ url: url, type: 'popup', width: 420, height: 680, focused: true }); } catch (x) { try { chrome.tabs.create({ url: url, active: true }); } catch (y) {} } }
+    } catch (e) { anchored(); }
   }
   // Settings = every ww:* localStorage key (labels, watch-list, freeze flags, favorites, vault deposit
   // addrs). The vault (seed) lives in IndexedDB, NOT localStorage, so it is never swept in as "settings".
