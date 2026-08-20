@@ -26,6 +26,49 @@ const scan = require('./sources/scan');
 const activity = require('./sources/activity');
 const emblem = require('./sources/emblem');
 const netctx = require('./sources/netctx');
+const btcSigner = require('@scure/btc-signer');
+const { hex: hexCodec } = require('@scure/base');
+
+// ── Connected-wallet PSBT enrichment (task #29 / WW-#29) ──
+// Counterparty's compose returns the input values + prev-output scripts SEPARATELY
+// (inputs_values / lock_scripts) and does NOT embed them in the PSBT. External signers
+// (our extension, UniSat, OKX) read the miner fee as Σinputs − Σoutputs, so without
+// per-input witnessUtxo they can't know the input amounts → they show "fee 0 / unverified".
+// We bake witnessUtxo into each NATIVE-SEGWIT input (v0/v1 witness program) from the data
+// CP already gave us, so every connected wallet can compute + display the true fee. Legacy
+// (P2PKH/P2SH) inputs are left untouched — they'd need the full prev-tx (nonWitnessUtxo),
+// and connected wallets are segwit/taproot in practice. Fail-safe: ANY error returns the
+// original PSBT unchanged, so enrichment can never break signing.
+function isWitnessProgram(scHex) {
+  if (!/^[0-9a-fA-F]+$/.test(scHex) || scHex.length % 2) return false;
+  const b = hexCodec.decode(scHex);
+  if (b.length < 4 || b.length > 42) return false;
+  const ver = b[0];
+  if (ver !== 0x00 && !(ver >= 0x51 && ver <= 0x60)) return false; // OP_0 or OP_1..OP_16
+  const push = b[1];
+  if (push < 0x02 || push > 0x28) return false; // 2..40-byte program
+  return b.length === push + 2;
+}
+function enrichConnPsbt(psbtHex, values, scripts) {
+  try {
+    if (!psbtHex || !Array.isArray(values) || !Array.isArray(scripts)) return psbtHex;
+    const tx = btcSigner.Transaction.fromPSBT(hexCodec.decode(psbtHex), { allowUnknownInputs: true, allowUnknownOutputs: true });
+    let changed = false;
+    for (let i = 0; i < tx.inputsLength; i++) {
+      const inp = tx.getInput(i);
+      if (inp && inp.witnessUtxo) continue; // already present — don't clobber
+      const sc = scripts[i], val = values[i];
+      if (sc == null || val == null) continue;
+      const scHex = String(sc).replace(/^0x/, '');
+      if (!isWitnessProgram(scHex)) continue;
+      const amount = BigInt(Math.round(Number(val)));
+      if (amount < 0n) continue;
+      tx.updateInput(i, { witnessUtxo: { script: hexCodec.decode(scHex), amount } });
+      changed = true;
+    }
+    return changed ? hexCodec.encode(tx.toPSBT()) : psbtHex;
+  } catch (_) { return psbtHex; }
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -561,7 +604,9 @@ app.post('/api/cp/compose/:type', limitMoney, wrap(async (req, res) => {
     return res.status(400).json({ error: 'compose_failed', detail: safeErr(j.error || (j.messages && j.messages[0]) || 'Counterparty rejected the compose') });
   }
   const x = j.result;
-  res.json({ psbt: x.psbt, inputs_values: x.inputs_values, lock_scripts: x.lock_scripts, btc_fee: x.btc_fee, btc_in: x.btc_in, btc_out: x.btc_out, btc_change: x.btc_change, data: x.data, signed_tx_estimated_size: x.signed_tx_estimated_size, name: x.name, warnings: x.warnings, params: x.params });
+  // Bake witnessUtxo into segwit inputs so connected wallets can show the true miner fee (task #29).
+  const psbt = enrichConnPsbt(x.psbt, x.inputs_values, x.lock_scripts);
+  res.json({ psbt, inputs_values: x.inputs_values, lock_scripts: x.lock_scripts, btc_fee: x.btc_fee, btc_in: x.btc_in, btc_out: x.btc_out, btc_change: x.btc_change, data: x.data, signed_tx_estimated_size: x.signed_tx_estimated_size, name: x.name, warnings: x.warnings, params: x.params });
 }));
 
 // XCP-fee pre-flight (sweep/dividend/attach/issuance expose estimatexcpfees).
