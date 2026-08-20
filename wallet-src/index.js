@@ -1103,6 +1103,22 @@ async function unlock(password) {
   fireLock(true);
   return true;
 }
+// Full-backup: move the ENCRYPTED vault blob out to / in from a user's backup file. The blob is already
+// Argon2id→AES-GCM ciphertext, so the seed is NEVER serialized in plaintext. We verify the password
+// actually opens it before EXPORT (guarantees the backup is restorable) and before IMPORT (so a wrong
+// password / corrupt file can never clobber an existing wallet). Settings are handled by the UI layer.
+async function exportVaultBlob(password) {
+  const blob = await idb('get', 'vault');
+  if (!blob) throw new Error('no_vault');
+  await decryptVault(blob, password); // throws 'wrong_password' if it won't open
+  return blob;
+}
+async function importVaultBlob(blob, password) {
+  if (!blob || !blob.ct || !blob.salt || !blob.iv) throw new Error('bad_backup');
+  await decryptVault(blob, password); // verify BEFORE touching stored state
+  await idb('put', 'vault', blob);
+  return true;
+}
 // SECURITY (audit 2026-08 finding #2): the cross-surface session bridge (resumeSession/getSessionSecret)
 // is a NO-PASSWORD secret path — it only makes sense inside the browser EXTENSION (secret lives in
 // chrome.storage.session). On the public Terminal (wonder-wallet.com) nothing calls it, so we hard-gate
@@ -1263,7 +1279,7 @@ function selfTest() {
 
 const WonderCore = {
   generateMnemonic, validateMnemonic, deriveAccounts, deriveSecrets, deriveCustom, deriveReceiveAddrs,
-  fromWIF, hasVault, createVault, unlock, lock, isUnlocked, destroyVault,
+  fromWIF, hasVault, createVault, unlock, lock, isUnlocked, destroyVault, exportVaultBlob, importVaultBlob,
   importKey, importKeys, removeImportedKey, importedAccounts, importedAddresses,
   accounts, secrets, revealSeed, armAutoLock, selfTest,
   isCwPhrase, cwSeedHex, cwDeriveAddrs, // Counterwallet / FreeWallet legacy passphrase (Electrum-v1)
@@ -1276,7 +1292,7 @@ const WonderCore = {
 // primitives (personalSignWithKey/bip322SignWithKey/signEvm/buildSend/build*Transfer/…).
 // Reduces blast radius if any script runs in-origin. (Strong CSP is the primary defense.)
 const PUBLIC_API = {
-  generateMnemonic, validateMnemonic, hasVault, createVault, unlock, lock, isUnlocked, destroyVault,
+  generateMnemonic, validateMnemonic, hasVault, createVault, unlock, lock, isUnlocked, destroyVault, exportVaultBlob, importVaultBlob,
   importKey, importKeys, removeImportedKey, importedAccounts, importedAddresses,
   accounts, secrets, revealSeed, deriveCustom, deriveReceiveAddrs, isCwPhrase, cwDeriveAddrs, send, signMessage, signMessageImported, signCp, signStamp, psbtInputs, decodeTxOutputs, describePsbt, signProviderPsbt, signProvider, buildUnsignedSend, addrHash, sendEvm, sendSol, sendSpl, sendCnft, solSignMessage, solSignTransaction,
   buildHwSend, finalizeHwSend, txidOf, // hardware (Ledger) BTC send — keyless: builds an annotated PSBT, finalizes with device sigs

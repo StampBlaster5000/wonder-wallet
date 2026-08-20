@@ -1861,7 +1861,7 @@
         <button class="adv-opt" data-adv="custom"><b>Custom derivation path</b><span>Derive an address at a specific path</span></button>
         <button class="adv-opt" data-adv="theme"><b>Appearance</b><span>Dark or light wallet skin</span></button>
         <button class="adv-opt" data-adv="autolock"><b>Auto-lock &amp; stay signed in</b><span>Keep the wallet unlocked across refreshes; set an idle timer</span></button>
-        <button class="adv-opt" data-adv="backup"><b>Back up / restore settings</b><span>Export or import labels, watch-list &amp; flags — never keys</span></button>
+        <button class="adv-opt" data-adv="backup"><b>Backup &amp; Restore</b><span>Full encrypted wallet backup — seed + settings in one file. Guard it like your seed.</span></button>
         <button class="adv-opt danger" data-adv="reveal"><b>Reveal seed phrase</b><span>Show your 12/24-word recovery phrase</span></button>
         <button class="adv-opt danger" data-adv="secrets"><b>Export private keys</b><span>Export raw keys for this account</span></button>
       </div>

@@ -23,18 +23,19 @@
     return { watch, utxo, vaults };
   }
 
-  function exportSettings() {
-    const settings = collectSettings();
-    const data = { _type: 'wonder-wallet-settings', _version: 1, exportedAt: new Date().toISOString(), settings };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const C = window.WonderCore;
+  function download(obj, name) {
+    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = 'wonder-wallet-settings.json';
+    a.href = URL.createObjectURL(blob); a.download = name;
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
+  // Restore the settings portion into localStorage. Accepts the full backup OR a legacy settings-only
+  // file (both carry `settings`). Only ww:* keys are written. Returns how many were restored.
   function importSettings(obj) {
-    if (!obj || obj._type !== 'wonder-wallet-settings' || typeof obj.settings !== 'object') throw new Error('Not a Wonder Wallet settings file.');
+    const s = obj && obj.settings; if (!s || typeof s !== 'object') return 0;
     let n = 0;
-    Object.entries(obj.settings).forEach(([k, v]) => {
+    Object.entries(s).forEach(([k, v]) => {
       if (k.indexOf('ww:') !== 0) return; // ignore anything that isn't ours
       localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v)); n++;
     });
@@ -50,39 +51,70 @@
 
   function open() {
     const c = counts(collectSettings());
-    modal(`<h3 class="m-title">Backup &amp; restore</h3>
-      <p class="fine">Your <b>seed phrase</b> restores all funds &amp; accounts. This file restores your <b>settings</b> — watch-list, labels, UTXO flags, favorites &amp; vault deposit addresses. It contains <b>no keys</b>, so it's safe to store anywhere. Full restore = seed phrase + this file.</p>
+    modal(`<h3 class="m-title">Backup &amp; Restore</h3>
+      <div class="warn" style="margin:8px 0 4px;border-color:#c0392b">⚠ <b>Handle with care — guard it with your life.</b> This is your <b>entire wallet</b> in one file: your seed (encrypted with your password) plus your watch-list, labels, UTXO freeze flags, favorites &amp; vault deposit addresses. Anyone who gets this file <b>and</b> your password can take your funds. Store it offline like your seed phrase — never in shared cloud, chat, or email.</div>
       <div class="m-grid" style="margin:10px 0">
+        <div><span class="k">Seed &amp; keys</span><span class="v">included · encrypted 🔒</span></div>
         <div><span class="k">Watch addresses</span><span class="v">${c.watch}</span></div>
         <div><span class="k">UTXO labels/locks</span><span class="v">${c.utxo}</span></div>
         <div><span class="k">Pending vaults</span><span class="v">${c.vaults}</span></div>
-        <div><span class="k">Keys included</span><span class="v">none ✓</span></div>
       </div>
+      <label class="fine" for="bkPw">Wallet password — encrypts the backup, and is required to restore it</label>
+      <input type="password" id="bkPw" class="m-in" placeholder="Your wallet password" autocomplete="off" spellcheck="false" />
       <div id="bkStatus" class="statusline" hidden></div>
       <div class="wbtns">
-        <button class="primary" id="bkExport">Export settings</button>
-        <button class="ghost" id="bkImport">Import settings…</button>
+        <button class="primary" id="bkExport">Export backup</button>
+        <button class="ghost" id="bkImport">Restore from file…</button>
       </div>
       <input type="file" id="bkFile" accept="application/json,.json" hidden />
       <button class="modal-x" id="bkx">Close</button>`);
+    const setS = (cls, txt) => { const s = $('#bkStatus'); s.hidden = false; s.className = 'statusline ' + cls; s.innerHTML = txt; };
     $('#bkx').onclick = close;
-    $('#bkExport').onclick = () => { exportSettings(); const s = $('#bkStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Downloaded wonder-wallet-settings.json ✓'; };
+
+    // EXPORT — verify the password opens the vault, then bundle the ENCRYPTED vault blob + settings.
+    $('#bkExport').onclick = async () => {
+      const pw = $('#bkPw').value; if (!pw) return setS('err', 'Enter your wallet password to export.');
+      setS('load', 'Verifying &amp; packaging…');
+      try {
+        if (!C || !C.exportVaultBlob) throw new Error('Wallet core not ready — reload the page.');
+        const vault = await C.exportVaultBlob(pw); // throws wrong_password / no_vault
+        download({ _type: 'wonder-wallet-backup', _version: 2, exportedAt: new Date().toISOString(), vault, settings: collectSettings() }, 'wonder-wallet-backup.json');
+        setS('', 'Downloaded <b>wonder-wallet-backup.json</b> ✓ — store it somewhere safe &amp; offline.');
+      } catch (err) {
+        setS('err', err.message === 'wrong_password' ? 'Wrong password — nothing was exported.' : err.message === 'no_vault' ? 'No wallet on this device to back up.' : ('Failed: ' + (err.message || 'export error')));
+      }
+    };
+
+    // RESTORE — full backup (seed + settings) or a legacy settings-only file.
     $('#bkImport').onclick = () => $('#bkFile').click();
     $('#bkFile').onchange = (e) => {
-      const f = e.target.files[0]; if (!f) return;
-      const s = $('#bkStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Reading…';
+      const f = e.target.files[0]; if (!f) return; e.target.value = '';
+      setS('load', 'Reading file…');
       const rd = new FileReader();
-      rd.onload = () => {
+      rd.onload = async () => {
+        let obj; try { obj = JSON.parse(String(rd.result)); } catch (_) { return setS('err', 'That is not a valid backup file.'); }
+        if (!obj || (obj._type !== 'wonder-wallet-backup' && obj._type !== 'wonder-wallet-settings')) return setS('err', 'Not a Wonder Wallet backup file.');
         try {
-          const n = importSettings(JSON.parse(String(rd.result)));
-          s.className = 'statusline load'; s.textContent = `Imported ${n} settings ✓ — reloading…`;
-          setTimeout(() => location.reload(), 800);
-        } catch (err) { s.className = 'statusline err'; s.textContent = 'Failed: ' + (err.message || 'invalid file'); }
+          if (obj.vault) { // full backup → restores the WALLET; needs the password; replaces any wallet here
+            const pw = $('#bkPw').value; if (!pw) return setS('err', 'Enter the backup’s password above, then choose the file again.');
+            if (!C || !C.importVaultBlob) throw new Error('Wallet core not ready — reload the page.');
+            if ((await C.hasVault()) && !confirm('This REPLACES the wallet currently on this device with the one in the backup. If you don’t have the current wallet’s seed, it will be lost. Continue?')) return setS('', 'Restore cancelled.');
+            await C.importVaultBlob(obj.vault, pw); // verifies password BEFORE overwriting
+            const n = importSettings(obj);
+            setS('', `Wallet restored ✓ (+${n} settings) — reloading, then unlock with your password…`);
+          } else { // legacy settings-only
+            const n = importSettings(obj);
+            setS('', `Imported ${n} settings ✓ — reloading…`);
+          }
+          setTimeout(() => location.reload(), 1300);
+        } catch (err) {
+          setS('err', err.message === 'wrong_password' ? 'Wrong password for this backup — nothing changed.' : err.message === 'bad_backup' ? 'That backup file is corrupt or incomplete.' : ('Failed: ' + (err.message || 'restore error')));
+        }
       };
       rd.readAsText(f);
     };
   }
 
-  window.WonderBackup = { open, exportSettings };
+  window.WonderBackup = { open };
   document.addEventListener('DOMContentLoaded', () => { const b = $('#backupBtn'); if (b) b.onclick = open; });
 })();
