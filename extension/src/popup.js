@@ -1711,12 +1711,19 @@
     stopCd();
     var addr = currentAddress(), c = CH[chain];
     var qr = (addr && window.qrcode) ? qrDataUrl(addr) : null;
+    var COPY_IC = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
     app.innerHTML = '<div class="p-head"><button class="p-ibtn" id="bBack" title="Back">←</button><div class="p-brand-mid"><div class="p-name">Receive ' + esc(c.sym) + '</div></div><div class="p-icons"></div></div>'
       + '<div class="p-card"><div class="p-hint" style="margin-bottom:10px">Your ' + esc(c.name) + ' address. Only send ' + esc(c.name) + ' assets here.</div>'
       + (qr ? '<div class="recv-qr"><img src="' + qr + '" alt="' + esc(c.name) + ' address QR" width="180" height="180"/></div>' : '')
-      + '<div class="recv-addr" data-copy="' + esc(addr || '') + '" title="Copy">' + esc(addr || '—') + '</div></div>';
+      + '<div class="recv-addr" role="button" tabindex="0" title="Tap to copy"><span class="ra-text">' + esc(addr || '—') + '</span><span class="ra-copy" aria-hidden="true">' + COPY_IC + '</span></div></div>';
     document.getElementById('bBack').onclick = renderMain;
-    app.querySelectorAll('[data-copy]').forEach(function (el) { el.onclick = function () { copy(el.getAttribute('data-copy'), el); }; });
+    var ra = app.querySelector('.recv-addr');
+    if (ra && addr) {
+      var rc = ra.querySelector('.ra-copy'), orig = rc.innerHTML;
+      var doCopy = function () { try { navigator.clipboard.writeText(addr); } catch (e) {} ra.classList.add('copied'); rc.innerHTML = '✓ Copied'; clearTimeout(ra._t); ra._t = setTimeout(function () { ra.classList.remove('copied'); rc.innerHTML = orig; }, 1300); };
+      ra.onclick = doCopy;
+      ra.onkeydown = function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doCopy(); } };
+    }
   }
 
   // ── Collectible (stamp / CP asset) tools: Send · Dispenser · Destroy · Dividend ──

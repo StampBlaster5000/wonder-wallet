@@ -1,6 +1,6 @@
 {
   "name": "wonder-wallet",
-  "version": "0.54.8",
+  "version": "0.54.9",
   "private": true,
   "description": "Wonder Wallet — self-custodial BTC/ETH/SOL wallet for the Counterparty/Stamps/SRC-20 community.",
   "license": "MIT",

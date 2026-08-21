@@ -201,7 +201,13 @@ html.in-panel #app { height: 100vh; }
 .acct-kebab:hover { background: var(--surface2); border-color: var(--border); color: var(--gold2); }
 .recv-qr { display: flex; justify-content: center; margin-bottom: 12px; }
 .recv-qr img { width: 184px; height: 184px; background: #fff; border-radius: 12px; padding: 9px; image-rendering: pixelated; box-shadow: 0 6px 20px -8px rgba(0,0,0,0.7); }
-.recv-addr { font-family: var(--mono); font-size: 12px; color: var(--gold2); word-break: break-all; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 11px; cursor: pointer; }
+.recv-addr { display: flex; align-items: center; justify-content: center; gap: 8px; font-family: var(--mono); font-size: 12px; color: var(--gold2); word-break: break-all; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 11px; cursor: pointer; text-align: center; }
+.recv-addr:hover { border-color: var(--gold, var(--gold2)); }
+.recv-addr .ra-text { word-break: break-all; min-width: 0; }
+.recv-addr .ra-copy { flex: none; display: inline-flex; align-items: center; gap: 3px; color: var(--muted); opacity: 0; transition: opacity .12s; font-size: 11px; font-weight: 600; }
+.recv-addr:hover .ra-copy { opacity: .8; }
+.recv-addr.copied { border-color: var(--green); color: var(--green); }
+.recv-addr.copied .ra-copy { opacity: 1; color: var(--green); }
 .recv-addr.copyok { border-color: var(--green); }
 
 /* stamp detail + clickable collectibles */
