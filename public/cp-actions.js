@@ -189,7 +189,7 @@
   // Hub-aware exit: when launched from the dApp dashboard, closing returns there and the
   // exit control reads "‹ Dashboard"; otherwise it's a plain "Close".
   const fromHub = () => !!(window.DappDashboard && window.DappDashboard.fromHub && window.DappDashboard.fromHub());
-  const exitLabel = () => (BACK_FN ? '‹ Back' : (fromHub() ? '‹ Dashboard' : 'Close'));
+  const exitLabel = () => (fromHub() ? '‹ Dashboard' : 'Close');
   function close() { const m = $('#cpmodal'); if (m) m.hidden = true; if (window.DappDashboard && window.DappDashboard.returnToHub) window.DappDashboard.returnToHub(); }
   // Back to whoever launched this tool (e.g. the asset-detail window): hide OUR modal, then run the
   // callback — which opens its own modal. No returnToHub side-effect. One-shot (clears the target).
@@ -817,7 +817,7 @@
       <div class="cp-addr">Bind Counterparty assets to a specific UTXO, or release them back · ${esc(FROM)}</div></div><button class="mini" id="adX">${exitLabel()}</button></div>
       <div class="cp-filters" style="margin:6px 0 12px"><button class="ccf ${tab === 'attach' ? 'on' : ''}" data-ad="attach">Attach to UTXO</button><button class="ccf ${tab === 'detach' ? 'on' : ''}" data-ad="detach">Detach to address</button></div>
       <div id="adBody"></div>`, true);
-    $('#adX').onclick = () => (BACK_FN ? goBack() : close());
+    $('#adX').onclick = close;
     $('#cpCard').querySelectorAll('[data-ad]').forEach((b) => (b.onclick = () => adShell(b.dataset.ad)));
     tab === 'detach' ? adDetach() : adAttach();
   }
@@ -829,7 +829,8 @@
       <label class="cpf"><span>Quantity <span class="fine availhint" id="adAvail"></span></span><input id="adQ" class="m-in" type="number" step="any" min="0"/></label>
       ${cpFeeRowHtml()}
       <div id="adStatus" class="statusline" hidden></div>
-      <div class="wbtns"><button class="primary" id="adReview">Review attach</button></div>`;
+      <div class="wbtns"><button class="ghost" id="adBack">Back</button><button class="primary" id="adReview">Review attach</button></div>`;
+    $('#adBack').onclick = () => (BACK_FN ? goBack() : renderHub()); // match the other tool forms' bottom Back
     $('#adReview').onclick = adAttachReview;
     wireCpFee();
     // Populate the dropdown from the wallet's CP holdings + mirror the selected balance.
