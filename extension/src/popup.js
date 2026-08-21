@@ -2649,7 +2649,8 @@
   // live mempool rates) that fill a custom input pre-set to the RECOMMENDED rate — so casual users tap a
   // preset and advanced users just type their own. onChange(rate) fires on every pick or edit.
   function accelFeeRow(fees, recommended, inputId) {
-    var chips = [['Fast', fees.fastestFee || recommended], ['Med', fees.halfHourFee || recommended], ['Econ', fees.hourFee || 1]];
+    var f = staggerFees(fees); // strictly descending → value-match can't light up two chips
+    var chips = [['Fast', f.fastestFee], ['Med', f.halfHourFee], ['Econ', f.hourFee]];
     return '<div class="fee-row">' + chips.map(function (c) { return '<button type="button" class="feeopt' + (Number(c[1]) === Number(recommended) ? ' on' : '') + '" data-fr="' + c[1] + '">' + c[0] + ' · ' + c[1] + '</button>'; }).join('')
       + '<input id="' + inputId + '" class="fee-custom" type="number" min="0.1" step="0.1" value="' + recommended + '" title="Enter a custom rate"/></div>';
   }
@@ -2849,9 +2850,21 @@
   }
 
   // ── Shared BTC fee-rate picker: mempool presets + a custom input that allows sub-sat (e.g. 0.8). ──
+  // Strictly-descending fee presets (Fast > Med > Econ, ≥1 apart; lowest tier is the floor). The mempool
+  // API often returns EQUAL rates at low load — without this, rows show tied numbers and value-match
+  // highlighting lights up more than one. Mirrors the Terminal's window.WWFee.stagger (separate bundle).
+  function staggerFees(fees, keys) {
+    fees = fees || {}; keys = keys || ['fastestFee', 'halfHourFee', 'hourFee'];
+    var num = function (v, d) { var n = Math.round(Number(v)); return (isFinite(n) && n > 0) ? n : d; };
+    var out = {}, prev = num(fees[keys[keys.length - 1]], 1);
+    out[keys[keys.length - 1]] = prev;
+    for (var i = keys.length - 2; i >= 0; i--) { var v = Math.max(num(fees[keys[i]], prev + 1), prev + 1); out[keys[i]] = v; prev = v; }
+    return out;
+  }
   function feeRowHtml(fees) {
+    var f = staggerFees(fees);
     return '<div class="fee-row">'
-      + [['fastestFee', 'Fast'], ['halfHourFee', 'Med'], ['hourFee', 'Econ']].map(function (f, i) { return '<button type="button" class="feeopt' + (i === 1 ? ' on' : '') + '" data-r="' + (fees[f[0]] || 5) + '">' + f[1] + ' · ' + (fees[f[0]] || '–') + '</button>'; }).join('')
+      + [['fastestFee', 'Fast'], ['halfHourFee', 'Med'], ['hourFee', 'Econ']].map(function (ff, i) { return '<button type="button" class="feeopt' + (i === 1 ? ' on' : '') + '" data-r="' + f[ff[0]] + '">' + ff[1] + ' · ' + f[ff[0]] + '</button>'; }).join('')
       + '<input id="feeCustom" class="fee-custom" type="number" min="0.1" step="0.1" placeholder="custom s/vB"/></div>'
       + '<div id="feeHint" class="fee-hint" hidden></div>';
   }
@@ -2864,6 +2877,8 @@
     root.querySelectorAll('.feeopt').forEach(function (b) { b.onclick = function () { root.querySelectorAll('.feeopt').forEach(function (x) { x.classList.remove('on'); }); b.classList.add('on'); var fc = root.querySelector('#feeCustom'); if (fc) fc.value = ''; var r = Number(b.dataset.r); setRate(r); showHint(r); }; });
     var fc = root.querySelector('#feeCustom');
     if (fc) fc.oninput = function () { if (fc.value !== '') { root.querySelectorAll('.feeopt').forEach(function (x) { x.classList.remove('on'); }); var r = Number(fc.value); if (r > 0) { setRate(r); showHint(r); } } };
+    // Sync the initial rate to the highlighted (staggered) preset, so the fee actually used matches what's shown.
+    var onBtn = root.querySelector('.feeopt.on[data-r]'); if (onBtn) setRate(Number(onBtn.dataset.r));
   }
 
   // ── inline Bitcoin send ──
