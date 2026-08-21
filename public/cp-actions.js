@@ -54,6 +54,9 @@
   };
 
   let ACCOUNT = 0, FROM = null, FROM_TYPE = 'nativeSegwit', WALLET_ASSETS = null, LAST_PARAMS = {};
+  // When a tool is launched from a specific place (e.g. the asset-detail window), BACK_FN is where its
+  // "Back" returns — otherwise Back falls to the Counterparty actions hub. Cleared whenever the hub opens.
+  let BACK_FN = null;
   // EXT: a connected external wallet ({address, name, signPsbt, pushPsbt}) from wallet-connect. When set,
   // composed CP PSBTs are signed + broadcast by IT (not the local seed). Cleared on every local entry.
   let EXT = null;
@@ -186,8 +189,11 @@
   // Hub-aware exit: when launched from the dApp dashboard, closing returns there and the
   // exit control reads "‹ Dashboard"; otherwise it's a plain "Close".
   const fromHub = () => !!(window.DappDashboard && window.DappDashboard.fromHub && window.DappDashboard.fromHub());
-  const exitLabel = () => (fromHub() ? '‹ Dashboard' : 'Close');
+  const exitLabel = () => (BACK_FN ? '‹ Back' : (fromHub() ? '‹ Dashboard' : 'Close'));
   function close() { const m = $('#cpmodal'); if (m) m.hidden = true; if (window.DappDashboard && window.DappDashboard.returnToHub) window.DappDashboard.returnToHub(); }
+  // Back to whoever launched this tool (e.g. the asset-detail window): hide OUR modal, then run the
+  // callback — which opens its own modal. No returnToHub side-effect. One-shot (clears the target).
+  function goBack() { const m = $('#cpmodal'); if (m) m.hidden = true; const fn = BACK_FN; BACK_FN = null; if (fn) try { fn(); } catch (_) {} }
 
   function open(account, fromAddress) {
     EXT = null; ACCOUNT = account; FROM = fromAddress;
@@ -196,6 +202,7 @@
     renderHub();
   }
   function renderHub() {
+    BACK_FN = null; // opening the hub clears any per-launch back target
     const grid = Object.entries(ACTIONS).map(([k, a]) => `<button class="cp-act" data-k="${k}"><span class="cp-ic">${a.icon}</span>${a.label}</button>`).join('')
       + `<button class="cp-act" data-adhub="1"><span class="cp-ic">🔗</span>Attach / Detach</button>`; // bind an asset to a UTXO / release it
     modal(`<h3 class="m-title">Counterparty actions</h3>
@@ -242,7 +249,7 @@
       ${cpFeeRowHtml()}
       <div id="cpfStatus" class="statusline" hidden></div>
       <div class="wbtns"><button class="ghost" id="cpBack">Back</button><button class="primary" id="cpReview">Review</button></div>`);
-    $('#cpBack').onclick = () => renderHub();
+    $('#cpBack').onclick = () => (BACK_FN ? goBack() : renderHub());
     $('#cpReview').onclick = () => review(key);
     wireCpFee();
     if (a.wallet) wireWalletAssets(a);
@@ -343,9 +350,9 @@
   }
 
   // Deep-link: jump straight to one action form with fields pre-filled (asset-preview shortcuts).
-  async function quick(account, fromAddress, key, prefill) {
+  async function quick(account, fromAddress, key, prefill, onBack) {
     if (!ACTIONS[key]) return;
-    EXT = null;
+    EXT = null; BACK_FN = onBack || null; // Back returns to the launcher (e.g. asset detail), not the hub
     ACCOUNT = account; FROM = fromAddress;
     const b = acctBtc(); FROM_TYPE = b ? (Object.keys(b).find((t) => b[t].address === fromAddress) || 'nativeSegwit') : 'nativeSegwit';
     await openForm(key); // async: build the form (fetches fee presets) before prefilling
@@ -804,13 +811,13 @@
 
   // ── Attach / Detach (CP assets UTXOs) ──────────────────────────────────
   let AD_PREFILL = null;
-  function attachDetach(account, fromAddress, prefill) { EXT = null; ACCOUNT = account; FROM = fromAddress; AD_PREFILL = prefill || null; adShell('attach'); }
+  function attachDetach(account, fromAddress, prefill, onBack) { EXT = null; BACK_FN = onBack || null; ACCOUNT = account; FROM = fromAddress; AD_PREFILL = prefill || null; adShell('attach'); }
   function adShell(tab) {
     modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Attach / Detach</h3>
       <div class="cp-addr">Bind Counterparty assets to a specific UTXO, or release them back · ${esc(FROM)}</div></div><button class="mini" id="adX">${exitLabel()}</button></div>
       <div class="cp-filters" style="margin:6px 0 12px"><button class="ccf ${tab === 'attach' ? 'on' : ''}" data-ad="attach">Attach to UTXO</button><button class="ccf ${tab === 'detach' ? 'on' : ''}" data-ad="detach">Detach to address</button></div>
       <div id="adBody"></div>`, true);
-    $('#adX').onclick = close;
+    $('#adX').onclick = () => (BACK_FN ? goBack() : close());
     $('#cpCard').querySelectorAll('[data-ad]').forEach((b) => (b.onclick = () => adShell(b.dataset.ad)));
     tab === 'detach' ? adDetach() : adAttach();
   }
@@ -883,9 +890,9 @@
   // ── Connected external wallet (UniSat / OKX / Wonder) — the SAME full Counterparty toolset, but the
   //    composed PSBT is signed + broadcast by the connected wallet (EXT). `conn` = { address, name, signPsbt, pushPsbt }.
   function openConnected(conn) { EXT = conn; ACCOUNT = 0; FROM = conn.address; FROM_TYPE = btcTypeOf(conn.address); WALLET_ASSETS = null; renderHub(); }
-  async function quickConnected(conn, key, prefill) {
+  async function quickConnected(conn, key, prefill, onBack) {
     if (!ACTIONS[key]) return;
-    EXT = conn; ACCOUNT = 0; FROM = conn.address; FROM_TYPE = btcTypeOf(conn.address); WALLET_ASSETS = null;
+    EXT = conn; BACK_FN = onBack || null; ACCOUNT = 0; FROM = conn.address; FROM_TYPE = btcTypeOf(conn.address); WALLET_ASSETS = null;
     await openForm(key);
     if (prefill) Object.entries(prefill).forEach(([k, v]) => {
       const el = $('#cpCard').querySelector(`[data-k="${k}"]`);
@@ -893,7 +900,7 @@
     });
   }
   function issuanceSuiteConnected(conn) { EXT = conn; ACCOUNT = 0; FROM = conn.address; FROM_TYPE = btcTypeOf(conn.address); ISS_MODE = 'create'; OWNED = null; issShell(); }
-  function attachDetachConnected(conn, prefill) { EXT = conn; ACCOUNT = 0; FROM = conn.address; FROM_TYPE = btcTypeOf(conn.address); AD_PREFILL = prefill || null; adShell('attach'); }
+  function attachDetachConnected(conn, prefill, onBack) { EXT = conn; BACK_FN = onBack || null; ACCOUNT = 0; FROM = conn.address; FROM_TYPE = btcTypeOf(conn.address); AD_PREFILL = prefill || null; adShell('attach'); }
 
   window.CpActions = { open, quick, dex, dexConnected, issuanceSuite, attachDetach, openConnected, quickConnected, issuanceSuiteConnected, attachDetachConnected };
 })();

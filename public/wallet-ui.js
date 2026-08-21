@@ -1569,16 +1569,17 @@
       $('#sdmClose').onclick = closeModal;
       if (acc || isConn()) card.querySelectorAll('.m-act').forEach((b) => (b.onclick = () => {
         const act = b.dataset.act; closeModal();
+        const back = () => stampDetailModal(n, acc); // a tool's Back returns to THIS stamp detail, not the CP hub
         if (isConn()) { // connected external wallet signs (Burn maps to the CP destroy compose)
-          if (act === 'attach') { if (window.CpActions) window.CpActions.attachDetachConnected(CONN, { asset: cpid, qty: 1 }); }
-          else if (window.CpActions) window.CpActions.quickConnected(CONN, act === 'burn' ? 'destroy' : act, { asset: cpid });
+          if (act === 'attach') { if (window.CpActions) window.CpActions.attachDetachConnected(CONN, { asset: cpid, qty: 1 }, back); }
+          else if (window.CpActions) window.CpActions.quickConnected(CONN, act === 'burn' ? 'destroy' : act, { asset: cpid }, back);
           return;
         }
-        if (act === 'send') window.CpActions && window.CpActions.quick(acc.account, btc, 'send', { asset: cpid });
-        else if (act === 'dispenser') window.CpActions && window.CpActions.quick(acc.account, btc, 'dispenser', { asset: cpid });
-        else if (act === 'dividend') window.CpActions && window.CpActions.quick(acc.account, btc, 'dividend', { asset: cpid });
-        else if (act === 'burn') window.CpActions && window.CpActions.quick(acc.account, btc, 'destroy', { asset: cpid });
-        else if (act === 'attach') window.CpActions && window.CpActions.attachDetach(acc.account, btc, { asset: cpid, qty: 1 });
+        if (act === 'send') window.CpActions && window.CpActions.quick(acc.account, btc, 'send', { asset: cpid }, back);
+        else if (act === 'dispenser') window.CpActions && window.CpActions.quick(acc.account, btc, 'dispenser', { asset: cpid }, back);
+        else if (act === 'dividend') window.CpActions && window.CpActions.quick(acc.account, btc, 'dividend', { asset: cpid }, back);
+        else if (act === 'burn') window.CpActions && window.CpActions.quick(acc.account, btc, 'destroy', { asset: cpid }, back);
+        else if (act === 'attach') window.CpActions && window.CpActions.attachDetach(acc.account, btc, { asset: cpid, qty: 1 }, back);
         else if (act === 'vault') window.EmblemBridge && (window.EmblemBridge.vaultAsset
           ? window.EmblemBridge.vaultAsset(acc.account, acc.ethereum.address, btc, cpid, { label: '#' + stampNo })
           : window.EmblemBridge.open(acc.account, acc.ethereum.address, btc));
@@ -1632,17 +1633,18 @@
       $('#ctmClose').onclick = closeModal;
       if (acc || isConn()) card.querySelectorAll('.m-act').forEach((b) => (b.onclick = () => {
         const act = b.dataset.act; closeModal();
+        const back = () => cpTokenDetailModal(t, acc); // a tool's Back returns HERE, not the CP actions hub
         if (isConn()) { // connected external wallet signs — route through the EXT-aware CP entries
-          if (act === 'attach') { if (window.CpActions) window.CpActions.attachDetachConnected(CONN, { asset: cpid, qty: 1 }); }
-          else if (window.CpActions) window.CpActions.quickConnected(CONN, act, { asset: cpid });
+          if (act === 'attach') { if (window.CpActions) window.CpActions.attachDetachConnected(CONN, { asset: cpid, qty: 1 }, back); }
+          else if (window.CpActions) window.CpActions.quickConnected(CONN, act, { asset: cpid }, back);
           return;
         }
         if (act === 'vault') {
           if (window.EmblemBridge) (window.EmblemBridge.vaultAsset
             ? window.EmblemBridge.vaultAsset(acc.account, acc.ethereum.address, btc, cpid, { label: t.name || cpid })
             : window.EmblemBridge.open(acc.account, acc.ethereum.address, btc));
-        } else if (act === 'attach') { if (window.CpActions) window.CpActions.attachDetach(acc.account, btc, { asset: cpid, qty: 1 }); }
-        else if (window.CpActions) window.CpActions.quick(acc.account, btc, act, { asset: cpid });
+        } else if (act === 'attach') { if (window.CpActions) window.CpActions.attachDetach(acc.account, btc, { asset: cpid, qty: 1 }, back); }
+        else if (window.CpActions) window.CpActions.quick(acc.account, btc, act, { asset: cpid }, back);
       }));
     }
   }
