@@ -1076,18 +1076,28 @@
     if (bodyEl) bodyEl.innerHTML = anyHas ? rows : `<div class="fine">No balances or assets found across the first 20 addresses (index 0–19). If your holdings are on higher indices, let me know and I'll raise the scan depth.</div>` + rows;
     if (bodyEl) bodyEl.querySelectorAll('[data-view]').forEach((b) => (b.onclick = () => { hwViewAddr = b.dataset.view; hwViewIndex = +b.dataset.i; DASH_ASSETS = null; closeModal(); renderHardware(); }));
   }
+  // Ledger Receive: the ONE address the user already selected on the main view (current chain + BTC type,
+  // or a browsed index) with a QR + copy — not a list. Browsing all types lives under Advanced → Addresses
+  // / the ⧉ Addresses scan. Mirrors receiveView + the extension.
   function hwReceive() {
-    if (!HW || !HW.bitcoin) return;
-    const row = (label, addr, hint) => `<div class="acct"><div class="acct-l"><span class="acct-lab">${esc(label)}</span><span class="acct-hint">${esc(hint)}</span></div>
-      <div class="acct-r"><span class="acct-addr" title="${esc(addr)}">${esc(addr)}</span><button class="mini" data-copy="${esc(addr)}">copy</button><button class="mini" data-qr="${esc(addr)}">QR</button></div></div>`;
-    const b = HW.bitcoin;
-    modal(`<h3 class="m-title">Receive · Ledger</h3><p class="fine">These addresses derive from your Ledger. Verify on the device before receiving large amounts.</p>
-      <div class="acct-list"><div class="acct-grp">Bitcoin</div>${b.nativeSegwit ? row('Native SegWit', b.nativeSegwit.address, 'bc1q') : ''}${b.legacy ? row('Legacy', b.legacy.address, '1… · Counterparty/Stamps') : ''}${b.taproot ? row('Taproot', b.taproot.address, 'bc1p') : ''}${b.nestedSegwit ? row('Nested SegWit', b.nestedSegwit.address, '3…') : ''}</div>
-      <div class="wbtns"><button class="ghost" id="rvClose">Close</button></div>`);
-    const cc = $('#wmodalCard');
-    cc.querySelectorAll('[data-copy]').forEach((x) => (x.onclick = () => copy(x.dataset.copy, x)));
-    cc.querySelectorAll('[data-qr]').forEach((x) => (x.onclick = () => qrModal(x.dataset.qr, null)));
-    $('#rvClose').onclick = closeModal;
+    if (!HW) return;
+    const ch = dashChain;
+    const addr = ch === 'btc' ? (hwViewAddr || (HW.bitcoin && hwAddr(hwBtcType))) : (HW[ch] ? HW[ch].address : null);
+    if (!addr) return;
+    const url = window.qrcode ? qrUrl(addr) : null;
+    const COPY_IC = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+    modal(`<h3 class="m-title">Receive ${esc(DCH[ch].sym)} · Ledger</h3>
+      <p class="fine">Your ${esc(DCH[ch].name)} address. Verify it on your Ledger before receiving large amounts.</p>
+      ${url ? `<div class="qr-wrap"><img src="${url}" alt="address QR" width="230" height="230"/></div>` : '<div class="fine">QR unavailable.</div>'}
+      <div class="recv-addr" role="button" tabindex="0" title="Tap to copy"><span class="ra-text">${esc(addr)}</span><span class="ra-copy" aria-hidden="true">${COPY_IC}</span></div>`);
+    const ra = $('#wmodalCard').querySelector('.recv-addr'), rc = ra.querySelector('.ra-copy'), orig = rc.innerHTML;
+    const doCopy = async () => {
+      try { await navigator.clipboard.writeText(addr); } catch (_) {}
+      ra.classList.add('copied'); rc.innerHTML = '✓ Copied';
+      clearTimeout(ra._t); ra._t = setTimeout(() => { ra.classList.remove('copied'); rc.innerHTML = orig; }, 1300);
+    };
+    ra.onclick = doCopy;
+    ra.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doCopy(); } };
   }
   async function hwDisconnect() {
     try { if (window.HardwareWallet && window.HardwareWallet.disconnect) await window.HardwareWallet.disconnect(); } catch (_) {}
