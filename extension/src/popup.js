@@ -640,7 +640,7 @@
     var stg = document.getElementById('bHwSettings'); if (stg) stg.onclick = hwSettingsMenu;
     var lk = document.getElementById('bLock'); if (lk) lk.onclick = function () { C.lock(); render(); };
     var hs = document.getElementById('bHwSend'); if (hs) hs.onclick = renderHwSend;
-    document.getElementById('bReceive').onclick = hwReceive;
+    document.getElementById('bReceive').onclick = hwReceiveSingle;
     app.querySelectorAll('.atab').forEach(function (b) { b.onclick = function () { tab = b.dataset.tab; app.querySelectorAll('.atab').forEach(function (x) { x.classList.toggle('on', x === b); }); renderAssetBody(); }; });
     app.querySelectorAll('[data-copy]').forEach(function (el) { el.onclick = function () { copy(el.getAttribute('data-copy'), el); }; });
     hwLoad();
@@ -761,6 +761,28 @@
     // The Receive window is an overlay (#pop-ov is a body sibling of #app), so scope to the document —
     // app.querySelectorAll would find none of these buttons and the copy would silently do nothing.
     document.querySelectorAll('#pop-ov [data-copy2]').forEach(function (el) { el.onclick = function () { copy(el.getAttribute('data-copy2'), el); }; });
+  }
+  // Ledger Receive: show the ONE address the user already selected on the main view (current chain + BTC
+  // type / browsed index) with a QR + copy — not a list. Browsing all addresses lives under the account
+  // menu (Portfolio / scan). Falls back to the type list only if there's no single selected address.
+  function hwReceiveSingle() {
+    var addr = hwAddr(), c = CH[chain];
+    if (!addr) return hwReceive();
+    var qr = window.qrcode ? qrDataUrl(addr) : null;
+    var COPY_IC = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+    overlay('<div class="menu" style="padding:14px;text-align:center"><div class="p-title" style="font-size:15px;margin-bottom:6px">Receive ' + esc(c.sym) + '</div>'
+      + '<div class="p-hint" style="margin-bottom:10px">Your ' + esc(c.name) + ' address. Verify it on your Ledger before receiving large amounts.</div>'
+      + (qr ? '<div class="recv-qr" style="margin-bottom:10px"><img src="' + qr + '" alt="' + esc(c.name) + ' address QR" width="180" height="180"/></div>' : '')
+      + '<div class="recv-addr" role="button" tabindex="0" title="Tap to copy"><span class="ra-text">' + esc(addr) + '</span><span class="ra-copy" aria-hidden="true">' + COPY_IC + '</span></div>'
+      + '<div class="actions" style="margin-top:12px"><button class="btn ghost" id="rvX">Close</button></div></div>');
+    document.getElementById('rvX').onclick = closeOv;
+    var ra = document.querySelector('#pop-ov .recv-addr');
+    if (ra) {
+      var rc = ra.querySelector('.ra-copy'), orig = rc.innerHTML;
+      var doCopy = function () { try { navigator.clipboard.writeText(addr); } catch (e) {} ra.classList.add('copied'); rc.innerHTML = '✓ Copied'; clearTimeout(ra._t); ra._t = setTimeout(function () { ra.classList.remove('copied'); rc.innerHTML = orig; }, 1300); };
+      ra.onclick = doCopy;
+      ra.onkeydown = function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doCopy(); } };
+    }
   }
   // Resolve the current source address's signing derivation (pub + relative path "0/i").
   function hwSourceEntry() {
