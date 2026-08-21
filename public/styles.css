@@ -1047,8 +1047,10 @@ html.theme-light .wordmark .name { background-image: linear-gradient(180deg, var
 .mkt-amt { flex: 1; min-width: 0; background: transparent; border: none; color: var(--text); font-family: inherit; font-size: 22px; font-weight: 600; outline: none; }
 .mkt-amt::placeholder { color: var(--muted); }
 .mkt-asset { flex: none; font-weight: 700; font-size: 14px; color: var(--gold2); background: var(--surface3); border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px; }
-.mkt-tokenin { width: 92px; text-align: center; text-transform: uppercase; outline: none; }
+.mkt-tokenin { width: 92px; text-align: center; text-transform: uppercase; outline: none; background: var(--surface3); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px 11px; font-family: inherit; font-size: 14px; }
 .mkt-tokenin::placeholder { color: var(--muted); }
+/* In the Swap it's paired with .mkt-asset (the gold pill) — keep that look, don't let the box style win. */
+.mkt-asset.mkt-tokenin { color: var(--gold2); font-weight: 700; border-radius: 999px; padding: 6px 12px; }
 .mkt-flip { display: flex; justify-content: center; margin: 9px 0; }
 .mkt-flip button { width: 34px; height: 34px; border-radius: 10px; background: var(--surface3); border: 1px solid var(--border); color: var(--muted2); cursor: pointer; font-size: 13px; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
 .mkt-flip button:hover { border-color: var(--gold); color: var(--gold2); }
