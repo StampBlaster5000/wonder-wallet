@@ -79,6 +79,8 @@
   function src20Connected(conn) { EXT = conn; ACCOUNT = 0; BTC = conn.address; PREFILL_TICK = null; TRANSFER_ONLY = false; loadFee().then(() => src20Form('deploy')); }
   // Deep-link from the portfolio token-row Send: Transfer ONLY (Deploy/Mint stay in the side-panel suite).
   function sendSrc20(account, btcAddress, tick) { EXT = null; ACCOUNT = account; BTC = btcAddress; PREFILL_TICK = tick; TRANSFER_ONLY = true; loadFee().then(() => src20Form('transfer')); }
+  // Connected wallet / Ledger SRC-20 transfer: compose here, that signer (conn.signPsbt) signs + broadcasts.
+  function sendSrc20Connected(conn, tick) { EXT = conn; ACCOUNT = 0; BTC = conn.address; PREFILL_TICK = tick; TRANSFER_ONLY = true; loadFee().then(() => src20Form('transfer')); }
   function src20Form(op) {
     // Deploy/Mint: a typed ticker with a live ✓/✗ status chip. Transfer: a dropdown of the
     // wallet's own tokens (no typing — you can only send what you hold).
@@ -332,5 +334,5 @@
     };
   }
 
-  window.MintingModules = { src20, sendSrc20, stampArt, src20Connected, stampArtConnected };
+  window.MintingModules = { src20, sendSrc20, sendSrc20Connected, stampArt, src20Connected, stampArtConnected };
 })();

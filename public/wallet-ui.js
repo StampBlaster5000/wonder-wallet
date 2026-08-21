@@ -1446,7 +1446,17 @@
       }).join('')}</div></div>
         ${nTok > 20 ? `<button class="ghost sm" id="tokExpand" style="margin-top:8px;width:100%">Show all ${nTok}</button>` : ''}`;
       const assetFrom = acctKind === 'imported' ? impBtcAddr() : (acc && acc.bitcoin ? acctBtcAddr(acc) : null); // the CURRENTLY-SELECTED btc type (Legacy/Taproot/…), not hardcoded native segwit — matches the loaded assets
-      box.querySelectorAll('[data-send]').forEach((b) => (b.onclick = () => { const t = DASH_ASSETS.tokens[+b.dataset.send]; if (!t) return; if (acctKind === 'connected') renderConnectedSrc20Send(t.tick, t.amount); else if (window.MintingModules) window.MintingModules.sendSrc20(acc.account, assetFrom, t.tick); }));
+      box.querySelectorAll('[data-send]').forEach((b) => (b.onclick = () => {
+        const t = DASH_ASSETS.tokens[+b.dataset.send]; if (!t) return;
+        if (acctKind === 'connected') { renderConnectedSrc20Send(t.tick, t.amount); return; }
+        if (acctKind === 'hardware') { // Ledger: compose here, sign on-device via the connected-style signer
+          const hw = window.__hardwareWallet;
+          if (hw && hw.signPsbt && window.MintingModules) window.MintingModules.sendSrc20Connected(hw, t.tick);
+          else { const c = modal(`<h3 class="m-title">Send ${esc(t.name)}</h3><p class="fine">Switch your Ledger to its main <b>Native SegWit</b> address to send SRC-20 — browsed / aggregate views are read-only.</p><div class="wbtns"><button class="ghost" id="hwx">Close</button></div>`); c.querySelector('#hwx').onclick = closeModal; }
+          return;
+        }
+        if (window.MintingModules) window.MintingModules.sendSrc20(acc.account, assetFrom, t.tick);
+      }));
       const openCp = (i) => { const t = DASH_ASSETS.tokens[+i]; if (t) cpTokenDetailModal(t, acc); };
       box.querySelectorAll('[data-cp]').forEach((b) => (b.onclick = () => openCp(b.dataset.cp)));
       box.querySelectorAll('[data-cprow]').forEach((el) => (el.onclick = () => openCp(el.dataset.cprow)));

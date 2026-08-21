@@ -1410,7 +1410,7 @@
     if (!ASSETS) { body.innerHTML = '<div class="empty">Loading…</div>'; return; }
     if (tab === 'tokens') {
       if (!ASSETS.tokens.length) { body.innerHTML = '<div class="empty">No tokens on this ' + esc(CH[chain].name) + ' address.</div>'; return; }
-      var canXfer = chain === 'btc' && canSignBtc();
+      var canXfer = chain === 'btc' && (canSignBtc() || (acctKind === 'hardware' && HW && !hwAgg)); // Ledger signs SRC-20 on-device
       var isEth = chain === 'eth';
       // On Ethereum, hide low-value / unpriced tokens (airdrop spam) by default — a footer toggle
       // reveals them. Only applies to ETH (BTC/CP/SOL tokens have no USD price to judge by).
@@ -3056,10 +3056,13 @@
 
   // ── inline SRC-20 transfer ──
   var _availNum = function (a) { return parseFloat(String(a == null ? '' : a).replace(/,/g, '')) || 0; };
+  // hex → base64 (WonderHW.signPsbt wants base64, like buildHwSend produces); loop-based for large PSBTs.
+  function hex2b64(h) { h = String(h || '').replace(/^0x/, ''); var bin = ''; for (var i = 0; i < h.length; i += 2) bin += String.fromCharCode(parseInt(h.substr(i, 2), 16)); return btoa(bin); }
   async function renderSrc20Send(tick, avail) {
     stopCd();
-    if (!canSignBtc()) return renderMain();
-    var from = curBtcAddress(); if (!from) return render();
+    var isHw = acctKind === 'hardware' && HW;
+    if (!isHw && !canSignBtc()) return renderMain();
+    var from = isHw ? currentAddress() : curBtcAddress(); if (!from) return render();
     var fees = { fastestFee: 10, halfHourFee: 6, hourFee: 3 };
     try { fees = await fetch('api/btc/fees').then(function (r) { return r.json(); }); } catch (e) {}
     var feeRate = fees.halfHourFee || 6;
@@ -3072,7 +3075,7 @@
       + feeRowHtml(fees)
       + '<div id="xStatus" class="p-err"></div>'
       + '<button class="btn" id="xReview">Review</button></div>';
-    document.getElementById('bBack').onclick = renderMain;
+    document.getElementById('bBack').onclick = backToMain;
     document.getElementById('xMax').onclick = function () { document.getElementById('xAmt').value = _availNum(avail); };
     wireNameResolve('xTo', 'xNameRes');
     wireFeeRow(function (r) { feeRate = r; });
@@ -3105,17 +3108,29 @@
     document.getElementById('bBack').onclick = function () { renderSrc20Send(tick, avail); };
     document.getElementById('xbBack').onclick = function () { renderSrc20Send(tick, avail); };
     document.getElementById('xbSend').onclick = async function () {
-      var s = document.getElementById('xbStatus'); s.className = 'p-hint'; s.textContent = 'Signing locally & broadcasting…';
+      var s = document.getElementById('xbStatus'); s.className = 'p-hint';
+      var isHw = acctKind === 'hardware' && HW;
       try {
-        var stype = curBtcType(), prevTxs = {};
+        var stype = isHw ? hwBt : curBtcType(), signed;
         // NOTE: SRC-20 uses P2WSH data outputs (not OP_RETURN), so the change→source invariant does
         // not apply — output verification is intentionally skipped here (see audit follow-up).
-        if (stype === 'legacy') { s.textContent = 'Fetching previous transactions…'; var uniq = [...new Set(C.psbtInputs(r.hex).map(function (x) { return x.txid; }))]; var got = await Promise.all(uniq.map(function (t) { return fetch('api/btc/tx/' + t + '/hex').then(function (z) { return z.ok ? z.text() : null; }).then(function (h) { return [t, h && h.trim()]; }).catch(function () { return [t, null]; }); })); got.forEach(function (p) { if (p[1]) prevTxs[p[0]] = p[1]; }); s.textContent = 'Signing locally & broadcasting…'; }
-        var signed = C.signStamp(r.hex, curAccount, stype, prevTxs, curImportedId());
+        if (isHw) { // Ledger: device signs + finalizes the composed stampchain PSBT → broadcast-ready hex
+          s.textContent = 'Confirm on your Ledger — verify the recipient & amount on the device…';
+          var HWm = await hwLoadBundle(); await HWm.connect();
+          var res = await HWm.signPsbt(hex2b64(r.hex), HW.account || 0, stype);
+          if (!res || !res.txhex) throw new Error('The Ledger did not return a signed transaction — re-pair and retry.');
+          signed = { txhex: res.txhex };
+        } else {
+          s.textContent = 'Signing locally & broadcasting…';
+          var prevTxs = {};
+          if (stype === 'legacy') { s.textContent = 'Fetching previous transactions…'; var uniq = [...new Set(C.psbtInputs(r.hex).map(function (x) { return x.txid; }))]; var got = await Promise.all(uniq.map(function (t) { return fetch('api/btc/tx/' + t + '/hex').then(function (z) { return z.ok ? z.text() : null; }).then(function (h) { return [t, h && h.trim()]; }).catch(function () { return [t, null]; }); })); got.forEach(function (p) { if (p[1]) prevTxs[p[0]] = p[1]; }); }
+          signed = C.signStamp(r.hex, curAccount, stype, prevTxs, curImportedId());
+        }
+        s.textContent = 'Broadcasting…';
         var b = await bcast(signed.txhex);
         if (b.error) throw new Error(b.detail || b.error);
         s.className = 'p-hint'; s.innerHTML = txLinkHtml(b.txid);
-        setTimeout(renderMain, 1800);
+        setTimeout(backToMain, 1800);
       } catch (err) { s.className = 'p-err'; s.textContent = 'Failed: ' + (err.message || 'sign/broadcast error'); }
     };
   }
