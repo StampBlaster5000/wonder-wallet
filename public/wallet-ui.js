@@ -289,6 +289,7 @@
     const from = CONN.address, type = connBtcType(from);
     let fees = { fastestFee: 10, halfHourFee: 6, hourFee: 3, economyFee: 2 };
     try { fees = await fetch('api/btc/fees').then((r) => r.json()); } catch (_) {}
+    fees = window.WWFee ? window.WWFee.stagger(fees, ['fastestFee', 'halfHourFee', 'hourFee', 'economyFee']) : fees; // strictly descending presets (no ties)
     let feeRate = fees.halfHourFee || 6;
     // Fetch the spendable UTXO set + BTC price ONCE up front — powers the available balance, Max, and USD.
     let spendable = [], spendableSats = 0, btcUsd = 0;
@@ -396,6 +397,7 @@
     let fees = { fastestFee: 10, halfHourFee: 6, hourFee: 3, economyFee: 2 };
     try { fees = await fetch('api/btc/fees').then((r) => r.json()); } catch (_) {}
     try { await connPrice(); } catch (_) {}
+    fees = window.WWFee ? window.WWFee.stagger(fees, ['fastestFee', 'halfHourFee', 'hourFee', 'economyFee']) : fees; // strictly descending presets (no ties)
     let feeRate = fees.halfHourFee || 6;
     const c = modal(`<h3 class="m-title">Send ${esc(tick)} · ${esc(CONN.name)}</h3>
       <div class="fine">SRC-20 transfer · from <span class="vmono">${esc(from.slice(0, 14))}…</span></div>
@@ -446,6 +448,7 @@
     let fees = { fastestFee: 10, halfHourFee: 6, hourFee: 3, economyFee: 2 };
     try { fees = await fetch('api/btc/fees').then((r) => r.json()); } catch (_) {}
     try { await connPrice(); } catch (_) {}
+    fees = window.WWFee ? window.WWFee.stagger(fees, ['fastestFee', 'halfHourFee', 'hourFee', 'economyFee']) : fees; // strictly descending presets (no ties)
     let feeRate = fees.halfHourFee || 6;
     const c = modal(`<h3 class="m-title">Send ${esc(t.name)} · ${esc(CONN.name)}</h3>
       <div class="fine">Counterparty · from <span class="vmono">${esc(from.slice(0, 14))}…</span></div>
@@ -2099,6 +2102,7 @@
       <label class="send-rbf"><input type="checkbox" id="sRbf" checked /> Enable RBF (replaceable)</label>
       <div id="sStatus" class="statusline" hidden></div>
       <div class="wbtns"><button class="ghost" id="mc">Cancel</button><button class="primary" id="bReview">Review</button></div>`);
+    fees = window.WWFee ? window.WWFee.stagger(fees, ['fastestFee', 'halfHourFee', 'hourFee', 'economyFee']) : fees; // strictly descending presets (no ties)
     let feeRate = fees.halfHourFee || 6;
     // Send is paired to the account's currently-selected address type (set on the dashboard) — no in-modal picker.
     const feeHint = (r) => { const h = $('#feeHint'); if (!h) return; if (r > 0 && r < 1) { h.hidden = false; h.textContent = '⚠ Below 1 sat/vB may not relay on all nodes — best when the mempool is near-empty.'; } else { h.hidden = true; } };

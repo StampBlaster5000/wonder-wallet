@@ -104,6 +104,7 @@
     const leftLots = qbp > 0n ? Math.max(0, Number((soft - earned) / qbp)) : 0;
     const maxLots = Math.max(1, Math.min(capLots, leftLots || capLots));
     let fees = { halfHourFee: 6, fastestFee: 10, hourFee: 3 }; try { fees = await fetch('api/btc/fees').then((r) => r.json()); } catch (_) {}
+    fees = window.WWFee ? window.WWFee.stagger(fees, ['fastestFee', 'halfHourFee', 'hourFee']) : fees; // strictly descending presets (no ties)
     let feeRate = fees.halfHourFee || 6;
     box.innerHTML = `<div class="acct-grp">Mint</div>
       <div class="lp-mintrow"><input id="lpLots" class="m-in" type="number" min="1" max="${maxLots}" value="1" /><span class="lp-lotslbl">lots × 1,000 tokens</span></div>

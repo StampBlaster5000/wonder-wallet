@@ -66,14 +66,14 @@
 
   // ── Custom miner-fee rate for CP composes (Counterparty accepts sat_per_vbyte, incl. sub-sat). ──
   let CP_FEES = null, CP_FEERATE = null;
-  async function loadCpFees() { if (!CP_FEES) { try { CP_FEES = await fetch('api/btc/fees').then((r) => r.json()); } catch (_) { CP_FEES = { fastestFee: 10, halfHourFee: 6, hourFee: 3 }; } } if (CP_FEERATE == null) CP_FEERATE = CP_FEES.halfHourFee || 6; if (!_btcUsd) { try { _btcUsd = (await fetch('api/prices').then((r) => r.json())).bitcoin || 0; } catch (_) {} } return CP_FEES; }
+  async function loadCpFees() { if (!CP_FEES) { try { CP_FEES = await fetch('api/btc/fees').then((r) => r.json()); } catch (_) { CP_FEES = { fastestFee: 10, halfHourFee: 6, hourFee: 3 }; } } if (CP_FEERATE == null) CP_FEERATE = (window.WWFee ? window.WWFee.stagger(CP_FEES).halfHourFee : (CP_FEES.halfHourFee || 6)); if (!_btcUsd) { try { _btcUsd = (await fetch('api/prices').then((r) => r.json())).bitcoin || 0; } catch (_) {} } return CP_FEES; }
   // sats → " · ≈ $X" USD tag for the confirm screens (blank until the price is known).
   const usdTag = (n) => (_btcUsd && n ? ` <span class="fine">≈ $${((n / 1e8) * _btcUsd).toLocaleString('en-US', { maximumFractionDigits: 2 })}</span>` : '');
   function cpFeeRowHtml() {
-    const f = CP_FEES || { fastestFee: 10, halfHourFee: 6, hourFee: 3 };
-    const def = CP_FEERATE || f.halfHourFee || 6;
+    const f = (window.WWFee ? window.WWFee.stagger(CP_FEES || {}) : (CP_FEES || { fastestFee: 10, halfHourFee: 6, hourFee: 3 })); // strictly descending → one highlight, no ties
+    const def = CP_FEERATE != null ? CP_FEERATE : f.halfHourFee;
     return `<label class="cpf"><span>Miner fee rate <span class="fine">custom · sub-sat ok (e.g. 0.8)</span></span>
-      <div class="fee-row" id="cpFeeRow">${[['fastestFee', 'Fast'], ['halfHourFee', 'Med'], ['hourFee', 'Econ']].map(([k, l]) => `<button type="button" class="feeopt${(f[k] || 6) === def ? ' on' : ''}" data-r="${f[k] || 6}">${l} · ${f[k] || '–'}</button>`).join('')}<input id="cpFeeCustom" class="m-in fee-custom" type="number" min="0.1" step="0.1" placeholder="custom s/vB"/></div></label>
+      <div class="fee-row" id="cpFeeRow">${[['fastestFee', 'Fast'], ['halfHourFee', 'Med'], ['hourFee', 'Econ']].map(([k, l]) => `<button type="button" class="feeopt${f[k] === def ? ' on' : ''}" data-r="${f[k]}">${l} · ${f[k]}</button>`).join('')}<input id="cpFeeCustom" class="m-in fee-custom" type="number" min="0.1" step="0.1" placeholder="custom s/vB"/></div></label>
       <div id="cpFeeHint" class="fee-hint" hidden></div>`;
   }
   function wireCpFee() {
