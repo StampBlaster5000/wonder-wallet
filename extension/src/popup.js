@@ -220,6 +220,26 @@
     var r = checkCpRecipient(psbt, data, dest);
     if (r && !r.ok) throw new Error('Aborted — the intended recipient ' + dest + ' is not present in the composed transaction (neither as a payment output nor encoded in the Counterparty data). It may redirect your asset; nothing was signed.');
   }
+  // WW-C02: first-party Counterparty inputs are chosen server-side by CP Core — a tampered composer could
+  // slip in an asset-bearing (Stamp/Ordinal/Counterparty), frozen, time-locked, or unknown UTXO. Re-check
+  // every input against FRESH coin-control for the source address immediately before signing and require
+  // each to still be spendable. `allowOutpoint` is the one intentional exception (a detach spends its own
+  // attached asset UTXO). Fail closed — mirrors hwAssertInputsFresh on the Ledger path (reuses the same
+  // ccApplyMeta overlay + hwSpendable classifier defined below).
+  async function cpAssertInputsFresh(psbt, srcAddr, allowOutpoint) {
+    if (!srcAddr) throw new Error('Could not determine the source address to re-verify inputs — nothing was signed.');
+    var ins; try { ins = C.psbtInputs(psbt) || []; } catch (e) { throw new Error('Could not read the transaction inputs to re-verify them — nothing was signed.'); }
+    if (!ins.length) return;
+    var cc = ccApplyMeta(srcAddr, await fetch('api/btc/' + srcAddr + '/coincontrol').then(function (r) { return r.json(); }));
+    var fresh = {}; (cc.utxos || []).forEach(function (u) { fresh[u.txid + ':' + u.vout] = u; });
+    for (var k = 0; k < ins.length; k++) {
+      var op = ins[k].txid + ':' + ins[k].index;
+      if (allowOutpoint && op === allowOutpoint) continue; // intentional detach of this asset UTXO
+      var u = fresh[op];
+      if (!u) throw new Error('Aborted — this transaction spends a UTXO that is not in your source address’s current spendable set (unknown provenance or already spent). Nothing was signed.');
+      if (!hwSpendable(u)) throw new Error('Aborted — this transaction would spend a protected UTXO (asset-bearing, frozen, or time-locked). This can burn an asset; nothing was signed.');
+    }
+  }
 
   // ── icons ──
   var SEAL = '<svg viewBox="0 0 32 32" width="18" height="18"><path d="M8 11 L12.5 22 L16 14 L19.5 22 L24 11" fill="none" stroke="#3a2606" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/></svg>';
@@ -1989,6 +2009,7 @@
         var srcAddr = curBtcAddress();
         assertOutputs(c.psbt, [srcAddr]); // stamp CP tools only pay change back to source
         assertCpRecipient(c.psbt, c.data, dest); // for a send: the recipient must be baked into the tx / CP data
+        await cpAssertInputsFresh(c.psbt, srcAddr); // WW-C02: re-check inputs vs fresh coin-control (no asset-bearing/frozen/unknown)
         if (stype === 'legacy') { st.textContent = 'Fetching previous transactions…'; var uniq = [...new Set(C.psbtInputs(c.psbt).map(function (x) { return x.txid; }))]; var got = await Promise.all(uniq.map(function (t) { return fetch('api/btc/tx/' + t + '/hex').then(function (r2) { return r2.ok ? r2.text() : null; }).then(function (h) { return [t, h && h.trim()]; }).catch(function () { return [t, null]; }); })); got.forEach(function (p) { if (p[1]) prevTxs[p[0]] = p[1]; }); st.textContent = 'Signing locally & broadcasting…'; }
         var signed = C.signCp(c.psbt, c.inputs_values, c.lock_scripts, curAccount, stype, prevTxs, curImportedId());
         var r = await bcast(signed.txhex);
@@ -2336,6 +2357,7 @@
         Object.keys(CPH.last || {}).forEach(function (k) { var v = CPH.last[k]; if (typeof v === 'string' && RE_BTC_ADDR.test(v.trim())) allowed.push(v.trim()); if (k === 'destinations' && typeof v === 'string') v.split(',').forEach(function (p) { p = p.trim(); if (RE_BTC_ADDR.test(p)) allowed.push(p); }); });
         assertOutputs(c.psbt, allowed); // only pay BTC to source or an address we explicitly named
         if (dest) assertCpRecipient(c.psbt, c.data, dest);
+        await cpAssertInputsFresh(c.psbt, CPH.src); // WW-C02: re-check inputs vs fresh coin-control (CP hub actions never spend an asset UTXO)
         var prevTxs = {};
         if (CPH.type === 'legacy') { st.textContent = 'Fetching previous transactions…'; var uniq = [...new Set(C.psbtInputs(c.psbt).map(function (x) { return x.txid; }))]; var got = await Promise.all(uniq.map(function (t) { return fetch('api/btc/tx/' + t + '/hex').then(function (r) { return r.ok ? r.text() : null; }).then(function (h) { return [t, h && h.trim()]; }).catch(function () { return [t, null]; }); })); got.forEach(function (p) { if (p[1]) prevTxs[p[0]] = p[1]; }); st.textContent = 'Signing locally & broadcasting…'; }
         var signed = C.signCp(c.psbt, c.inputs_values, c.lock_scripts, curAccount, CPH.type, prevTxs, curImportedId());
@@ -2423,13 +2445,13 @@
     try {
       var c = await fetch('api/cp/detach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ utxo: utxo, destination: CPH.src, sat_per_vbyte: CPH.fee }) }).then(function (r) { return r.json(); });
       if (c.error) throw new Error(c.detail || c.error);
-      adConfirm(c, 'Detach', '<div class="sd-row"><span class="sd-k">From UTXO</span><span class="sd-v" style="font-family:var(--mono);font-size:11px">' + esc(String(utxo).slice(0, 18)) + '…</span></div><div class="sd-row"><span class="sd-k">To</span><span class="sd-v">your address balance</span></div>', function () { cpAttachDetach('detach'); });
+      adConfirm(c, 'Detach', '<div class="sd-row"><span class="sd-k">From UTXO</span><span class="sd-v" style="font-family:var(--mono);font-size:11px">' + esc(String(utxo).slice(0, 18)) + '…</span></div><div class="sd-row"><span class="sd-k">To</span><span class="sd-v">your address balance</span></div>', function () { cpAttachDetach('detach'); }, utxo); // WW-C02: detach legitimately spends this attached asset UTXO
     } catch (err) { if (st) { st.className = 'p-err'; st.textContent = err.message || 'Compose failed.'; } }
   }
   // Shared confirm + local-sign + broadcast for attach/detach. Both only ever pay BTC back to the
   // source address (attach binds to a source UTXO; detach releases to the source), so outputs are
   // asserted against [CPH.src] before signing.
-  function adConfirm(c, label, rowsHtml, backFn) {
+  function adConfirm(c, label, rowsHtml, backFn, allowOutpoint) {
     var pop = document.querySelector('#pop-ov .pop-pop'); if (!pop) return;
     var sat = function (n) { return n == null ? '—' : Number(n).toLocaleString('en-US') + ' sats'; };
     var vsz = (c.signed_tx_estimated_size && c.signed_tx_estimated_size.vsize) || null;
@@ -2445,6 +2467,7 @@
       var st = document.getElementById('adcStatus'); st.className = 'p-hint'; st.textContent = 'Signing locally & broadcasting…';
       try {
         assertOutputs(c.psbt, [CPH.src]); // attach/detach only pay BTC back to the source address
+        await cpAssertInputsFresh(c.psbt, CPH.src, allowOutpoint); // WW-C02: re-check inputs; a detach intentionally spends its attached asset UTXO (allowOutpoint)
         var prevTxs = {};
         if (CPH.type === 'legacy') { st.textContent = 'Fetching previous transactions…'; var uniq = [...new Set(C.psbtInputs(c.psbt).map(function (x) { return x.txid; }))]; var got = await Promise.all(uniq.map(function (t) { return fetch('api/btc/tx/' + t + '/hex').then(function (r) { return r.ok ? r.text() : null; }).then(function (h) { return [t, h && h.trim()]; }).catch(function () { return [t, null]; }); })); got.forEach(function (p) { if (p[1]) prevTxs[p[0]] = p[1]; }); st.textContent = 'Signing locally & broadcasting…'; }
         var signed = C.signCp(c.psbt, c.inputs_values, c.lock_scripts, curAccount, CPH.type, prevTxs, curImportedId());

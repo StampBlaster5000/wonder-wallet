@@ -446,7 +446,11 @@
       <div class="wbtns"><button class="ghost" id="tbBack">Back</button><button class="primary" id="tbSend">Sign in ${esc(CONN.name)}</button></div>`);
     c.querySelectorAll('[data-copy]').forEach((el) => (el.onclick = () => copy(el.dataset.copy, el)));
     c.querySelector('#tbBack').onclick = () => renderConnectedSrc20Send(tick, avail);
-    c.querySelector('#tbSend').onclick = () => connSubmit($('#tbStatus'), r.hex);
+    // WW-B01: verify the composed SRC-20 transfer against intent (outputs only go to source/recipient,
+    // recipient baked in, SIGHASH_ALL, fee sane) BEFORE the connected wallet signs. Inputs are the
+    // external wallet's responsibility on connected flows, so checkInputs stays false — matching the
+    // BTC (line ~360) and Counterparty (line ~506) connected paths.
+    c.querySelector('#tbSend').onclick = () => connSubmit($('#tbStatus'), r.hex, { from: CONN.address, dests: [to], allowed: [to], checkInputs: false });
   }
   // Connected-wallet Counterparty asset send: compose via CP Core (server) → connected wallet signs + broadcasts.
   async function renderConnectedCpSend(t) {
