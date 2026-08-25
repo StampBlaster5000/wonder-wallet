@@ -237,29 +237,26 @@
     try { choices = buildAcctChoices(chain); } catch (e) { return renderError('Could not read your accounts — unlock and retry.'); }
     if (!choices.length) return renderError('No connectable ' + chainName + ' account found. Create or import one in Wonder Wallet, then retry.');
     var active = activeAcct();
-    // Default selection: the active account by ref, else by account INDEX (a BTC ref won't match an eth/sol ref).
-    var selRef = (choices.filter(function (c) { return c.ref === active.ref; })[0] || choices.filter(function (c) { return c.account === active.account; })[0] || choices[0]).ref;
-    function draw() {
-      var sel = choices.filter(function (c) { return c.ref === selRef; })[0] || choices[0];
-      var canPair = chain === 'btc' && sel.kind === 'hd' && sel.legacy && sel.type !== 'legacy';
-      onApprove = function () { return grantFor(sel, document.getElementById('apPaired')); };
-      var rows = choices.map(function (c) {
-        return '<button type="button" class="ap-acct' + (c.ref === selRef ? ' on' : '') + '" data-ref="' + esc(c.ref) + '">'
-          + '<span class="ap-acct-i">' + (c.ref === selRef ? '●' : '○') + '</span>'
-          + '<span class="ap-acct-m"><b>' + esc(c.label) + '</b><span class="ap-acct-t">' + esc(chain === 'btc' ? shortType(c.type) : chainName) + '</span></span>'
-          + '<span class="ap-acct-a mono">' + esc(short(c.address)) + '</span></button>';
-      }).join('');
-      app.innerHTML = '<div class="ap-wrap">' + originBar()
-        + '<div class="ap-title">Connect with Wonder Wallet</div>'
-        + '<div class="ap-hint">Select the <b>' + esc(chainName) + '</b> account to use on this site.</div>'
-        + '<div class="ap-accts">' + rows + '</div>'
-        + (canPair ? '<label class="ap-check"><input type="checkbox" id="apPaired"/> Also share my paired Legacy address (some Stamps/Counterparty marketplaces need it). <span class="ap-fine">Links your two addresses to this site.</span></label>' : '')
-        + warns([{ level: 'info', text: 'Only connect to sites you trust. Disconnect any time from Advanced → Connected sites.' }])
-        + foot('Cancel', 'Connect', false) + '</div>';
-      Array.prototype.forEach.call(document.querySelectorAll('.ap-acct'), function (b) { b.onclick = function () { selRef = b.getAttribute('data-ref'); draw(); }; });
-      wireFoot();
-    }
-    draw();
+    // Connect (and sign the sign-in proof) with the account the wallet is CURRENTLY on — matched by ref,
+    // else by account index for a cross-chain request. No account picker here: to use a different address
+    // the user switches accounts in the Wonder Wallet extension first, then reconnects. This keeps the
+    // signature paired with the wallet's active session address.
+    var sel = choices.filter(function (c) { return c.ref === active.ref; })[0]
+           || choices.filter(function (c) { return c.account === active.account; })[0]
+           || choices[0];
+    var canPair = chain === 'btc' && sel.kind === 'hd' && sel.legacy && sel.type !== 'legacy';
+    onApprove = function () { return grantFor(sel, document.getElementById('apPaired')); };
+    app.innerHTML = '<div class="ap-wrap">' + originBar()
+      + '<div class="ap-title">Connect with Wonder Wallet</div>'
+      + '<div class="ap-hint">Connecting <b>' + esc(hostOf()) + '</b> with your current ' + esc(chainName) + ' account. To use a different one, switch accounts in the Wonder Wallet extension, then reconnect.</div>'
+      + '<div class="ap-accts"><div class="ap-acct on" style="cursor:default">'
+        + '<span class="ap-acct-i">●</span>'
+        + '<span class="ap-acct-m"><b>' + esc(sel.label) + '</b><span class="ap-acct-t">' + esc(chain === 'btc' ? shortType(sel.type) : chainName) + '</span></span>'
+        + '<span class="ap-acct-a mono">' + esc(short(sel.address)) + '</span></div></div>'
+      + (canPair ? '<label class="ap-check"><input type="checkbox" id="apPaired"/> Also share my paired Legacy address (some Stamps/Counterparty marketplaces need it). <span class="ap-fine">Links your two addresses to this site.</span></label>' : '')
+      + warns([{ level: 'info', text: 'Only connect to sites you trust. Disconnect any time from Advanced → Connected sites.' }])
+      + foot('Cancel', 'Connect', false) + '</div>';
+    wireFoot();
   }
   function shortType(t) { return ({ nativeSegwit: 'Native SegWit', legacy: 'Legacy', taproot: 'Taproot', nestedSegwit: 'Nested SegWit' })[t] || t; }
   // Every HD account (0–3 always + any extras in ww:accts), each at its saved BTC type.

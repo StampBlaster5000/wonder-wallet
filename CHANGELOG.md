@@ -1,7 +1,95 @@
 # Changelog
 
+## Extension: Market + XCP-69 launchpad, native in the popup — v0.54.19 (2026-08-25)
+
+- **The full Counterparty Market and XCP-69 launchpad are now in the extension.** Under ❖ Tools the old
+  Fairminter/Fairmint buttons are replaced by **Fairmint** (a hub: Create · Mint · XCP-69 launchpad) and
+  **Market** (Swap · Liquidity · Limit any-pair · Dispense — with the pool directory, order book,
+  click-to-fill, Max, USD fees, sort/analytics). Same compose → verify → sign engine as the rest of the
+  wallet. Local & imported accounts for now; Ledger gated with a note (on-device signing to follow).
+
+## Extension: connect uses your current account — v0.54.18 (2026-08-25)
+
+- **The dApp Connect approval now signs with the account the wallet is currently on** — no more account
+  picker in the approval window. The sign-in signature is paired with your active session address. To
+  connect a site with a different address, switch accounts in the extension first, then connect. (The
+  approval still shows which address it's connecting, and the "share paired Legacy address" option stays.)
+
+
 Notable changes to Wonder Wallet. The project is pre-1.0 and in active development; the extension and
 the hosted Terminal version independently. Dates are approximate to the release window.
+
+## Connected-wallet view brought up to par — Terminal (2026-08-24)
+
+- **The connected-wallet (UniSat/OKX) dashboard now matches the main wallet.** It gained the modern
+  balance strip (big USD + native), the primary Bitcoin-Stamps **name chip**, the Mainnet/Testnet
+  network chip, a chain badge, and the security footer. **Receive** is now the full QR + tap-to-copy
+  card (was a plain text box). Its asset list already shared the main renderer, so favorites, the
+  qty-in-row collectible layout, and the address book in send boxes were already there — now the frame
+  around them is consistent too.
+
+## Market Limit tab: any-pair order book — Terminal (2026-08-24)
+
+- **Limit orders on any pair.** The Market → Limit tab now takes a full **Base / Quote** pair (was
+  TOKEN↔XCP only), so you can place resting DEX orders on any asset/asset market — including BTC pairs.
+  Enter a pair to load its live order book (bids/asks/spread + AMM pool price), place buy/sell orders
+  priced in the quote asset, and see your open orders across **all** pairs with one-tap Cancel. Leave
+  the quote blank to browse **every market a single asset trades in**, and **tap any order-book level**
+  to auto-fill the side + price + amount, ready to review. This fully folds the standalone Counterparty
+  DEX tool into the Market — **the separate DEX tool has been retired**, and the Market now works for
+  **connected external wallets** (UniSat/OKX) too, not just local/hardware keys.
+
+## Address book (contacts) — Terminal + Extension v0.54.17 (2026-08-23)
+
+- **Save recipients as named contacts.** A 📖 book icon now sits inside every send address box (Bitcoin,
+  Counterparty asset, SRC-20, and ETH/SOL sends). Tap it to pick a saved address — the picker is
+  **chain-aware**, so a Bitcoin send only offers each contact's Bitcoin addresses. Contacts support
+  **multiple addresses each** (with sub-labels), and the chain of every address is auto-detected. Manage
+  contacts (add / edit / delete) right from the picker. Everything is stored **locally** (`ww:addrbook`)
+  and included in your encrypted Backup. It assists entry — always still verify the recipient.
+
+## Favorite / pin assets — Terminal + Extension v0.54.14 (2026-08-23)
+
+- **Star an asset to pin it to the top.** Every token *and* collectible now has a star — tap it on the
+  place card / tile (or in the asset's detail window, beside the title) to favorite it. Favorites sort to
+  the top of their list and show a gold star, so the assets you care about stay reachable on addresses
+  with 100+ items. Works across the **Tokens** grid (Counterparty, SRC-20, ETH tokens) **and the
+  Collectibles grid** (Bitcoin Stamps, .btc names, ETH/SOL NFTs). Stored locally per device (in `ww:fav`,
+  included in your encrypted Backup); on both the Terminal and the extension.
+
+## Extension: UTXO consolidation in Coin Control — v0.54.12 (2026-08-23)
+
+- **Consolidate UTXOs from the extension.** The Coin Control panel now lets you tick spendable UTXOs
+  (protected / frozen / time-locked coins are never selectable) and merge them into a single output at
+  the same address. "All spendable" selects every eligible coin at once. A preview shows estimated
+  vsize, the miner fee at your chosen rate (with the staggered Fast/Med/Econ presets + custom s/vB),
+  and the resulting single output before you sign. Signs locally and broadcasts — same shared core
+  builder as the Terminal, so per-input vsize (incl. legacy 148 vB) and the fee are exact.
+
+## XCP-69 launchpad — sort + mint analytics — Terminal (2026-08-22)
+
+- **Sort the mint list** — Minting out (progress toward the 69M sale), Ends soon (nearest deadline
+  block), or New (recently created).
+- **Richer mint cards** — each live mint now shows XCP raised (+ ~USD) and its deadline as an approx
+  timeframe ("ends ~6d · blk 964635"), not just a progress bar.
+- **Expanded mint analytics** — tapping a launch adds a stats grid: XCP raised (+ $ value), deadline /
+  timeframe, unique **minters** (participants — accurate mid-mint, since minted tokens are escrowed,
+  not yet distributed holders), creation block + date, and the **deployer address** (links to mempool).
+
+## Swap pool discovery & analytics — Terminal (2026-08-22)
+
+- **Pool directory in Swap.** Opening the Market → Swap tab now lists every live Counterparty AMM pool
+  (read-only, via a new cached `/api/cp/pools` route). Tap a pool to load the pair. A **sort switch**
+  toggles between **Highest TVL** (deepest first; non-XCP/empty pools sink) and **Newest** (by creation
+  block).
+- **Per-pair pool analytics.** Once a pair resolves, an analytics panel shows a health badge
+  (🟢 Deep / 🟡 Moderate / 🔴 Thin / Empty from the XCP-side reserve), both reserves, price in each
+  direction, **TVL in XCP (and ~USD** — XCP added to the price feed), the LP token id, creation
+  block + date/age, and each asset's **numeric id + supply / divisibility / lock** state.
+- **Liquidity tab: same directory + analytics.** The Liquidity tab now opens on the pool directory
+  (tap to load a pool for add/remove, `← Pools` to go back) and shows the same analytics panel above
+  the deposit/withdraw form, so you can see exactly what pool you're depositing into. **Create-pool**
+  (adding to a pair with no pool yet) now echoes the **starting price** live as you enter both amounts.
 
 ## Encrypted Backup & security hardening — Extension v0.54.7 (2026-08-20)
 

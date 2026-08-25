@@ -26,6 +26,7 @@ const scan = require('./sources/scan');
 const activity = require('./sources/activity');
 const emblem = require('./sources/emblem');
 const netctx = require('./sources/netctx');
+const { cacheGet, cacheSet } = require('./sources/http');
 const btcSigner = require('@scure/btc-signer');
 const { hex: hexCodec } = require('@scure/base');
 
@@ -738,6 +739,31 @@ app.get('/api/cp/fairminter-event/:tx', limitProxy, wrap(async (req, res) => {
   try { const j = await cpGetRaw(`transactions/${tx}/events/NEW_FAIRMINTER?verbose=true`);
     const row = Array.isArray(j.result) && j.result[0] ? j.result[0] : null; res.json({ event: row ? (row.params || row) : null }); }
   catch (_) { res.json({ event: null }); }
+}));
+// Directory of ALL AMM pools (for the Swap pool-discovery UI). Cached 60s — the whole set is small
+// and changes only when a pool is created/traded. Trimmed to the fields the UI needs; reserves are the
+// normalized (human) strings so the browser never has to un-scale raw 16+-digit quantities.
+app.get('/api/cp/pools', limitProxy, wrap(async (req, res) => {
+  const hit = cacheGet('cp_pools_all');
+  if (hit) return res.json(hit);
+  try {
+    const j = await cpGetRaw('pools?verbose=true&limit=500');
+    const rows = (Array.isArray(j.result) ? j.result : []).map((p) => ({
+      a: p.asset_a, b: p.asset_b,
+      aLong: (p.asset_a_info && p.asset_a_info.asset_longname) || null,
+      bLong: (p.asset_b_info && p.asset_b_info.asset_longname) || null,
+      aDiv: !(p.asset_a_info && p.asset_a_info.divisible === false),
+      bDiv: !(p.asset_b_info && p.asset_b_info.divisible === false),
+      resA: p.reserve_a_normalized != null ? String(p.reserve_a_normalized) : '0',
+      resB: p.reserve_b_normalized != null ? String(p.reserve_b_normalized) : '0',
+      lp: p.lp_asset || null,
+      block: p.block_index || null, time: p.block_time || null,
+      tx: p.tx_hash || null, source: p.source || null,
+    }));
+    const out = { result: rows };
+    cacheSet('cp_pools_all', out, 60_000);
+    res.json(out);
+  } catch (_) { res.status(502).json({ error: 'upstream', result: [] }); }
 }));
 // AMM pool state for a pair (the launched-vs-refunded oracle + reserves for local quoting).
 app.get('/api/cp/pool/:a/:b', limitProxy, wrap(async (req, res) => {

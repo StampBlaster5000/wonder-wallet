@@ -109,7 +109,7 @@
       <div class="wbtns"><button class="ghost" id="s_cancel">${exitLabel()}</button><button class="primary" id="s_review">Review</button></div>`);
     $('#mintCard').querySelectorAll('[data-op]').forEach((b) => (b.onclick = () => src20Form(b.dataset.op)));
     $('#s_cancel').onclick = close;
-    if (op === 'transfer') { loadHoldings(); wireNameResolve('s_to', 's_nameres'); } else wireTickCheck(op);
+    if (op === 'transfer') { loadHoldings(); wireNameResolve('s_to', 's_nameres'); if (window.WonderBook) WonderBook.attach(document.getElementById('s_to'), 'btc'); } else wireTickCheck(op);
     $('#s_review').onclick = async () => {
       const s = $('#s_status'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Composing via stampchain…';
       try {

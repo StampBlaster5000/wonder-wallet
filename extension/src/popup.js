@@ -98,6 +98,102 @@
   var loadMap = function (k) { try { return JSON.parse(localStorage.getItem(k) || '{}'); } catch (e) { return {}; } };
   var lsGet = function (k, d) { try { var v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } };
   var lsSet = function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+  // ── Asset favorites (star / pin). Stored in localStorage ww:fav (auto-captured by Backup). ──
+  function favKey(t) {
+    if (!t) return '';
+    if (t.stamp != null) return 'st:' + t.stamp;                                              // Bitcoin Stamp
+    if (t.kind === 'name') return 'nm:' + String(t.name || t.title).toUpperCase();             // .btc name
+    if (t.contract) return 'e:' + String(t.contract).toLowerCase() + ':' + (t.tokenId != null ? t.tokenId : ''); // ETH NFT
+    if (t.id) return 'so:' + String(t.id);                                                     // SOL NFT
+    if (t.src20 || t.tick) return 's:' + String(t.tick || t.name).toUpperCase();
+    if (t.asset) return 'c:' + String(t.asset).toUpperCase();
+    if (t.address) return 'e:' + String(t.address).toLowerCase();
+    return 'n:' + String(t.name || t.title || '').toUpperCase();
+  }
+  function loadFavs() { return new Set(lsGet('ww:fav', []) || []); }
+  function isFav(t) { return loadFavs().has(favKey(t)); }
+  function toggleFav(t) { var s = loadFavs(), k = favKey(t); if (s.has(k)) s.delete(k); else s.add(k); lsSet('ww:fav', Array.from(s)); return s.has(k); }
+  function abbrevQty(q) { var n = Number(q); if (!isFinite(n)) return String(q); if (n >= 1e9) return +(n / 1e9).toFixed(1) + 'B'; if (n >= 1e6) return +(n / 1e6).toFixed(1) + 'M'; return n.toLocaleString('en-US'); } // full up to 999,999, then M/B
+
+  // ── Address Book (contacts) — self-custodial, local (ww:addrbook, captured by Backup). Dedicated
+  //    overlay #abOv so it stacks above any send form without clobbering the shared popup overlay.
+  //    Assists address entry (chain-filtered picker); it never replaces verifying the recipient. ──
+  var AB_KEY = 'ww:addrbook';
+  var AB_BOOK = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>';
+  var AB_RE = { btc: /^(bc1[a-zA-HJ-NP-Z0-9]{20,}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/, eth: /^0x[a-fA-F0-9]{40}$/, sol: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/ };
+  function abDetect(a) { a = String(a || '').trim(); if (AB_RE.btc.test(a)) return 'btc'; if (AB_RE.eth.test(a)) return 'eth'; if (AB_RE.sol.test(a)) return 'sol'; return null; }
+  function abShort(a) { a = String(a || ''); return a.length > 20 ? a.slice(0, 10) + '…' + a.slice(-7) : a; }
+  function abLoad() { try { var v = JSON.parse(localStorage.getItem(AB_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
+  function abSave(l) { try { localStorage.setItem(AB_KEY, JSON.stringify(l)); } catch (e) {} }
+  function abOv(html) { var o = document.getElementById('abOv'); if (!o) { o = document.createElement('div'); o.id = 'abOv'; o.className = 'ab-modal'; document.body.appendChild(o); o.addEventListener('click', function (e) { if (e.target.id === 'abOv') abCloseOv(); }); } o.innerHTML = '<div class="ab-card">' + html + '</div>'; o.style.display = 'flex'; return o; }
+  function abCloseOv() { var o = document.getElementById('abOv'); if (o) o.style.display = 'none'; }
+  function abq(s) { return document.querySelector('#abOv ' + s); }
+  function abOpen(chain, onPick) {
+    var query = '';
+    function render() {
+      var list = abLoad(), ql = query.toLowerCase(), rows = [];
+      list.forEach(function (c) { (c.addresses || []).forEach(function (a) {
+        if (chain && abDetect(a.address) !== chain) return;
+        if (ql && !((c.name || '').toLowerCase().indexOf(ql) >= 0 || String(a.address).toLowerCase().indexOf(ql) >= 0 || (a.label || '').toLowerCase().indexOf(ql) >= 0)) return;
+        rows.push({ name: c.name, a: a });
+      }); });
+      var body = rows.length ? rows.map(function (r, i) { return '<button class="ab-row" data-pick="' + i + '"><span class="ab-nm">' + esc(r.name) + (r.a.label ? ' <span class="ab-sub">' + esc(r.a.label) + '</span>' : '') + '</span><span class="ab-ad">' + esc(abShort(r.a.address)) + '</span></button>'; }).join('')
+        : '<div class="ab-empty">' + (list.length ? 'No ' + (chain ? chain.toUpperCase() + ' ' : '') + 'contacts match.' : 'No saved contacts yet.') + '</div>';
+      abOv('<div class="ab-head"><b>Address book' + (chain ? ' · ' + chain.toUpperCase() : '') + '</b><button class="ab-x" id="abX">✕</button></div>'
+        + '<input id="abSearch" class="ab-in" placeholder="Search name or address" value="' + esc(query) + '" spellcheck="false"/>'
+        + '<div class="ab-list">' + body + '</div>'
+        + '<div class="ab-foot"><button class="ab-btn" id="abManage">Manage</button><button class="ab-btn gold" id="abAdd">+ New</button></div>');
+      abq('#abX').onclick = abCloseOv;
+      var s = abq('#abSearch'); s.oninput = function () { query = s.value; render(); var c = s.selectionStart; s.focus(); try { s.setSelectionRange(c, c); } catch (e) {} };
+      abq('#abManage').onclick = function () { abManage(function () { abOpen(chain, onPick); }); };
+      abq('#abAdd').onclick = function () { abEdit(null, function () { abOpen(chain, onPick); }); };
+      document.querySelectorAll('#abOv [data-pick]').forEach(function (b) { b.onclick = function () { var r = rows[+b.dataset.pick]; abCloseOv(); if (onPick && r) onPick(r.a.address); }; });
+    }
+    render();
+  }
+  function abManage(back) {
+    function render() {
+      var list = abLoad();
+      var body = list.length ? list.map(function (c, i) { return '<div class="ab-mrow"><div class="ab-mnm">' + esc(c.name) + ' <span class="ab-sub">' + (c.addresses || []).length + ' addr</span></div><div class="ab-macts"><button class="ab-mini" data-edit="' + i + '">Edit</button><button class="ab-mini danger" data-del="' + i + '">Delete</button></div></div>'; }).join('') : '<div class="ab-empty">No contacts yet.</div>';
+      abOv('<div class="ab-head"><b>Manage contacts</b><button class="ab-x" id="abX">✕</button></div><div class="ab-list">' + body + '</div><div class="ab-foot"><button class="ab-btn" id="abBack">‹ Back</button><button class="ab-btn gold" id="abAdd">+ New</button></div>');
+      abq('#abX').onclick = abCloseOv; abq('#abBack').onclick = back || abCloseOv;
+      abq('#abAdd').onclick = function () { abEdit(null, render); };
+      document.querySelectorAll('#abOv [data-edit]').forEach(function (b) { b.onclick = function () { abEdit(+b.dataset.edit, render); }; });
+      document.querySelectorAll('#abOv [data-del]').forEach(function (b) { b.onclick = function () { var l = abLoad(); l.splice(+b.dataset.del, 1); abSave(l); render(); }; });
+    }
+    render();
+  }
+  function abEdit(index, back) {
+    var list = abLoad();
+    var c = index != null ? JSON.parse(JSON.stringify(list[index])) : { name: '', addresses: [{ address: '', label: '' }] };
+    if (!c.addresses || !c.addresses.length) c.addresses = [{ address: '', label: '' }];
+    function render() {
+      var rows = c.addresses.map(function (a, i) { return '<div class="ab-arow"><input class="ab-in ab-af" data-af="address" data-i="' + i + '" placeholder="Address (bc1… / 0x… / Solana)" value="' + esc(a.address) + '" spellcheck="false" autocapitalize="off"/><input class="ab-in ab-lbl" data-af="label" data-i="' + i + '" placeholder="label" value="' + esc(a.label || '') + '" maxlength="20"/><span class="ab-ct" id="abct' + i + '">' + (a.address ? (abDetect(a.address) || '?').toUpperCase() : '') + '</span><button class="ab-mini danger" data-rm="' + i + '">✕</button></div>'; }).join('');
+      abOv('<div class="ab-head"><b>' + (index != null ? 'Edit' : 'New') + ' contact</b><button class="ab-x" id="abX">✕</button></div><input id="abName" class="ab-in" placeholder="Contact name" value="' + esc(c.name) + '" maxlength="40" spellcheck="false"/><div class="ab-arows">' + rows + '</div><button class="ab-btn ab-more" id="abMore">+ Add another address</button><div id="abErr" class="ab-err" hidden></div><div class="ab-foot"><button class="ab-btn" id="abBack">Cancel</button><button class="ab-btn gold" id="abSave">Save contact</button></div>');
+      abq('#abX').onclick = abCloseOv; abq('#abBack').onclick = back || abCloseOv;
+      var nm = abq('#abName'); nm.oninput = function () { c.name = nm.value; };
+      document.querySelectorAll('#abOv .ab-af, #abOv .ab-lbl').forEach(function (el) { el.oninput = function () { var i = +el.dataset.i, f = el.dataset.af; c.addresses[i][f] = el.value; if (f === 'address') { var t = document.getElementById('abct' + i); if (t) t.textContent = el.value ? (abDetect(el.value) || '?').toUpperCase() : ''; } }; });
+      document.querySelectorAll('#abOv [data-rm]').forEach(function (b) { b.onclick = function () { c.addresses.splice(+b.dataset.rm, 1); if (!c.addresses.length) c.addresses.push({ address: '', label: '' }); render(); }; });
+      abq('#abMore').onclick = function () { c.addresses.push({ address: '', label: '' }); render(); };
+      abq('#abSave').onclick = function () {
+        var err = abq('#abErr'); c.name = (c.name || '').trim();
+        c.addresses = c.addresses.map(function (a) { return { address: (a.address || '').trim(), label: (a.label || '').trim() }; }).filter(function (a) { return a.address; });
+        if (!c.name) { err.hidden = false; err.textContent = 'Enter a contact name.'; return; }
+        if (!c.addresses.length) { err.hidden = false; err.textContent = 'Add at least one address.'; return; }
+        var bad = c.addresses.filter(function (a) { return !abDetect(a.address); })[0];
+        if (bad) { err.hidden = false; err.textContent = 'Unrecognized address: ' + abShort(bad.address); return; }
+        var l = abLoad(); if (index != null) l[index] = c; else l.push(c); abSave(l); (back || abCloseOv)();
+      };
+    }
+    render();
+  }
+  function abAttach(input, chain) {
+    if (!input || input.__ab) return; input.__ab = true;
+    var wrap = document.createElement('span'); wrap.className = 'ab-wrap';
+    input.parentNode.insertBefore(wrap, input); wrap.appendChild(input);
+    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'ab-book'; btn.title = 'Address book'; btn.innerHTML = AB_BOOK; wrap.appendChild(btn);
+    btn.onclick = function (e) { e.preventDefault(); abOpen(chain, function (addr) { input.value = addr; input.dispatchEvent(new Event('input', { bubbles: true })); input.focus(); }); };
+  }
   // Apply the saved appearance skin ASAP (before first paint) so there's no dark→light flash.
   try { if (localStorage.getItem('ww:theme') === 'light') document.documentElement.classList.add('theme-light'); } catch (e) {}
   function setTheme(t) { try { localStorage.setItem('ww:theme', t === 'light' ? 'light' : 'dark'); } catch (e) {} document.documentElement.classList.toggle('theme-light', t === 'light'); }
@@ -355,7 +451,7 @@
   // close the popup). Hybrid: back up where you are; restore in a window that can hold a file dialog.
   function advBackup() {
     overlay('<div class="stamp-detail"><div class="st-head"><div class="st-htitle">Backup &amp; Restore</div><button class="m-close-x" id="bkX" title="Close" aria-label="Close">✕</button></div>'
-      + '<div class="disp-panel" style="display:block"><div class="disp-hit">⚠ <b>Handle with care — guard it with your life.</b> This is your <b>entire wallet</b> in one file: your seed (encrypted) plus watch-list, labels, UTXO freeze flags, favorites &amp; vault deposit addresses. Anyone with this file <b>and</b> its password can take your funds. Store it offline — never in cloud, chat, or email.</div></div>'
+      + '<div class="disp-panel" style="display:block"><div class="disp-hit">⚠ <b>Handle with care — guard it with your life.</b> This is your <b>entire wallet</b> in one file: your seed (encrypted) plus watch-list, labels, UTXO freeze flags, favorites, address book &amp; vault deposit addresses. Anyone with this file <b>and</b> its password can take your funds. Store it offline — never in cloud, chat, or email.</div></div>'
       + '<label class="p-hint" for="bkWpw" style="margin-top:8px;display:block">Wallet password <span style="opacity:.7">— confirms it’s you</span></label>'
       + '<input type="password" id="bkWpw" class="p-in" placeholder="Wallet password" autocomplete="off" spellcheck="false" />'
       + '<label class="p-hint" for="bkFpw" style="margin-top:8px;display:block">Backup password <span style="opacity:.7">— you’ll type THIS to restore. Can differ from your wallet password. Write it down.</span></label>'
@@ -862,7 +958,7 @@
       + '<button class="btn" id="hReview">Review</button></div>';
     document.getElementById('bBack').onclick = hwRenderMain;
     wireFeeRow(function (r) { feeRate = r; });
-    wireNameResolve('hTo', 'hNameRes');
+    wireNameResolve('hTo', 'hNameRes'); abAttach(document.getElementById('hTo'), 'btc');
     wireAmtUsd('hAmt', 'hMax', 'hAmtUsd');
     document.getElementById('hReview').onclick = async function () {
       var s = document.getElementById('hStatus'); s.className = 'p-hint'; s.textContent = agg ? 'Scanning your addresses & building…' : 'Selecting UTXOs & building…';
@@ -1410,6 +1506,8 @@
     if (!ASSETS) { body.innerHTML = '<div class="empty">Loading…</div>'; return; }
     if (tab === 'tokens') {
       if (!ASSETS.tokens.length) { body.innerHTML = '<div class="empty">No tokens on this ' + esc(CH[chain].name) + ' address.</div>'; return; }
+      var favs = loadFavs();
+      ASSETS.tokens.sort(function (a, b) { return (favs.has(favKey(b)) ? 1 : 0) - (favs.has(favKey(a)) ? 1 : 0); }); // favorites pinned on top
       var canXfer = chain === 'btc' && (canSignBtc() || (acctKind === 'hardware' && HW && !hwAgg)); // Ledger signs SRC-20 on-device
       var isEth = chain === 'eth';
       // On Ethereum, hide low-value / unpriced tokens (airdrop spam) by default — a footer toggle
@@ -1429,7 +1527,8 @@
         var usd = (t.value != null && t.value >= 0.005) ? '<small style="display:block;color:var(--faint);font-weight:400;font-size:11px">' + esc(mask('$' + Number(t.value).toLocaleString('en-US', { maximumFractionDigits: 2 }))) + '</small>' : '';
         var amtStr = t.eth ? fmtTokAmt(t.amount) : String(t.amount); // ETH: cap to 2dp; BTC/CP/SOL keep their own formatting
         var badge = t.owned ? ' <span style="font-size:9px;font-weight:600;color:var(--gold2);border:1px solid var(--border);border-radius:999px;padding:1px 6px">issued</span>' : '';
-        return '<div class="tok-row' + (t.cp ? ' tok-cp' : '') + '"' + (t.cp ? ' data-cp="' + i + '"' : '') + '>' + ic + '<span class="tok-name">' + esc(t.name) + badge + '</span><span class="tok-amt">' + esc(mask(amtStr)) + usd + '</span>' + xfer + chev + '</div>';
+        var favBtn = '<button class="tok-fav' + (favs.has(favKey(t)) ? ' on' : '') + '" data-fav="' + i + '" title="Pin favorite">★</button>';
+        return '<div class="tok-row' + (t.cp ? ' tok-cp' : '') + '"' + (t.cp ? ' data-cp="' + i + '"' : '') + '>' + favBtn + ic + '<span class="tok-name">' + esc(t.name) + badge + '</span><span class="tok-amt">' + esc(mask(amtStr)) + usd + '</span>' + xfer + chev + '</div>';
       }).join('');
       var footer = '';
       if (isEth && (hidden > 0 || !spamPref)) {
@@ -1442,18 +1541,22 @@
       var ht = body.querySelector('.tok-hidetoggle'); if (ht) ht.onclick = function () { lsSet('ww:hidespam', !spamPref); renderAssetBody(); };
       body.querySelectorAll('.tok-xfer[data-x]').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); var t = ASSETS.tokens[+b.dataset.x]; if (t) renderSrc20Send(t.tick, t.amount); }; });
       body.querySelectorAll('.tok-xfer[data-eth]').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); var t = ASSETS.tokens[+b.dataset.eth]; if (t) renderEvmSend(t.address); }; });
+      body.querySelectorAll('.tok-fav[data-fav]').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); var t = ASSETS.tokens[+b.dataset.fav]; if (t) { toggleFav(t); renderAssetBody(); } }; });
       body.querySelectorAll('[data-cp]').forEach(function (b) { b.onclick = function () { var t = ASSETS.tokens[+b.dataset.cp]; if (t) cpTokenDetail(t); }; });
       loadCpTokenIcons(body); // swap placeholders for real artwork where it resolves
     } else {
       if (!ASSETS.collectibles.length) { body.innerHTML = '<div class="empty">' + esc(ASSETS.note || ('No collectibles on this ' + CH[chain].name + ' address.')) + '</div>'; return; }
+      var cfavs = loadFavs();
+      ASSETS.collectibles.sort(function (a, b) { return (cfavs.has(favKey(b)) ? 1 : 0) - (cfavs.has(favKey(a)) ? 1 : 0); }); // favorites pinned on top
       body.innerHTML = '<div class="nft-grid">' + ASSETS.collectibles.map(function (n, i) {
+        var favB = '<button class="nft-fav' + (cfavs.has(favKey(n)) ? ' on' : '') + '" data-fav="' + i + '" title="Pin favorite">★</button>';
         if (n.kind === 'name') {
           var ph = '<span class="nft-ph name-ph">' + esc((n.name || '').replace('.btc', '')) + '<small>.btc</small></span>';
           var star = n.primary ? '<span class="nft-star">★</span>' : '';
           var nmSrc = n.img ? (/^api\//.test(n.img) ? proxied(n.img) : n.img) : null;
-          return '<div class="nft-cell nft-name" data-i="' + i + '" title="' + esc(n.title) + '">' + star + (nmSrc ? '<img loading="lazy" src="' + esc(nmSrc) + '"/>' : ph) + '<span class="nft-t">' + esc(n.title) + '</span></div>';
+          return '<div class="nft-cell nft-name" data-i="' + i + '" title="' + esc(n.title) + '">' + favB + star + (nmSrc ? '<img loading="lazy" src="' + esc(nmSrc) + '"/>' : ph) + '<div class="nft-t"><span class="nft-tnum">' + esc(n.title) + '</span></div></div>';
         }
-        var qb = (n.qty != null && n.qty > 1) ? '<span class="nft-qty" title="You hold ' + esc(String(n.qty)) + '">×' + esc(String(n.qty)) + '</span>' : '';
+        var qtyTag = (n.qty != null && n.qty > 1) ? '<span class="nft-tqty" title="You hold ' + esc(String(n.qty)) + '">×' + esc(abbrevQty(n.qty)) + '</span>' : '';
         // Absolute (proxied) src so the image loads directly (a relative api/ src races the shim rewrite).
         var nftSrc = n.img ? (/^api\//.test(n.img) ? proxied(n.img) : n.img) : null;
         // Decide the render path by MIME, not by load failure: only genuine HTML / recursive stamps use
@@ -1467,8 +1570,9 @@
         } else if (nftSrc) {
           media = '<img loading="lazy"' + (n.stamp != null ? ' data-stamperr="' + esc(String(n.stamp)) + '"' : '') + ' src="' + esc(nftSrc) + '"/>';
         } else { media = '<span class="nft-ph"></span>'; }
-        return '<div class="nft-cell" data-i="' + i + '" title="' + esc(n.title) + (n.qty != null ? ' · you hold ' + esc(String(n.qty)) : '') + '">' + qb + media + badge + '<span class="nft-t">' + esc(n.title) + '</span></div>';
+        return '<div class="nft-cell" data-i="' + i + '" title="' + esc(n.title) + (n.qty != null ? ' · you hold ' + esc(String(n.qty)) : '') + '">' + favB + media + badge + '<div class="nft-t"><span class="nft-tnum">' + esc(n.title) + '</span>' + qtyTag + '</div></div>';
       }).join('') + '</div>';
+      body.querySelectorAll('.nft-fav[data-fav]').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); var n = ASSETS.collectibles[+b.dataset.fav]; if (n) { toggleFav(n); renderAssetBody(); } }; });
       body.querySelectorAll('.nft-cell').forEach(function (cell) { cell.onclick = function () { var n = ASSETS.collectibles[+cell.dataset.i]; if (!n) return; if (n.kind === 'name') nameDetail(n); else if (n.stamp != null) stampDetail(n); else nftDetail(n); }; });
       // Image stamp failed to load: auto-retry once (covers slow/transient upstream), then fall back to a
       // neutral "couldn't load" placeholder — never mislabel a broken image as an HTML stamp.
@@ -1546,7 +1650,7 @@
     var isHtml = /html/i.test(s.mime || '');
     pop.innerHTML = '<div class="stamp-detail">'
       + (isHtml ? '<iframe class="sd-art sd-frame" id="sdFrame" sandbox="allow-scripts" scrolling="no"></iframe>' : '<img class="sd-art" loading="lazy" src="api/stamp/' + encodeURIComponent(s.stamp) + '/content"/>')
-      + '<div class="sd-title">Stamp #' + esc(String(s.stamp)) + '</div>'
+      + '<div class="sd-title"><button class="tok-fav sd-fav' + (isFav({ stamp: s.stamp }) ? ' on' : '') + '" id="stampFav" title="Pin favorite">★</button>Stamp #' + esc(String(s.stamp)) + '</div>'
       + '<div class="sd-grid">' + (s.held != null ? sdRow('You hold', fmt(s.held, 0)) : '') + sdRow('Supply', s.supply != null ? fmt(s.supply, s.divisible ? 8 : 0) : '—') + sdRow('Locked', s.locked === true ? 'yes 🔒' : s.locked === false ? 'no' : '—') + sdRow('Divisible', s.divisible === true ? 'yes' : s.divisible === false ? 'no' : '—') + sdRow('Type', s.mime || '—') + (s.fileSize ? sdRow('Size', fmtBytes(s.fileSize)) : '') + '</div>'
       + '<div class="sd-mono" data-copy="' + esc(s.cpid || '') + '" title="Copy CPID">CPID · ' + esc(s.cpid || '—') + '</div>'
       + '<div class="sd-sub">Creator <span data-copy="' + esc(s.creator || '') + '" title="Copy creator address" style="font-family:var(--mono);cursor:pointer">' + esc(s.creator ? (s.creator.length > 24 ? s.creator.slice(0, 12) + '…' + s.creator.slice(-8) : s.creator) : '—') + '</span></div>'
@@ -1555,6 +1659,7 @@
     if (isHtml) { var sf = document.getElementById('sdFrame'); if (sf) sf.src = proxied('api/stamp/' + encodeURIComponent(s.stamp) + '/content'); }
     pop.querySelectorAll('[data-copy]').forEach(function (el) { if (el.getAttribute('data-copy')) el.onclick = function () { copy(el.getAttribute('data-copy'), el); }; });
     var cl = document.getElementById('sdClose'); if (cl) cl.onclick = closeOv;
+    var sFav = document.getElementById('stampFav'); if (sFav) sFav.onclick = function () { var on = toggleFav({ stamp: s.stamp }); sFav.classList.toggle('on', on); renderAssetBody(); };
     pop.querySelectorAll('.sd-tool').forEach(function (b) { b.onclick = function () {
       if (b.dataset.op === 'vault') {
         if (window.EmblemBridge) { var a; try { a = C.accounts(curAccount, 0, NET()); } catch (e) { return; } closeOv(); window.EmblemBridge.vaultAsset(curAccount, a.ethereum.address, a.bitcoin.nativeSegwit.address, s.cpid, { label: '#' + s.stamp }); }
@@ -1618,7 +1723,7 @@
     var tryImg = !!(chain === 'btc' && s.cpid);
     pop.innerHTML = '<div class="stamp-detail">'
       + (tryImg ? '<img class="sd-art" id="cpArt" alt="' + esc(s.name || '') + '" style="display:none"/>' : '')
-      + '<div class="sd-title" style="margin-top:4px">' + esc(s.name || s.cpid) + '</div>'
+      + '<div class="sd-title" style="margin-top:4px"><button class="tok-fav sd-fav' + (isFav({ asset: s.cpid }) ? ' on' : '') + '" id="cpFav" title="Pin favorite">★</button>' + esc(s.name || s.cpid) + '</div>'
       + '<div class="sd-grid">' + (held != null ? sdRow('You hold', fmt(held, divisible ? 8 : 0)) : '') + sdRow('Supply', supplyDisp != null ? fmt(supplyDisp, divisible ? 8 : 0) : '—') + sdRow('Divisible', divisible ? 'yes' : 'no') + sdRow('Locked', info.locked ? 'yes 🔒' : 'no') + '</div>'
       + '<div class="sd-mono" data-copy="' + esc(s.cpid) + '" title="Copy asset name">' + esc(s.cpid) + '</div>'
       + (info.description ? '<div class="sd-sub" id="cpDesc"' + (tryImg ? ' style="display:none"' : '') + '>' + esc(String(info.description).slice(0, 160)) + '</div>' : '')
@@ -1626,6 +1731,7 @@
       + '<button class="btn ghost" id="sdClose">Close</button></div>';
     if (tryImg) { var im = document.getElementById('cpArt'); if (im) { im.onload = function () { im.style.display = ''; }; im.onerror = function () { try { im.remove(); } catch (e) {} var dd = document.getElementById('cpDesc'); if (dd) dd.style.display = ''; }; im.src = proxied('api/cp/assetimg/' + encodeURIComponent(s.cpid) + '?full=1'); } } // full-res on-chain art for the large view
     var cpEl = pop.querySelector('.sd-mono'); if (cpEl) cpEl.onclick = function () { copy(cpEl.getAttribute('data-copy'), cpEl); };
+    var cpFav = document.getElementById('cpFav'); if (cpFav) cpFav.onclick = function () { var on = toggleFav({ asset: s.cpid }); cpFav.classList.toggle('on', on); renderAssetBody(); };
     document.getElementById('sdClose').onclick = closeOv;
     pop.querySelectorAll('.sd-tool').forEach(function (b) { b.onclick = function () {
       if (b.dataset.op === 'vault') {
@@ -1675,6 +1781,7 @@
       + '<div id="nfsStatus" class="p-err"></div>'
       + '<button class="btn" id="nfsReview">Review</button></div>';
     document.getElementById('bBack').onclick = function () { renderMain(); };
+    abAttach(document.getElementById('nfsTo'), isEth ? 'eth' : 'sol');
     document.getElementById('nfsReview').onclick = async function () {
       var s = document.getElementById('nfsStatus'); s.className = 'p-hint'; s.textContent = isEth ? 'Preparing & signing…' : 'Building & signing…';
       try {
@@ -1795,7 +1902,7 @@
     document.getElementById('stBack').onclick = function () { if (s.stamp != null) renderStampDetail(s); else renderCpTokenDetail(s); };
     document.getElementById('stReview').onclick = function () { stampReview(op, s, stFeeRate); };
     wireFeeRow(function (r) { stFeeRate = r; }, pop);
-    if (op === 'send') wireNameResolve('stTo', 'stNameRes');
+    if (op === 'send') { wireNameResolve('stTo', 'stNameRes'); abAttach(document.getElementById('stTo'), 'btc'); }
     if (op === 'dispenser') {
       var ri = document.getElementById('stRate'), rh = document.getElementById('stRateHint');
       if (ri && rh) ri.addEventListener('input', function () {
@@ -1948,7 +2055,7 @@
     // SRC-20 deploy / mint — reuses the popup's proven src20/create → signStamp → broadcast path (same as transfer).
     src20: { label: 'SRC-20 deploy / mint', ic: MINT_IC, custom: true, src20: true },
   };
-  var CP_ORDER = ['send', 'sweep', 'mpma', 'dispenser', 'dispense', 'dividend', 'destroy', 'issuance', 'fairminter', 'fairmint', 'attach', 'src20'];
+  var CP_ORDER = ['send', 'sweep', 'mpma', 'dispenser', 'dispense', 'dividend', 'destroy', 'issuance', 'attach', 'src20']; // fairminter/fairmint folded into the Fairmint hub button
   var CPH = { src: null, type: 'nativeSegwit', fee: null, last: {} };
   var CP_HUB_FEES = null;
 
@@ -1960,6 +2067,37 @@
   }
   // Advanced Tools — the consolidated power-tool window: the Emblem Vault bridge (HD accounts) plus
   // the full Counterparty actions suite (BTC signing accounts). Both used to be their own util-row button.
+  // ── Ported Terminal tools (Market + XCP-69 launchpad) run natively in the popup. They compose → verify
+  //    → sign via WonderCpFlow, which we point at the popup's current account through window.__activeAccount
+  //    (same local C.signCp engine the popup already uses). Ledger / watch can't sign these here yet. ──
+  var MARKET_IC = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v13M4 14l3 3 3-3M17 20V7M20 10l-3-3-3 3"/></svg>';
+  function syncActiveAccount() {
+    window.__connectedWallet = null; // the extension IS the wallet — never connected to an external one
+    window.__activeAccount = (chain === 'btc' && canSignBtc())
+      ? { account: curAccount, importedId: curImportedId(), btcType: curBtcType(), btcAddress: curBtcAddress() }
+      : null;
+  }
+  function marketGate() {
+    if (chain === 'btc' && canSignBtc()) return true;
+    overlay('<div class="menu" style="padding:16px"><div class="p-hint">This needs a Bitcoin signing account. Switch to an HD or imported account (Ledger / watch-only can’t sign these here yet), then reopen.</div><div class="actions"><button class="btn" id="mgX">OK</button></div></div>');
+    var x = document.getElementById('mgX'); if (x) x.onclick = closeOv;
+    return false;
+  }
+  function openMarket() { if (!marketGate()) return; syncActiveAccount(); closeOv(); if (window.WonderMarket) window.WonderMarket.open(null, { onBack: cpHub }); }
+  function openLaunchpad() { if (!marketGate()) return; syncActiveAccount(); closeOv(); if (window.WonderLaunchpad) window.WonderLaunchpad.open({ onBack: fairmintHub }); }
+  function fairmintHub() {
+    overlay('<div class="stamp-detail"><div class="st-head"><button class="p-ibtn" id="fmBack" title="Back">←</button><div class="st-htitle">Fairmint</div><button class="m-close-x" id="fmX" title="Close" aria-label="Close">✕</button></div>'
+      + '<div class="menu" style="display:flex;flex-direction:column;gap:9px;margin-top:2px">'
+      + '<button class="menu-opt" id="fmCreate"><span>⚒ Fairminter (create)<br><span class="fine">Launch a fair-mint pool</span></span></button>'
+      + '<button class="menu-opt" id="fmMint"><span>⛏ Fairmint (mint)<br><span class="fine">Mint into an open fairminter</span></span></button>'
+      + '<button class="menu-opt" id="fmX69"><span>🚀 XCP-69 launches<br><span class="fine">Browse · mint · create conformant launches</span></span></button>'
+      + '</div></div>');
+    document.getElementById('fmBack').onclick = cpHub;
+    document.getElementById('fmX').onclick = closeOv;
+    document.getElementById('fmCreate').onclick = function () { closeOv(); cpForm('fairminter'); };
+    document.getElementById('fmMint').onclick = function () { closeOv(); cpForm('fairmint'); };
+    document.getElementById('fmX69').onclick = openLaunchpad;
+  }
   function cpHub() {
     var canCP = chain === 'btc' && canSignBtc();
     var canEmblem = acctKind === 'hd';
@@ -1972,6 +2110,10 @@
     var cpSection = '';
     if (canCP && srcs.length) {
       var grid = CP_ORDER.map(function (k) { var a = CP_ACTIONS[k]; return '<button class="cp-act' + (a.danger ? ' danger' : '') + '" data-k="' + k + '"><span class="cp-ic">' + a.ic + '</span><span>' + esc(a.label) + '</span></button>'; }).join('');
+      // Fairmint hub (create · mint · XCP-69 launchpad) + Market (swap · liquidity · limit · dispense) —
+      // the Terminal tools ported in, replacing the old standalone fairminter/fairmint buttons.
+      grid += '<button class="cp-act" data-special="fairmint"><span class="cp-ic">' + MINT_IC + '</span><span>Fairmint</span></button>'
+            + '<button class="cp-act" data-special="market"><span class="cp-ic">' + MARKET_IC + '</span><span>Market</span></button>';
       // Source is the address you opened Tools from (CPH.src/type set above) — no picker; by the time
       // you're here you've already chosen the account/address this session is paired with.
       cpSection = '<div class="tool-sec-h">Counterparty actions</div>'
@@ -1983,7 +2125,11 @@
     document.getElementById('cphX').onclick = closeOv;
     var eb = document.getElementById('thEmblem'); if (eb) eb.onclick = function () { closeOv(); openEmblem(); };
     if (canCP && srcs.length) {
-      document.querySelectorAll('.cp-act').forEach(function (b) { b.onclick = function () { var a = CP_ACTIONS[b.dataset.k]; if (a && a.src20) { closeOv(); src20CreateChoose(); } else if (a && a.custom) cpAttachDetach('attach'); else cpForm(b.dataset.k); }; });
+      document.querySelectorAll('.cp-act').forEach(function (b) { b.onclick = function () {
+        if (b.dataset.special === 'market') return openMarket();
+        if (b.dataset.special === 'fairmint') return fairmintHub();
+        var a = CP_ACTIONS[b.dataset.k]; if (a && a.src20) { closeOv(); src20CreateChoose(); } else if (a && a.custom) cpAttachDetach('attach'); else cpForm(b.dataset.k);
+      }; });
       cphMempool();
     }
   }
@@ -2782,14 +2928,14 @@
   }
 
   // ── Coin Control (UTXO management) — compact popup mirror of the Terminal dashboard. ──
-  var CC = { addr: null, data: null, filter: 'all' };
+  var CC = { addr: null, data: null, filter: 'all', sel: null, consolidatable: false };
   var CC_REFRESH = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 10-2.3 5.7M20 4v5h-5"/></svg>';
   // Coin Control (UTXO set) + Activity (history) flip icons — the two share one entry point now.
   var GRID_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>';
   var ACT_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
   function renderCoinControl(addr, fromAct) {
     if (!addr) return renderMain();
-    CC.addr = addr; CC.filter = 'all'; CC.data = null;
+    CC.addr = addr; CC.filter = 'all'; CC.data = null; CC.sel = new Set();
     var actBtn = fromAct ? '<button class="p-ibtn" id="ccAct" title="Back to Activity">' + ACT_ICON + '</button>' : '';
     app.innerHTML = '<div class="p-head"><button class="p-ibtn" id="bBack" title="Back">←</button><div class="p-brand-mid"><div class="p-name">Coin Control</div><div class="p-sub">' + esc(short(addr)) + '</div></div><div class="p-icons">' + actBtn + '<button class="p-ibtn" id="ccRefresh" title="Rescan UTXOs">' + CC_REFRESH + '</button></div></div>'
       + '<div id="ccBody"><div class="empty">Scanning UTXOs…</div></div>';
@@ -2805,9 +2951,12 @@
     renderCC();
   }
   function ccCat(u) { return u.frozen ? 'frozen' : u.timelocked ? 'time-locked' : u.category; }
+  function ccSelectable(u) { return u.category === 'spendable' && !u.frozen && !u.timelocked; }
   function renderCC() {
     var body = document.getElementById('ccBody'); if (!body || !CC.data) return;
     var d = CC.data, s = d.summary || {};
+    // Consolidation is offered only when THIS panel's address is the active signing account (has keys).
+    CC.consolidatable = canSignBtc() && CC.addr === curBtcAddress();
     var b2 = function (sats) { return (sats / 1e8).toLocaleString('en-US', { maximumFractionDigits: 8 }); };
     var filters = ['all', 'spendable', 'protected', 'dust', 'frozen'];
     var rows = (d.utxos || []).filter(function (u) {
@@ -2826,15 +2975,22 @@
     body.innerHTML = '<div class="cc-summary">' + counts
       + '<div class="cc-baln">' + mask(b2(d.balanceSats || 0) + ' BTC') + ' · ' + (d.utxos ? d.utxos.length : 0) + ' UTXOs</div>'
       + '<div class="cc-note">Protected (asset-bound), frozen &amp; time-locked coins are never auto-selected when you send — your Stamps &amp; Counterparty assets stay safe.</div></div>'
-      + filterBar + '<div class="cc-list">' + list + '</div>';
+      + filterBar + '<div class="cc-list">' + list + '</div>'
+      + '<div id="ccFoot" class="cc-foot"></div>';
     body.querySelectorAll('.ccf').forEach(function (b) { b.onclick = function () { CC.filter = b.dataset.f; renderCC(); }; });
     ccWireRows();
+    ccRenderFoot();
   }
   function ccRowHtml(u) {
     var b2 = (u.value / 1e8).toLocaleString('en-US', { maximumFractionDigits: 8 });
     var carries = (u.carries || []).map(function (c) { return '<span class="cc-carry">' + esc(c.name || c.asset) + '</span>'; }).join('');
     var lockedCls = (u.frozen || u.timelocked) ? ' islocked' : '';
-    return '<div class="cc-row ' + u.category + lockedCls + '"><div class="cc-main">'
+    var canSel = CC.consolidatable && ccSelectable(u);
+    var checked = canSel && CC.sel && CC.sel.has(u.utxo);
+    var ck = !CC.consolidatable ? '' : (canSel
+      ? '<input type="checkbox" class="cc-ck" data-sel="' + esc(u.utxo) + '"' + (checked ? ' checked' : '') + ' title="Select to consolidate"/>'
+      : '<span class="cc-ck cc-ck-off" title="Locked / protected — not selectable"></span>');
+    return '<div class="cc-row ' + u.category + lockedCls + (checked ? ' ccsel' : '') + '">' + ck + '<div class="cc-main">'
       + '<div class="cc-l1"><span class="cc-val">' + mask(b2 + ' BTC') + '</span><span class="cc-cat ' + ((u.frozen || u.timelocked) ? 'frozen' : u.category) + '">' + ccCat(u) + '</span>' + carries + '</div>'
       + '<div class="cc-l2"><span class="cc-utxo" data-copy="' + esc(u.utxo) + '" title="Copy outpoint">' + esc(u.utxo.slice(0, 10)) + '…:' + u.vout + '</span>'
       + '<span class="cc-conf">' + (u.confirmations == null ? '—' : u.confirmations + ' conf') + '</span>'
@@ -2849,6 +3005,14 @@
     body.querySelectorAll('[data-copy]').forEach(function (el) { el.onclick = function () { copy(el.getAttribute('data-copy'), el); }; });
     body.querySelectorAll('[data-act="freeze"]').forEach(function (b) { b.onclick = function () { ccToggleFreeze(b.dataset.u); }; });
     body.querySelectorAll('[data-act="label"]').forEach(function (b) { b.onclick = function () { ccLabel(b.dataset.u); }; });
+    body.querySelectorAll('.cc-ck[data-sel]').forEach(function (ck) {
+      ck.onchange = function () {
+        var u = ck.getAttribute('data-sel');
+        if (ck.checked) CC.sel.add(u); else CC.sel.delete(u);
+        var row = ck.closest('.cc-row'); if (row) row.classList.toggle('ccsel', ck.checked);
+        ccRenderFoot(); // update the footer count/button without a full re-render (keeps scroll)
+      };
+    });
   }
   function ccToggleFreeze(utxo) {
     var meta = ccGetMeta(CC.addr), cur = meta[utxo] || {};
@@ -2870,12 +3034,85 @@
     };
   }
 
+  // ── UTXO consolidation (coin control): sweep the SELECTED spendable UTXOs into one output at the same
+  //    address. Only spendable/non-locked coins are selectable, so asset-bearing / frozen coins never enter.
+  //    Uses the shared core send builder (correct per-input vsize incl. legacy 148 vB) → local sign → broadcast.
+  function ccRenderFoot() {
+    var foot = document.getElementById('ccFoot'); if (!foot) return;
+    if (!CC.consolidatable) { foot.innerHTML = ''; return; }
+    var spendable = (CC.data.utxos || []).filter(ccSelectable);
+    if (spendable.length < 2) { foot.innerHTML = '<div class="cc-foot-hint">Consolidation needs 2 or more spendable UTXOs on this address.</div>'; return; }
+    var sel = spendable.filter(function (u) { return CC.sel.has(u.utxo); });
+    var total = sel.reduce(function (a, u) { return a + u.value; }, 0);
+    var allSel = sel.length === spendable.length;
+    foot.innerHTML = '<div class="cc-foot-bar">'
+      + '<button class="cc-mini" id="ccSelAll">' + (allSel ? 'Clear' : 'All spendable (' + spendable.length + ')') + '</button>'
+      + '<span class="cc-foot-info">' + (sel.length ? '<b>' + sel.length + '</b> selected · ' + mask((total / 1e8).toLocaleString('en-US', { maximumFractionDigits: 8 }) + ' BTC') : 'Tick UTXOs to merge') + '</span>'
+      + '</div>'
+      + (sel.length >= 2 ? '<button class="btn" id="ccConsGo" style="width:100%;margin-top:8px">Consolidate ' + sel.length + ' → 1</button>' : '');
+    document.getElementById('ccSelAll').onclick = function () { if (allSel) CC.sel.clear(); else spendable.forEach(function (u) { CC.sel.add(u.utxo); }); renderCC(); };
+    var go = document.getElementById('ccConsGo'); if (go) go.onclick = ccConsolidate;
+  }
+
+  async function ccConsolidate() {
+    if (!CC.consolidatable) return;
+    var sel = (CC.data.utxos || []).filter(function (u) { return ccSelectable(u) && CC.sel.has(u.utxo); });
+    if (sel.length < 2) return;
+    var inList = sel.map(function (u) { return { txid: u.utxo.split(':')[0], vout: u.vout, value: u.value }; });
+    var total = sel.reduce(function (a, u) { return a + u.value; }, 0);
+    var type = curBtcType(), account = curAccount, importedId = curImportedId(), addr = CC.addr;
+    var fees = { fastestFee: 2, halfHourFee: 1, hourFee: 1 };
+    try { fees = await fetch('api/btc/fees').then(function (r) { return r.json(); }); } catch (e) {}
+    var rate = staggerFees(fees).halfHourFee;
+    // Legacy inputs need the full prev-tx (nonWitnessUtxo) even to estimate — fetch once, reuse for signing.
+    var prevTxs = {};
+    if (type === 'legacy') {
+      try {
+        var uniq = [...new Set(inList.map(function (u) { return u.txid; }))];
+        var got = await Promise.all(uniq.map(function (t) { return fetch('api/btc/tx/' + t + '/hex').then(function (r) { return r.ok ? r.text() : null; }).then(function (h) { return [t, h && h.trim()]; }).catch(function () { return [t, null]; }); }));
+        got.forEach(function (p) { if (p[1]) prevTxs[p[0]] = p[1]; });
+      } catch (e) {}
+    }
+    overlay('<div class="menu" style="padding:14px;display:flex;flex-direction:column;gap:10px">'
+      + '<div class="p-title" style="font-size:15px">Consolidate ' + sel.length + ' → 1</div>'
+      + '<div class="cc-prev-row"><span>Inputs</span><b>' + sel.length + ' · ' + mask((total / 1e8).toLocaleString('en-US', { maximumFractionDigits: 8 }) + ' BTC') + '</b></div>'
+      + feeRowHtml(fees)
+      + '<div id="ccCalc"></div>'
+      + '<div class="p-hint">Merges into one UTXO at ' + esc(short(addr)) + ' — same address, ' + esc(BTC_LABEL[type] || type) + '.</div>'
+      + '<div id="ccConsStatus" class="p-hint" style="display:none"></div>'
+      + '<div class="actions"><button class="btn ghost" id="ccConsX">Cancel</button><button class="btn" id="ccConsSign">Sign &amp; broadcast</button></div></div>');
+    var root = document.querySelector('#pop-ov .pop-pop') || app;
+    function calc() {
+      var box = document.getElementById('ccCalc'); if (!box) return;
+      try {
+        var r = C.send({ account: account, importedId: importedId, type: type, utxos: inList, recipient: addr, sendMax: true, feeRate: rate, rbf: true, sign: false, prevTxs: prevTxs });
+        box.innerHTML = '<div class="cc-prev-row"><span>Est. size</span><b>~' + r.vsize + ' vB</b></div>'
+          + '<div class="cc-prev-row"><span>Fee @ ' + rate + ' s/vB</span><b>' + mask(fmt(r.fee, 0) + ' sats') + usdSuffix(r.fee) + '</b></div>'
+          + '<div class="cc-prev-row total"><span>Output (1 UTXO)</span><b>' + mask((r.amountSats / 1e8).toLocaleString('en-US', { maximumFractionDigits: 8 }) + ' BTC') + usdSuffix(r.amountSats) + '</b></div>';
+      } catch (e) { box.innerHTML = '<div class="cc-prev-row" style="color:var(--red)">' + esc(e.message === 'locked' ? 'Unlock your wallet to preview.' : (e.message || 'Cannot build')) + '</div>'; }
+    }
+    wireFeeRow(function (r) { rate = r; calc(); }, root);
+    calc();
+    document.getElementById('ccConsX').onclick = closeOv;
+    document.getElementById('ccConsSign').onclick = async function () {
+      var st = document.getElementById('ccConsStatus'); st.style.display = 'block'; st.className = 'p-hint'; st.textContent = 'Signing locally & broadcasting…';
+      try {
+        var signed = C.send({ account: account, importedId: importedId, type: type, utxos: inList, recipient: addr, sendMax: true, feeRate: rate, rbf: true, sign: true, prevTxs: prevTxs });
+        var b = await bcast(signed.txhex);
+        if (b.error) throw new Error(b.detail || b.error);
+        st.className = 'p-hint'; st.innerHTML = '<span style="color:var(--green)">' + txLinkHtml(b.txid) + ' · consolidated ' + sel.length + ' → 1</span>';
+        CC.sel.clear();
+        setTimeout(function () { closeOv(); CC.data = null; loadCC(); }, 2600); // rescan so the merged UTXO shows
+      } catch (e) { st.className = 'p-err'; st.style.display = 'block'; st.textContent = 'Failed: ' + (e.message || 'sign/broadcast error'); }
+    };
+  }
+
   // ── Emblem Vault bridge (the module lives in emblem.js — self-contained modal) ──
   function openEmblem() {
     if (!window.EmblemBridge) return;
     if (acctKind !== 'hd') { overlay('<div class="p-hint" style="padding:14px">Emblem vaulting needs an Ethereum account. Switch to one of your HD accounts — imported BTC-only keys and watch-only addresses can’t mint vault NFTs.</div>'); return; }
     var acc; try { acc = C.accounts(curAccount, 0, NET()); } catch (e) { return; }
-    window.EmblemBridge.open(curAccount, acc.ethereum.address, acc.bitcoin.nativeSegwit.address);
+    window.EmblemBridge.open(curAccount, acc.ethereum.address, acc.bitcoin.nativeSegwit.address, undefined, { onBack: cpHub });
   }
 
   // ── Shared BTC fee-rate picker: mempool presets + a custom input that allows sub-sat (e.g. 0.8). ──
@@ -2969,6 +3206,7 @@
   }
   function wireDispenser() {
     var _dt = null, to = document.getElementById('pTo'), panel = document.getElementById('pDisp'), nr = document.getElementById('pNameRes');
+    abAttach(to, 'btc');
     _resName = null;
     to.oninput = function () {
       clearTimeout(_dt);
@@ -3077,7 +3315,7 @@
       + '<button class="btn" id="xReview">Review</button></div>';
     document.getElementById('bBack').onclick = backToMain;
     document.getElementById('xMax').onclick = function () { document.getElementById('xAmt').value = _availNum(avail); };
-    wireNameResolve('xTo', 'xNameRes');
+    wireNameResolve('xTo', 'xNameRes'); abAttach(document.getElementById('xTo'), 'btc');
     wireFeeRow(function (r) { feeRate = r; });
     document.getElementById('xReview').onclick = async function () {
       var s = document.getElementById('xStatus'); s.className = 'p-hint'; s.textContent = 'Composing via stampchain…';
@@ -3137,10 +3375,13 @@
   // SRC-20 deploy / mint (first-party, native in the popup). Same compose→signStamp→broadcast path as
   // renderSrc20Send (transfer), so no new dependency and no broken-feature risk.
   function src20CreateChoose() {
-    overlay('<div class="menu"><div class="menu-hd">SRC-20</div>'
+    overlay('<div class="stamp-detail"><div class="st-head"><button class="p-ibtn" id="s20cBack" title="Back">←</button><div class="st-htitle">SRC-20 deploy / mint</div><button class="m-close-x" id="s20cX" title="Close" aria-label="Close">✕</button></div>'
+      + '<div class="menu" style="display:flex;flex-direction:column;gap:9px;margin-top:2px">'
       + '<button class="menu-opt" data-op="deploy"><span>Deploy a new token<br><span class="fine">Register a ticker with a max supply &amp; per-mint limit</span></span></button>'
-      + '<button class="menu-opt" data-op="mint"><span>Mint an existing token<br><span class="fine">Mint from a ticker that\'s already deployed</span></span></button></div>');
-    document.querySelectorAll('#pop-ov [data-op]').forEach(function (b) { b.onclick = function () { closeOv(); renderSrc20Create(b.dataset.op); }; });
+      + '<button class="menu-opt" data-op="mint"><span>Mint an existing token<br><span class="fine">Mint from a ticker that\'s already deployed</span></span></button></div></div>');
+    document.getElementById('s20cBack').onclick = cpHub;
+    document.getElementById('s20cX').onclick = closeOv;
+    document.querySelectorAll('#pop-ov [data-op]').forEach(function (b) { b.onclick = function () { renderSrc20Create(b.dataset.op); }; });
   }
   // Live SRC-20 ticker/namespace check as the user types, mirroring the web Terminal:
   //  deploy → ✓ available / ✗ taken   ·   mint → ✓ mintable (shows per-mint limit) / not-deployed / fully-minted
@@ -3189,11 +3430,14 @@
         + '<label class="cpf"><span>Decimals (0–18)</span><input id="s_dec" class="p-in" type="number" min="0" max="18" step="1" value="18"/></label>'
       : '<label class="cpf"><span>Ticker <span id="s_tickchk" class="fine"></span></span><input id="s_tick" class="p-in" maxlength="5" spellcheck="false" autocomplete="off" placeholder="e.g. WNDR"/></label>'
         + '<label class="cpf"><span>Amount to mint <span id="s_mintlim" class="fine"></span></span><input id="s_amt" class="p-in" type="number" min="0" step="any"/></label>';
-    app.innerHTML = '<div class="p-head"><button class="p-ibtn" id="bBack" title="Back">←</button><div class="p-brand-mid"><div class="p-name">' + (op === 'deploy' ? 'Deploy SRC-20' : 'Mint SRC-20') + '</div><div class="p-sub">SRC-20 · ' + esc(short(from)) + '</div></div><div class="p-icons"></div></div>'
+    overlay('<div class="stamp-detail"><div class="st-head"><button class="p-ibtn" id="s20Back" title="Back">←</button><div class="st-htitle">' + (op === 'deploy' ? 'Deploy SRC-20' : 'Mint SRC-20') + '</div><button class="m-close-x" id="s20X" title="Close" aria-label="Close">✕</button></div>'
+      + '<div class="cph-from">from ' + esc(short(from)) + '</div>'
       + '<div class="send-form">' + fields + feeRowHtml(fees)
-      + '<div id="xStatus" class="p-err"></div><button class="btn" id="xReview">Review</button></div>';
-    document.getElementById('bBack').onclick = function () { renderMain(); };
-    wireFeeRow(function (r) { feeRate = r; });
+      + '<div id="xStatus" class="p-err"></div><button class="btn" id="xReview">Review</button></div></div>');
+    document.getElementById('s20Back').onclick = src20CreateChoose;
+    document.getElementById('s20X').onclick = closeOv;
+    var s20pop = document.querySelector('#pop-ov .pop-pop');
+    wireFeeRow(function (r) { feeRate = r; }, s20pop);
     wireSrc20TickCheck(op); // live ticker/namespace availability chip
     document.getElementById('xReview').onclick = async function () {
       var s = document.getElementById('xStatus'); s.className = 'p-hint'; s.textContent = 'Composing via stampchain…';
@@ -3234,7 +3478,8 @@
   }
   function renderSrc20CreatePreview(op, r, tick, summ) {
     var sat = function (n) { return Number(n).toLocaleString('en-US') + ' sats'; };
-    app.innerHTML = '<div class="p-head"><button class="p-ibtn" id="bBack" title="Back">←</button><div class="p-brand-mid"><div class="p-name">Confirm ' + (op === 'deploy' ? 'deploy' : 'mint') + '</div></div><div class="p-icons"></div></div>'
+    var pop = document.querySelector('#pop-ov .pop-pop'); if (!pop) return renderSrc20Create(op);
+    pop.innerHTML = '<div class="stamp-detail"><div class="st-head"><button class="p-ibtn" id="s20pBack" title="Back">←</button><div class="st-htitle">Confirm ' + (op === 'deploy' ? 'deploy' : 'mint') + '</div><button class="m-close-x" id="s20pX" title="Close" aria-label="Close">✕</button></div>'
       + '<div class="p-card" style="display:flex;flex-direction:column;gap:7px">'
       + '<div class="sd-row"><span class="sd-k">' + (op === 'deploy' ? 'Deploy' : 'Mint') + '</span><span class="sd-v">' + esc(tick) + '</span></div>'
       + '<div class="sd-row"><span class="sd-k">Details</span><span class="sd-v">' + esc(summ) + '</span></div>'
@@ -3242,8 +3487,9 @@
       + (r.change != null ? '<div class="sd-row"><span class="sd-k">Change</span><span class="sd-v">' + sat(r.change) + '</span></div>' : '') + '</div>'
       + '<div class="disp-panel" style="display:block"><div class="disp-hit">Signed locally, then broadcast. This writes a permanent SRC-20 ' + (op === 'deploy' ? 'deployment' : 'mint') + ' to Bitcoin — it can\'t be undone.</div></div>'
       + '<div id="xbStatus" class="p-err"></div>'
-      + '<div class="actions"><button class="btn ghost" id="xbBack">Back</button><button class="btn" id="xbSend">Sign &amp; broadcast</button></div>';
-    document.getElementById('bBack').onclick = function () { renderSrc20Create(op); };
+      + '<div class="actions"><button class="btn ghost" id="xbBack">Back</button><button class="btn" id="xbSend">Sign &amp; broadcast</button></div></div>';
+    document.getElementById('s20pBack').onclick = function () { renderSrc20Create(op); };
+    document.getElementById('s20pX').onclick = closeOv;
     document.getElementById('xbBack').onclick = function () { renderSrc20Create(op); };
     document.getElementById('xbSend').onclick = async function () {
       var s = document.getElementById('xbStatus'); s.className = 'p-hint'; s.textContent = 'Signing locally & broadcasting…';
@@ -3254,7 +3500,7 @@
         var b = await bcast(signed.txhex);
         if (b.error) throw new Error(b.detail || b.error);
         s.className = 'p-hint'; s.innerHTML = txLinkHtml(b.txid);
-        setTimeout(renderMain, 1800);
+        setTimeout(function () { closeOv(); renderMain(); }, 1800);
       } catch (err) { s.className = 'p-err'; s.textContent = 'Failed: ' + (err.message || 'sign/broadcast error'); }
     };
   }
@@ -3292,6 +3538,7 @@
       + '<input id="evAmt" class="p-in" type="number" step="any" min="0" placeholder="Amount"/>'
       + '<div id="evStatus" class="p-err"></div>'
       + '<button class="btn" id="evReview">Review</button></div>';
+    abAttach(document.getElementById('evTo'), 'eth');
     document.getElementById('evReview').onclick = async function () {
       var s = document.getElementById('evStatus'); s.className = 'p-hint'; s.textContent = 'Preparing & signing…';
       try {
@@ -3349,6 +3596,7 @@
       + '<input id="soAmt" class="p-in" type="number" step="any" min="0" placeholder="Amount"/>'
       + '<div id="soStatus" class="p-err"></div>'
       + '<button class="btn" id="soReview">Review</button></div>';
+    abAttach(document.getElementById('soTo'), 'sol');
     document.getElementById('soReview').onclick = async function () {
       var s = document.getElementById('soStatus'); s.className = 'p-hint'; s.textContent = 'Building & signing…';
       try {

@@ -154,6 +154,46 @@ html.in-panel #app { height: 100vh; }
 .tok-ic.ph { border: 1px solid var(--border); }
 .tok-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tok-amt { font-family: var(--mono); font-size: 12px; color: var(--gold2); white-space: nowrap; }
+/* Asset favorites (star / pin) */
+.tok-fav { flex: 0 0 auto; background: none; border: none; cursor: pointer; color: var(--muted); opacity: .4; font-size: 13px; line-height: 1; padding: 0 1px; transition: opacity .12s, color .12s, text-shadow .12s; }
+.tok-fav:hover { opacity: .95; color: var(--gold2); }
+.tok-fav.on { color: var(--gold2); opacity: 1; text-shadow: 0 0 7px rgba(224,180,83,0.5); }
+.sd-title .sd-fav { font-size: 15px; margin-right: 5px; vertical-align: 0; }
+/* Address book */
+.ab-wrap { position: relative; display: block; }
+.ab-wrap .p-in { padding-right: 34px; }
+.ab-book { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--muted2); cursor: pointer; padding: 3px; display: flex; align-items: center; border-radius: 6px; }
+.ab-book:hover { color: var(--gold2); background: rgba(224,180,83,0.12); }
+.ab-modal { position: fixed; inset: 0; background: rgba(6,6,10,0.7); display: none; align-items: center; justify-content: center; z-index: 3000; padding: 12px; }
+.ab-card { background: var(--surface); border: 1px solid var(--border); border-radius: 13px; width: 100%; max-width: 330px; max-height: 88vh; overflow-y: auto; padding: 14px; }
+.ab-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+.ab-head b { font-size: 15px; color: var(--gold2); }
+.ab-x { background: none; border: none; color: var(--muted); font-size: 15px; cursor: pointer; }
+.ab-in { width: 100%; background: var(--bg); border: 1px solid var(--border2); border-radius: 8px; color: var(--text); font-size: 12.5px; padding: 8px 10px; outline: none; font-family: inherit; box-sizing: border-box; }
+.ab-in:focus { border-color: var(--gold); }
+.ab-list { display: flex; flex-direction: column; gap: 5px; margin: 9px 0; max-height: 50vh; overflow-y: auto; }
+.ab-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left; background: var(--surface2); border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px; cursor: pointer; color: var(--text); font-family: inherit; }
+.ab-row:hover { border-color: var(--gold); }
+.ab-nm { font-weight: 600; font-size: 12.5px; }
+.ab-sub { color: var(--muted); font-weight: 400; font-size: 10px; }
+.ab-ad { font-family: var(--mono); font-size: 10.5px; color: var(--gold2); }
+.ab-empty { color: var(--muted); font-size: 12px; text-align: center; padding: 16px 6px; }
+.ab-foot { display: flex; gap: 7px; margin-top: 7px; }
+.ab-btn { flex: 1; background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px; font-size: 12px; cursor: pointer; font-family: inherit; }
+.ab-btn.gold { background: linear-gradient(180deg, var(--gold2), var(--gold)); color: #241a05; border-color: var(--gold); font-weight: 600; }
+.ab-btn.ab-more { flex: none; width: 100%; margin: 4px 0; }
+.ab-mrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--surface2); border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px; margin-bottom: 5px; }
+.ab-mnm { font-weight: 600; font-size: 12.5px; }
+.ab-macts { display: flex; gap: 5px; }
+.ab-mini { background: var(--surface2); border: 1px solid var(--border); color: var(--muted2); font-size: 10.5px; padding: 4px 8px; border-radius: 6px; cursor: pointer; font-family: inherit; }
+.ab-mini:hover { border-color: var(--gold); color: var(--gold2); }
+.ab-mini.danger:hover { border-color: var(--red); color: var(--red); }
+.ab-arows { display: flex; flex-direction: column; gap: 5px; margin: 8px 0; }
+.ab-arow { display: flex; align-items: center; gap: 5px; }
+.ab-arow .ab-af { flex: 1; min-width: 0; }
+.ab-arow .ab-lbl { flex: 0 0 58px; width: 58px; }
+.ab-ct { flex: 0 0 auto; font-family: var(--mono); font-size: 8.5px; color: var(--gold2); min-width: 24px; }
+.ab-err { color: var(--red); font-size: 11.5px; margin: 4px 0; }
 .tok-cp { cursor: pointer; }
 .tok-cp:hover { border-color: var(--gold); }
 .tok-chev { color: var(--muted); font-size: 16px; line-height: 1; margin-left: -4px; }
@@ -162,7 +202,6 @@ html.in-panel #app { height: 100vh; }
 .nft-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .nft-cell { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
 /* Editions-held badge on a stamp tile (shown when you hold more than one). */
-.nft-qty { position: absolute; top: 4px; left: 4px; z-index: 2; padding: 1px 6px; border-radius: 999px; background: rgba(10,10,18,0.82); border: 1px solid rgba(224,180,83,0.5); color: var(--gold2); font-family: var(--mono); font-size: 9px; font-weight: 600; line-height: 1.5; text-shadow: 0 1px 2px #000; }
 .fine.avail { color: var(--gold2); }
 .nft-cell img { width: 100%; aspect-ratio: 1; object-fit: cover; image-rendering: pixelated; background: #000; display: block; }
 .nft-ph { display: block; width: 100%; aspect-ratio: 1; background: #0c0c12; }
@@ -170,12 +209,17 @@ html.in-panel #app { height: 100vh; }
 .nft-err small { font-size: 9px; letter-spacing: 0.2px; }
 /* SRC-101 .btc name tiles */
 .nft-name { position: relative; border-color: rgba(224,180,83,0.42); }
-.nft-star { position: absolute; top: 3px; right: 5px; z-index: 2; color: var(--gold2); font-size: 11px; text-shadow: 0 1px 2px #000; }
+.nft-star { position: absolute; top: 3px; right: 23px; z-index: 2; color: var(--gold2); font-size: 11px; text-shadow: 0 1px 2px #000; }
+.nft-fav { position: absolute; top: 1px; right: 2px; z-index: 3; background: none; border: none; cursor: pointer; color: #fff; opacity: .55; font-size: 13px; line-height: 1; padding: 2px; text-shadow: 0 1px 3px #000; transition: opacity .12s, color .12s; }
+.nft-fav:hover { opacity: 1; color: var(--gold2); }
+.nft-fav.on { color: var(--gold2); opacity: 1; text-shadow: 0 0 7px rgba(224,180,83,0.7), 0 1px 3px #000; }
 .name-ph { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; aspect-ratio: 1; background: linear-gradient(140deg, rgba(224,180,83,0.16), rgba(139,92,246,0.16)); color: var(--gold2); font-weight: 600; font-size: 12px; word-break: break-all; text-align: center; padding: 3px; box-sizing: border-box; }
 .name-ph small { color: var(--muted); font-weight: 500; font-size: 8px; }
 .name-hero-sm { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 96px; border-radius: 10px; background: linear-gradient(140deg, rgba(224,180,83,0.16), rgba(139,92,246,0.16)); color: var(--gold2); font-weight: 600; font-size: 22px; margin-bottom: 8px; }
 .name-hero-sm small { color: var(--muted); font-size: 11px; font-weight: 500; }
-.nft-t { display: block; font-family: var(--mono); font-size: 9px; color: var(--muted); padding: 4px 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nft-t { display: flex; align-items: center; justify-content: space-between; gap: 4px; font-family: var(--mono); font-size: 9px; color: var(--muted); padding: 4px 5px; }
+.nft-tnum { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nft-tqty { flex: 0 0 auto; color: var(--gold2); font-weight: 600; }
 
 .pop-ov { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,0.62); display: flex; align-items: flex-start; justify-content: center; padding: 56px 16px 16px; overflow-y: auto; }
 /* Cap the modal to the viewport and let it scroll INTERNALLY — otherwise a tall modal (export
@@ -341,6 +385,18 @@ button.send-max:hover { border-color: var(--gold); color: var(--gold2); }
 .cc-mini { background: var(--surface2); border: 1px solid var(--border); color: var(--muted2); font-family: inherit; font-size: 10.5px; font-weight: 600; padding: 4px 8px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
 .cc-mini:hover { border-color: var(--violet2); color: var(--text); }
 .cc-mini.on { color: #7cc4ff; border-color: #60a5fa; background: rgba(96,165,250,0.12); }
+/* Coin-control consolidation: per-row select + footer */
+.cc-ck { flex: 0 0 auto; width: 15px; height: 15px; margin: 0; accent-color: var(--gold); cursor: pointer; }
+.cc-ck-off { display: inline-block; width: 15px; height: 15px; }
+.cc-row.ccsel { border-color: var(--gold); background: rgba(224,180,83,0.06); }
+.cc-foot { margin-top: 10px; }
+.cc-foot-hint { font-size: 11px; color: var(--muted); text-align: center; padding: 6px 4px; }
+.cc-foot-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cc-foot-info { font-size: 11.5px; color: var(--muted2); }
+.cc-foot-info b { color: var(--text); }
+.cc-prev-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 12px; color: var(--muted2); padding: 3px 0; }
+.cc-prev-row b { color: var(--text); font-family: var(--mono); font-weight: 600; }
+.cc-prev-row.total b { color: var(--gold2); }
 
 /* ── Utility row under the address (Coin Control · Emblem Vault) ── */
 .util-row { display: flex; gap: 8px; margin: 2px 0 9px; }
@@ -352,6 +408,7 @@ button.send-max:hover { border-color: var(--gold); color: var(--gold2); }
 #embmodal[hidden] { display: none; }
 #embmodal .modal-card { background: var(--surface); border: 1px solid var(--border2); border-radius: 14px; padding: 15px; width: 100%; max-width: 360px; max-height: calc(100% - 20px); overflow-y: auto; }
 #embmodal .cc-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
+#embmodal .cc-head-r { display: flex; align-items: center; gap: 6px; flex: none; }
 #embmodal .m-title { font-family: 'Fraunces', Georgia, serif; font-weight: 600; font-size: 16px; color: var(--text); }
 #embmodal .cp-addr { font-size: 9.5px; color: var(--muted); font-family: var(--mono); word-break: break-all; margin-top: 2px; }
 #embmodal .cp-filters { display: flex; gap: 6px; }
@@ -533,3 +590,173 @@ html.theme-light .pop-aurora { opacity: 0.28; mix-blend-mode: multiply; } /* sof
 html.theme-light .pdot { box-shadow: 0 0 6px rgba(21,128,61,0.5); }
 /* Title fade: on the light skin the white top vanishes on parchment — fade gold→deep-gold instead. */
 html.theme-light .p-name { background-image: linear-gradient(180deg, var(--gold), var(--gold2)); }
+
+/* ══ Ported Terminal Market + XCP-69 launchpad styles (native in the popup) ══ */
+.m-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.m-grid > div, .m-row { background: var(--surface2); border: 1px solid var(--border); border-radius: 9px; padding: 9px 11px; display: flex; flex-direction: column; gap: 3px; }
+.m-row { margin-top: 10px; }
+.m-grid .k, .m-row .k { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+.m-grid .v { font-size: 15px; font-weight: 600; }
+.vmono { font-family: var(--mono); font-size: 12px; color: var(--muted2); }
+.dash-empty { color: var(--muted); font-size: 12.5px; padding: 20px 4px; text-align: center; }
+.stampd { display: flex; flex-direction: column; gap: 10px; }
+.stampd-art { width: 220px; max-width: 100%; aspect-ratio: 1; object-fit: contain; image-rendering: pixelated; background: #000; border: 1px solid var(--border); border-radius: 14px; align-self: center; }
+.stampd-frame { width: 260px; height: 260px; max-width: 100%; border: 1px solid var(--border); border-radius: 14px; background: #000; align-self: center; overflow: hidden; }
+.m-row[data-copy] { cursor: pointer; }
+.m-row[data-copy]:hover { border-color: var(--gold); }
+.mkt-x { flex: none; margin-left: auto; width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface2); color: var(--muted2); font-size: 20px; line-height: 1; padding: 0 0 2px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.mkt-x:hover { border-color: var(--gold); color: var(--gold2); }
+.lp-card { max-width: 520px; }
+.lp-createrow { display: flex; justify-content: flex-end; margin: -2px 0 8px; }
+.lp-tabs { display: flex; gap: 4px; background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 3px; margin: 4px 0 12px; }
+.lp-tab { flex: 1; background: transparent; border: none; color: var(--muted2); font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 8px; border-radius: 8px; cursor: pointer; }
+.lp-tab.on { background: var(--surface3); color: var(--gold2); }
+.lp-body { display: flex; flex-direction: column; gap: 8px; max-height: 52vh; overflow-y: auto; }
+.lp-item { display: block; width: 100%; text-align: left; background: var(--surface2); border: 1px solid var(--border); border-radius: 11px; padding: 12px 14px; cursor: pointer; color: var(--text); font-family: inherit; }
+.lp-item:hover { border-color: var(--gold); }
+.lp-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.lp-name { font-weight: 700; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lp-pct { font-family: var(--mono); font-size: 12px; color: var(--gold2); flex: none; }
+.lp-bar { height: 5px; background: var(--bg2); border-radius: 3px; margin: 8px 0 6px; overflow: hidden; }
+.lp-bar span { display: block; height: 100%; background: linear-gradient(90deg, var(--gold), var(--gold2)); border-radius: 3px; }
+.lp-sub { font-size: 11.5px; color: var(--muted); }
+.lp-meta { display: flex; justify-content: space-between; gap: 8px; margin-top: 5px; font-size: 11px; color: var(--muted2); font-family: var(--mono); }
+.lp-meta span:first-child { color: var(--gold2); }
+.lp-sort { display: flex; gap: 5px; margin: 8px 0 4px; }
+.lp-sort .mini.on { border-color: var(--gold); color: var(--gold2); }
+.lp-progline { font-size: 12px; color: var(--muted2); margin-bottom: 6px; }
+.lp-progline b { color: var(--gold2); font-size: 14px; }
+.lp-stats2 { display: flex; flex-direction: column; }
+.lp-stat { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 2px; font-size: 12.5px; color: var(--muted2); border-bottom: 1px solid var(--border); }
+.lp-stat:last-child { border-bottom: none; }
+.lp-stat b { color: var(--text); font-weight: 600; font-family: var(--mono); font-size: 12.5px; }
+.lp-terms { margin-top: 10px; color: var(--muted); }
+.lp-mintrow { display: flex; align-items: center; gap: 8px; }
+.lp-mintrow #lpLots { flex: 0 0 90px; }
+.lp-lotslbl { font-size: 12px; color: var(--muted2); }
+.lp-presets { display: flex; gap: 6px; margin-top: 8px; }
+.lp-pre { cursor: pointer; }
+.lp-cost { font-size: 12.5px; color: var(--muted2); margin: 10px 0 4px; line-height: 1.5; }
+.mkt-card { max-width: 460px; }
+.mkt-side { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+.mkt-lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 6px; }
+.mkt-in { display: flex; align-items: center; gap: 10px; }
+.mkt-amt { flex: 1; min-width: 0; background: transparent; border: none; color: var(--text); font-family: inherit; font-size: 22px; font-weight: 600; outline: none; }
+.mkt-amt::placeholder { color: var(--muted); }
+.mkt-asset { flex: none; font-weight: 700; font-size: 14px; color: var(--gold2); background: var(--surface3); border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px; }
+.mkt-tokenin { width: 92px; text-align: center; text-transform: uppercase; outline: none; background: var(--surface3); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px 11px; font-family: inherit; font-size: 14px; }
+.mkt-tokenin::placeholder { color: var(--muted); }
+.mkt-asset.mkt-tokenin { color: var(--gold2); font-weight: 700; border-radius: 999px; padding: 6px 12px; }
+.mkt-flip { display: flex; justify-content: center; margin: 9px 0; }
+.mkt-flip button { width: 34px; height: 34px; border-radius: 10px; background: var(--surface3); border: 1px solid var(--border); color: var(--muted2); cursor: pointer; font-size: 13px; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
+.mkt-flip button:hover { border-color: var(--gold); color: var(--gold2); }
+.mkt-max { margin-left: 7px; padding: 1px 8px; font-size: 10px; vertical-align: 1px; }
+.mkt-quote { margin: 12px 0 4px; display: flex; flex-direction: column; gap: 5px; }
+.mkt-qrow { display: flex; justify-content: space-between; align-items: center; font-size: 12.5px; color: var(--muted2); }
+.mkt-qrow b { color: var(--text); font-weight: 600; }
+.mkt-slip { font-size: 12px; color: var(--muted2); margin-bottom: 10px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mkt-slip .mini.on { border-color: var(--gold); color: var(--gold2); }
+.mkt-scan { margin: 12px 0 2px; }
+.pool-dir-head { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--muted2); margin-bottom: 6px; }
+.pool-dir-head > span:first-child { font-weight: 600; color: var(--text); }
+.pool-sort { display: flex; gap: 5px; }
+.pool-sort .mini.on { border-color: var(--gold); color: var(--gold2); }
+.pool-dir { display: flex; flex-direction: column; gap: 5px; max-height: 264px; overflow-y: auto; padding-right: 2px; }
+.pool-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; cursor: pointer; color: var(--text); font-family: inherit; text-align: left; }
+.pool-row:hover { border-color: var(--gold); background: linear-gradient(180deg, rgba(224,180,83,0.07), var(--surface2)); }
+.pool-pair { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pool-pair .ps { color: var(--muted); font-weight: 400; }
+.pool-tvl { font-family: var(--mono); font-size: 11.5px; color: var(--gold2); flex: 0 0 auto; }
+.pool-tag { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted2); background: var(--surface3); text-transform: uppercase; letter-spacing: .3px; }
+.pool-tag.empty { color: #e0655f; border-color: rgba(224,101,95,0.4); }
+.pool-tag.alt { color: var(--muted2); }
+.pool-tag.deep { color: #4bbf73; border-color: rgba(75,191,115,0.4); }
+.pool-tag.mod { color: var(--gold2); border-color: rgba(224,180,83,0.4); }
+.pool-tag.thin { color: #e0655f; border-color: rgba(224,101,95,0.4); }
+.pool-info { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 11px 13px; display: flex; flex-direction: column; gap: 5px; }
+.pool-info .mkt-qrow { font-size: 12px; }
+.pool-info-head { display: flex; align-items: center; gap: 8px; font-family: 'Fraunces', Georgia, serif; font-size: 15px; font-weight: 600; color: var(--gold2); margin-bottom: 3px; }
+.pool-info-head .ps { color: var(--muted); font-weight: 400; }
+.pool-info .vmono { word-break: break-all; }
+.disp-opt { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 6px; cursor: pointer; color: var(--text); font-family: inherit; text-align: left; }
+.disp-opt:hover { border-color: var(--border2); }
+.disp-opt.on { border-color: var(--gold); background: linear-gradient(180deg, rgba(224,180,83,0.08), var(--surface2)); }
+.disp-give { font-weight: 600; font-size: 13px; }
+.disp-rate { font-family: var(--mono); font-size: 12px; color: var(--gold2); }
+.disp-rem { font-size: 11px; color: var(--muted); }
+.ob-box { margin: 10px 0 4px; }
+.ob-sum { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted2); padding: 8px 10px; background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; }
+.ob-sum b { font-family: var(--mono); font-weight: 600; color: var(--text); }
+.ob-sum b.up { color: #4bbf73; }
+.ob-sum b.dn { color: #e0655f; }
+.ob-levels { margin-top: 6px; }
+.ob-asks, .ob-bids { display: flex; flex-direction: column; gap: 2px; }
+.ob-asks { margin-bottom: 4px; }
+.ob-row { display: flex; justify-content: space-between; gap: 12px; width: 100%; font-family: var(--mono); font-size: 12px; padding: 3px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; text-align: left; }
+.ob-row span:last-child { color: var(--muted2); }
+.ob-row.ask { background: rgba(224,101,95,0.07); } .ob-row.ask span:first-child { color: #e0655f; }
+.ob-row.bid { background: rgba(75,191,115,0.07); } .ob-row.bid span:first-child { color: #4bbf73; }
+.ob-row:hover { outline: 1px solid var(--gold); }
+.ob-none { padding: 3px 10px; }
+.ob-err { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted2); padding: 10px 12px; background: rgba(224,101,95,0.08); border: 1px solid rgba(224,101,95,0.3); border-radius: 10px; }
+.ob-drow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 11px; border: 1px solid var(--border); border-radius: 9px; margin-bottom: 5px; font-size: 12.5px; }
+.ob-drow.used { border-color: var(--gold); background: linear-gradient(180deg, rgba(224,180,83,0.10), transparent); }
+.ob-drate { font-family: var(--mono); color: var(--gold2); font-weight: 600; }
+.ob-drate em { color: var(--muted); font-style: normal; font-size: 11px; font-weight: 400; }
+.ob-damt { color: var(--text); font-family: var(--mono); }
+.ob-damt b { color: var(--gold2); }
+.ob-foot { margin-top: 6px; }
+.ob-drow.pick { cursor: pointer; }
+.ob-drow.pick:hover { border-color: var(--border2); }
+.ob-drow.pick.sel { border-color: var(--gold); }
+.ob-check { flex: none; width: 16px; height: 16px; border-radius: 5px; border: 1px solid var(--border2); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; color: var(--gold2); margin-right: 8px; }
+.ob-drow.sel .ob-check { border-color: var(--gold); background: rgba(224,180,83,0.12); }
+/* Overlay shell for the ported Market (#mktModal) + XCP-69 launchpad (#lpModal) modals — the popup's
+   .modal rules are scoped to #embmodal, so give these two the same fixed-overlay treatment. */
+#mktModal.modal, #lpModal.modal { position: fixed; inset: 0; z-index: 60; background: rgba(6,6,10,0.72); display: flex; align-items: flex-start; justify-content: center; padding: 10px; overflow-y: auto; }
+#mktModal.modal[hidden], #lpModal.modal[hidden] { display: none !important; }
+#mktModal .modal-card, #lpModal .modal-card { position: relative; background: var(--surface); border: 1px solid var(--border2); border-radius: 14px; padding: 15px; width: 100%; max-width: 360px; max-height: calc(100% - 20px); overflow-y: auto; }
+/* Market (#mktModal) + XCP-69 (#lpModal) modal headers: their .cc-head is unstyled in the popup
+   (popup.css only styles #embmodal .cc-head), so lay it out and pin the close ✕ to the card corner. */
+#mktModal .cc-head, #lpModal .cc-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; padding-right: 30px; }
+#mktModal .cc-head-r, #lpModal .cc-head-r { display: flex; align-items: center; gap: 6px; flex: none; }
+#mktModal .cp-addr, #lpModal .cp-addr { font-size: 10.5px; color: var(--muted); margin-top: 3px; line-height: 1.4; }
+#mktModal .m-close-x, #lpModal .m-close-x { position: absolute; top: 12px; right: 12px; z-index: 5; }
+/* .m-in inputs inside the ported Market/XCP-69 modals — popup.css only styles #embmodal .m-in, so
+   these fell back to the browser-default white. Give them the wallet's dark input look. */
+#mktModal .m-in, #lpModal .m-in { width: 100%; background: var(--bg); border: 1px solid var(--border2); border-radius: 9px; color: var(--text); font-size: 13px; padding: 10px 12px; outline: none; margin-top: 8px; font-family: inherit; box-sizing: border-box; }
+#mktModal .m-in:focus, #lpModal .m-in:focus { border-color: var(--gold); }
+#mktModal .m-in::placeholder, #lpModal .m-in::placeholder { color: var(--muted); }
+
+/* Larger, roomier typography for the XCP-69 "Create a launch" form — scoped to .lp-createform so no
+   other form changes. The modal-card grows downward (max-height: 100%-20px) to fit the taller layout. */
+#lpModal .lp-createform .m-title { font-size: 18px; }
+#lpModal .lp-createform .cp-addr { font-size: 11.5px; line-height: 1.5; }
+#lpModal .lp-createform .cpf { display: flex; flex-direction: column; gap: 5px; margin: 13px 0; }
+#lpModal .lp-createform .cpf > span { font-size: 14px; color: var(--text); font-weight: 600; }
+#lpModal .lp-createform .cpf > span .fine { font-size: 12px; font-weight: 400; }
+#lpModal .lp-createform .m-in { font-size: 15px; padding: 12px 14px; margin-top: 0; }
+#lpModal .lp-createform .m-in::placeholder { font-size: 13.5px; }
+#lpModal .lp-createform .lp-presets { margin-top: 6px; }
+#lpModal .lp-createform .lp-presets .mini { font-size: 13px; padding: 7px 13px; }
+#lpModal .lp-createform > .fine { font-size: 12.5px; line-height: 1.6; margin-top: 10px; }
+#lpModal .lp-createform .wbtns { margin-top: 16px; }
+#lpModal .lp-createform .wbtns .ghost, #lpModal .lp-createform .wbtns .primary { font-size: 14.5px; padding: 12px 18px; }
+
+/* Action buttons inside the ported Market/XCP-69 modals. The Terminal styles bare <button>
+   gold-by-default (styles.css `button{}`) and `.ghost`=surface3; the popup styles buttons via
+   `.btn` instead, so these bare `.primary`/`.ghost` buttons fell back to browser-default grey. */
+#mktModal .primary, #lpModal .primary { border: none; border-radius: 10px; font-family: inherit; font-weight: 700; font-size: 13px; padding: 10px 14px; cursor: pointer; color: #1a1305; background: linear-gradient(180deg, var(--gold2), var(--gold)); transition: filter .15s, transform .05s; }
+#mktModal .primary:hover, #lpModal .primary:hover { filter: brightness(1.06); }
+#mktModal .primary:active, #lpModal .primary:active { transform: translateY(1px); }
+#mktModal .primary:disabled, #lpModal .primary:disabled { opacity: .55; cursor: default; }
+#mktModal .primary.danger, #lpModal .primary.danger { background: linear-gradient(180deg, #f0685a, #c73f34); color: #fff; }
+#mktModal .ghost, #lpModal .ghost { border: 1px solid var(--border2); border-radius: 10px; font-family: inherit; font-weight: 700; font-size: 13px; padding: 10px 14px; cursor: pointer; color: var(--text); background: var(--surface3); transition: filter .15s, transform .05s; }
+#mktModal .ghost:hover, #lpModal .ghost:hover { filter: brightness(1.25); }
+#mktModal .ghost:active, #lpModal .ghost:active { transform: translateY(1px); }
+#mktModal .ghost.sm, #lpModal .ghost.sm { font-size: 12px; padding: 7px 10px; }
+
+/* Dispenser buy/sell mode toggle (.ds-mode) — not in the ported CSS batch. */
+#mktModal .ds-modes { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+#mktModal .ds-mode { padding: 5px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); color: var(--muted2); font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: inherit; }
+#mktModal .ds-mode.on { border-color: var(--gold); color: var(--gold2); background: linear-gradient(180deg, rgba(224,180,83,0.10), var(--surface2)); }

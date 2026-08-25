@@ -58,6 +58,7 @@
       <div id="solStatus" class="statusline" hidden></div>
       <div class="wbtns"><button class="ghost" id="solBack">Back</button><button class="primary" id="solReview">Review</button></div>`);
     $('#solBack').onclick = render;
+    if (window.WonderBook) WonderBook.attach($('#solTo'), 'sol');
     $('#solReview').onclick = async () => {
       const s = $('#solStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Building & signing…';
       try {

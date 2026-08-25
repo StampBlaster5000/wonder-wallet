@@ -46,6 +46,8 @@
   const BTC_IC = '<svg viewBox="0 0 32 32" width="16" height="16" fill="currentColor"><path d="M21 14c1.5-.8 2-2.3 1.6-4-.5-2.2-2.4-3-5-3.2V3h-2.4v3.6h-1.9V3H11v3.8H6.5v2.6h1.7c.9 0 1.2.5 1.2 1v9.2c0 .5-.3.8-.8.8H6.2L6 23H11v3.8h2.4V23h1.9v3.8H17V23c4-.2 6.6-1.2 7-4.7.3-2.2-.8-3.5-2-4.3zM13.4 9.3c1.3 0 4.6-.4 4.6 1.6s-3.3 1.5-4.6 1.5zm0 11v-3.5c1.6 0 5.4-.4 5.4 1.7s-3.8 1.8-5.4 1.8z"/></svg>';
   const ETH_IC = '<svg viewBox="0 0 32 32" width="14" height="14" fill="currentColor"><path d="M16 3l-8 13 8 4.5L24 16 16 3zM8 17.6L16 29l8-11.4-8 4.6-8-4.6z"/></svg>';
   const SOL_IC = '<svg viewBox="0 0 32 32" width="14" height="14" fill="currentColor"><path d="M7 9h17l-4 4H3l4-4zm0 7h17l-4 4H3l4-4zm-4 7h17l4-4H7l-4 4z"/></svg>';
+  const GEAR_IC = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
+  const LOCK_IC = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
   const DCH = { btc: { name: 'Bitcoin', sym: 'BTC', price: 'bitcoin', ic: BTC_IC }, eth: { name: 'Ethereum', sym: 'ETH', price: 'ethereum', ic: ETH_IC }, sol: { name: 'Solana', sym: 'SOL', price: 'solana', ic: SOL_IC } };
   const chAddr = (acc, ch) => (ch === 'btc' ? acc.bitcoin.nativeSegwit.address : ch === 'eth' ? acc.ethereum.address : acc.solana.address);
 
@@ -246,38 +248,42 @@
       if (!tnAddr && window.WWNet.isTestnet()) return window.WWNet.set('mainnet');
     }
     body().innerHTML = `
+      <div class="wallet-topbar">
+        <div class="wt-left"><button class="chain-btn static" disabled title="Bitcoin · ${esc(CONN.name)}"><span class="cs-ic btc">${BTC_IC}</span></button></div>
+        <div class="wt-center"><span class="net-mount" id="wwNetMount"></span></div>
+        <div class="wt-right"><button class="ghost sm" id="connDisc" title="Disconnect this wallet">Disconnect</button></div>
+      </div>
       <div class="dash-head">
-        <div class="acct-sel"><div class="hw-acct">🔌 ${esc(CONN.name)} · connected</div></div>
-        <div class="dash-head-r">${walletToolsHtml()}<button class="ghost sm" id="dappsBtn" title="Open the tools panel">☰ Tools</button><button class="ghost sm" id="connDisc">Disconnect</button></div>
+        <div class="dash-head-l"><div class="acct-sel"><div class="hw-acct">🔌 ${esc(CONN.name)} · connected</div></div></div>
+        <button class="pname-chip" id="pnameChip" hidden title="Your primary Bitcoin Stamps name"></button>
       </div>
-      <div class="pf-strip" id="pfStrip">
-        <button class="pf-card on solo" data-ch="btc"><span class="pf-ch">Bitcoin · ${esc(CONN.name)}</span>
-          <span class="pf-usd" id="pfUsd-btc">…</span><span class="pf-nat" id="pfNat-btc">—</span></button>
+      <div class="bal-strip" id="pfStrip">
+        <div class="bal-main">
+          <div class="bal-top"><span class="bal-usd" id="pfUsd-btc">…</span>${walletToolsHtml()}</div>
+          <span class="bal-nat" id="pfNat-btc">—</span>
+        </div>
+        <div class="bal-actions" id="balActions"></div>
       </div>
+      <div class="dash-actions wbtns" id="dashActions"></div>
       <div class="dash-tabs">
-        <div class="dash-chaintabs"><button class="dctab on" disabled>Bitcoin</button></div>
         <div class="dash-assettabs"><button class="datab${dashTab === 'tokens' ? ' on' : ''}" data-tab="tokens">Tokens</button><button class="datab${dashTab === 'collectibles' ? ' on' : ''}" data-tab="collectibles">Collectibles</button></div>
       </div>
       <div class="addr-row" style="margin:2px 0 8px"><span class="addr-chip" data-copy="${esc(addr)}" title="Copy address">${esc(shortA(addr))}</span></div>
       <div id="dashAssets" class="dash-assets"><div class="fine">Loading Bitcoin assets…</div></div>
-      <div class="dash-actions wbtns" id="dashActions"></div>
-      <div class="fine" style="margin-top:8px;opacity:.85">🔌 Connected via ${esc(CONN.name)} — you compose here, ${esc(CONN.name)} signs &amp; broadcasts. Keys never leave your wallet.</div>`;
+      <div class="wallet-foot" id="walletFoot">
+        <span class="wf-sec"><span class="wf-dot"></span>🔌 keys never leave ${esc(CONN.name)}</span>
+        <span class="wf-ver" id="wfVer"></span>
+      </div>`;
     $('#connDisc').onclick = () => { try { CONN && CONN.disconnect(); } catch (_) {} try { WalletConnect.forget(); } catch (_) {} CONN = null; acctKind = 'hd'; render(); };
     wireWalletTools();
+    syncNetBadge(true, true); // mount the Mainnet/Testnet chip + testnet banner (connected mirrors its wallet's network)
+    const vf = $('#wfVer'); if (vf) vf.textContent = (document.getElementById('verTag') || {}).textContent || '';
     body().querySelectorAll('[data-copy]').forEach((el) => (el.onclick = () => copy(el.dataset.copy, el)));
     body().querySelectorAll('.datab').forEach((b) => (b.onclick = () => { dashTab = b.dataset.tab; body().querySelectorAll('.datab').forEach((x) => x.classList.toggle('on', x === b)); renderDashAssets(null); }));
-    const bar = $('#dashActions');
-    bar.innerHTML = `<button class="primary sm" data-a="send">Send</button><button class="ghost sm" data-a="receive">Receive</button><button class="primary sm" data-a="cp">Counterparty</button><button class="ghost sm" data-a="dex">⇄ DEX</button><button class="ghost sm" data-a="issue">✦ Issuance</button><button class="ghost sm" data-a="activity">⧗ Activity</button><button class="ghost sm" data-a="coincontrol">Coin Control</button>`;
-    bar.querySelectorAll('[data-a]').forEach((b) => (b.onclick = () => {
-      const act = b.dataset.a;
-      if (act === 'send') renderConnectedSend();
-      else if (act === 'cp') { if (window.CpActions) window.CpActions.openConnected(CONN); }
-      else if (act === 'dex') { if (window.CpActions) window.CpActions.dexConnected(CONN); }
-      else if (act === 'issue') { if (window.CpActions) window.CpActions.issuanceSuiteConnected(CONN); }
-      else if (act === 'activity') openActivity(addr);
-      else if (act === 'coincontrol') { if (window.CoinControl) window.CoinControl.open(addr); }
-      else if (act === 'receive') { const c = modal(`<h3 class="m-title">Receive · ${esc(CONN.name)}</h3><p class="fine">Your connected Bitcoin address:</p><div class="vmono" style="word-break:break-all;background:var(--surface2,#17131f);padding:10px;border-radius:8px;margin:6px 0">${esc(addr)}</div><div class="wbtns"><button class="ghost" id="rcCopy">Copy address</button><button class="ghost" id="rcX">Close</button></div>`); c.querySelector('#rcX').onclick = closeModal; c.querySelector('#rcCopy').onclick = () => copy(addr, c.querySelector('#rcCopy')); }
-    }));
+    // Same layout as the main wallet: Send/Receive inside the balance module; the below-balance row is just
+    // ☰ Tools + Activity (Counterparty / Market / Issuance live in the Tools side panel; Coin Control inside Activity).
+    renderBalanceActions(null);
+    renderDashActions(null);
     loadPortfolio(null); loadDashAssets(null);
   }
   function connBtcType(a) { if (/^bc1p/i.test(a)) return 'taproot'; if (/^bc1q/i.test(a)) return 'nativeSegwit'; if (/^3/.test(a)) return 'nestedSegwit'; if (/^1/.test(a)) return 'legacy'; return 'nativeSegwit'; }
@@ -313,6 +319,7 @@
     $('#cMax').onchange = () => { const on = $('#cMax').checked; const a = $('#cAmt'); a.disabled = on; if (on) a.value = (spendableSats / 1e8).toFixed(8); amtUsd(); };
     c.querySelectorAll('.feeopt').forEach((b) => (b.onclick = () => { c.querySelectorAll('.feeopt').forEach((x) => x.classList.remove('on')); b.classList.add('on'); feeRate = Number(b.dataset.r); $('#cFee').value = ''; }));
     $('#cFee').oninput = (e) => { if (e.target.value !== '') { const r = Number(e.target.value); if (r > 0) { feeRate = r; c.querySelectorAll('.feeopt').forEach((x) => x.classList.remove('on')); } } };
+    if (window.WonderBook) WonderBook.attach($('#cTo'), 'btc');
     $('#cReview').onclick = async () => {
       const s = $('#cStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Composing…';
       try {
@@ -410,6 +417,7 @@
     c.querySelector('#mc').onclick = closeModal;
     c.querySelectorAll('.feeopt').forEach((b) => (b.onclick = () => { c.querySelectorAll('.feeopt').forEach((x) => x.classList.remove('on')); b.classList.add('on'); feeRate = Number(b.dataset.r); $('#tFee').value = ''; }));
     $('#tFee').oninput = (e) => { if (e.target.value !== '') { const r = Number(e.target.value); if (r > 0) { feeRate = r; c.querySelectorAll('.feeopt').forEach((x) => x.classList.remove('on')); } } };
+    if (window.WonderBook) WonderBook.attach($('#tTo'), 'btc');
     $('#tReview').onclick = async () => {
       const s = $('#tStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Composing via stampchain…';
       try {
@@ -462,6 +470,7 @@
     c.querySelector('#mc').onclick = closeModal;
     c.querySelectorAll('.feeopt').forEach((b) => (b.onclick = () => { c.querySelectorAll('.feeopt').forEach((x) => x.classList.remove('on')); b.classList.add('on'); feeRate = Number(b.dataset.r); $('#pFee').value = ''; }));
     $('#pFee').oninput = (e) => { if (e.target.value !== '') { const r = Number(e.target.value); if (r > 0) { feeRate = r; c.querySelectorAll('.feeopt').forEach((x) => x.classList.remove('on')); } } };
+    if (window.WonderBook) WonderBook.attach($('#pTo'), 'btc');
     $('#pReview').onclick = async () => {
       const s = $('#pStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Composing via Counterparty…';
       try {
@@ -724,7 +733,7 @@
       <div class="wallet-topbar">
         <div class="wt-left">${chainBtnHtml(chainSwitchable)}</div>
         <div class="wt-center"><span class="net-mount" id="wwNetMount"></span></div>
-        <div class="wt-right">${isW ? '' : '<button class="ghost sm" id="bAdvanced">Advanced</button>'}<button class="ghost sm" id="bLock">Lock</button></div>
+        <div class="wt-right">${isW ? '' : `<button class="ghost sm ib" id="bAdvanced" title="Advanced" aria-label="Advanced settings">${GEAR_IC}</button>`}<button class="ghost sm ib" id="bLock" title="Lock wallet" aria-label="Lock wallet">${LOCK_IC}</button></div>
       </div>
       <div class="dash-head">
         <div class="dash-head-l">
@@ -822,7 +831,7 @@
     if (!addr) return;
     ACT_T = { addr, items: null, filter: 'all' };
     // Coin Control lives inside Activity now (they share one entry point, mirroring the extension).
-    const ccBtn = canSignBtc() ? `<button class="mini" id="acCoin" title="Coin Control — UTXO management (freeze / protect asset-bearing coins)">▦ Coin Control</button>` : '';
+    const ccBtn = (canSignBtc() || acctKind === 'connected' || acctKind === 'hardware') ? `<button class="mini" id="acCoin" title="Coin Control — UTXO management (freeze / protect asset-bearing coins)">▦ Coin Control</button>` : '';
     modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Activity</h3><div class="cc-addr">${esc(addr)}</div></div><div class="cc-head-r">${ccBtn}</div></div><div id="acBody"><div class="statusline load">Loading activity…</div></div>`, true);
     const acCoin = $('#acCoin'); if (acCoin) acCoin.onclick = () => { closeModal(); if (window.CoinControl) window.CoinControl.open(addr); };
     loadActT();
@@ -932,14 +941,16 @@
         <div class="acct-sel"><div class="hw-acct">🔐 Ledger · Bitcoin${agg ? ' · All addresses' : viewing ? ' · 0/' + hwViewIndex : ''}</div>
           <button class="mini btctype-chip" id="btcTypeBtn" title="Bitcoin address type">${BTC_LABEL[bt]} ▾</button></div>
         <button class="pname-chip" id="pnameChip" hidden title="Your primary Bitcoin Stamps name"></button>
-        <div class="dash-head-r">${walletToolsHtml()}<button class="ghost sm" id="dappsBtn" title="Open the tools panel">☰ Tools</button><button class="ghost sm" id="hwDisc">Disconnect</button></div>
+        <div class="dash-head-r"><button class="ghost sm" id="hwDisc" title="Disconnect this Ledger">Disconnect</button></div>
       </div>
-      <div class="pf-strip" id="pfStrip">
-        <button class="pf-card on solo" data-ch="btc"><span class="pf-ch">Bitcoin · Ledger${agg ? ' · aggregate' : ''}</span>
-          <span class="pf-usd" id="pfUsd-btc">…</span><span class="pf-nat" id="pfNat-btc">—</span></button>
+      <div class="bal-strip" id="pfStrip">
+        <div class="bal-main">
+          <div class="bal-top"><span class="bal-usd" id="pfUsd-btc">…</span>${walletToolsHtml()}</div>
+          <span class="bal-nat" id="pfNat-btc">—</span>
+        </div>
+        <div class="bal-actions" id="balActions"><button class="ghost sm" data-a="receive">Receive</button></div>
       </div>
       <div class="dash-tabs">
-        <div class="dash-chaintabs"><button class="dctab on" disabled>Bitcoin</button></div>
         <div class="dash-assettabs"><button class="datab${dashTab === 'tokens' ? ' on' : ''}" data-tab="tokens">Tokens</button><button class="datab${dashTab === 'collectibles' ? ' on' : ''}" data-tab="collectibles">Collectibles</button></div>
       </div>
       <div class="addr-row" style="margin:2px 0 8px">${agg
@@ -947,26 +958,33 @@
         : `<span class="addr-chip" data-copy="${esc(addr)}" title="Copy address">${esc(shortA(addr))}</span>${viewing ? `<span class="hw-idx" title="Receiving-chain index">0/${hwViewIndex}</span><button class="mini" id="hwMain" title="Back to your main address">← main</button>` : ''}`}</div>
       <div id="dashAssets" class="dash-assets"><div class="fine">${agg ? 'Scanning your Ledger addresses…' : 'Loading Bitcoin assets…'}</div></div>
       <div class="dash-actions wbtns" id="dashActions"></div>
-      <div class="fine" style="margin-top:8px;opacity:.85">🔐 Keys stay on your Ledger — this is a read view. On-device signing for sends &amp; Counterparty is being validated with hardware.</div>`;
+      <div class="fine" style="margin-top:8px;opacity:.85">🔐 Keys stay on your Ledger — this is a read view. On-device signing for sends &amp; Counterparty is being validated with hardware.</div>
+      <div class="wallet-foot" id="walletFoot">
+        <span class="wf-sec"><span class="wf-dot"></span>🔐 keys stay on your Ledger</span>
+        <span class="wf-ver" id="wfVer"></span>
+      </div>`;
     $('#btcTypeBtn').onclick = hwBtcTypeMenu;
     $('#hwDisc').onclick = hwDisconnect;
     wireWalletTools();
+    const vf = $('#wfVer'); if (vf) vf.textContent = (document.getElementById('verTag') || {}).textContent || '';
     const hwMainBtn = $('#hwMain'); if (hwMainBtn) hwMainBtn.onclick = () => { hwViewAddr = null; hwViewIndex = null; renderHardware(); };
     const hwSingleBtn = $('#hwSingle'); if (hwSingleBtn) hwSingleBtn.onclick = () => { hwAggregate = false; DASH_ASSETS = null; renderHardware(); };
     body().querySelectorAll('[data-copy]').forEach((el) => (el.onclick = () => copy(el.dataset.copy, el)));
     body().querySelectorAll('.datab').forEach((b) => (b.onclick = () => { dashTab = b.dataset.tab; body().querySelectorAll('.datab').forEach((x) => x.classList.toggle('on', x === b)); renderDashAssets(null); }));
+    // Receive lives in the balance module now; the below-balance row is ☰ Tools + Portfolio/Addresses + Activity.
+    // Coin Control moved inside Activity (mirrors the main wallet + extension).
+    const recvBtn = $('#balActions') && $('#balActions').querySelector('[data-a="receive"]'); if (recvBtn) recvBtn.onclick = hwReceive;
     const bar = $('#dashActions');
     const scanBtn = canScan ? `<button class="ghost sm" data-a="scan" title="Browse the Ledger's receiving addresses one by one">⧉ Addresses</button>` : '';
     const aggBtn = canScan ? `<button class="ghost sm${agg ? ' on' : ''}" data-a="aggregate" title="Combine all used receiving addresses into one portfolio">⊕ ${agg ? 'Aggregating' : 'Portfolio'}</button>` : '';
-    bar.innerHTML = `<button class="ghost sm" data-a="receive">Receive</button>${aggBtn}${scanBtn}<button class="ghost sm" data-a="activity">⧗ Activity</button><button class="ghost sm" data-a="coincontrol">Coin Control</button>`;
+    bar.innerHTML = `<button class="ghost sm" id="dappsBtn" title="Open the tools panel">☰ Tools</button>${aggBtn}${scanBtn}<button class="ghost sm" data-a="activity">⧗ Activity</button>`;
     bar.querySelectorAll('[data-a]').forEach((b) => (b.onclick = () => {
       const act = b.dataset.a;
-      if (act === 'receive') hwReceive();
-      else if (act === 'aggregate') { hwAggregate = !hwAggregate; hwViewAddr = null; hwViewIndex = null; DASH_ASSETS = null; renderHardware(); }
+      if (act === 'aggregate') { hwAggregate = !hwAggregate; hwViewAddr = null; hwViewIndex = null; DASH_ASSETS = null; renderHardware(); }
       else if (act === 'scan') hwScanAddrs();
       else if (act === 'activity') openActivity(addr);
-      else if (window.CoinControl) window.CoinControl.open(addr);
     }));
+    const dbtn = bar.querySelector('#dappsBtn'); if (dbtn) dbtn.onclick = () => window.DappDashboard && window.DappDashboard.toggle();
     if (agg) hwLoadAggregate(bt);
     else { loadPortfolio(null); loadDashAssets(null); } // activeAddr() returns the Ledger address for the hardware kind
   }
@@ -1419,6 +1437,24 @@
     DASH_ASSETS = res; renderDashAssets(acc);
   }
 
+  // ── Asset favorites (star / pin). Stored per-origin in localStorage ww:fav (auto-captured by Backup). ──
+  function favKey(t) {
+    if (!t) return '';
+    if (t.stamp != null) return 'st:' + t.stamp;                                              // Bitcoin Stamp
+    if (t.kind === 'name') return 'nm:' + String(t.name || t.title).toUpperCase();             // .btc name
+    if (t.contract) return 'e:' + String(t.contract).toLowerCase() + ':' + (t.tokenId != null ? t.tokenId : ''); // ETH NFT
+    if (t.id) return 'so:' + String(t.id);                                                     // SOL NFT
+    if (t.tick || t.kind === 'src20' || t.src20) return 's:' + String(t.tick || t.name).toUpperCase();
+    if (t.asset) return 'c:' + String(t.asset).toUpperCase();
+    if (t.address) return 'e:' + String(t.address).toLowerCase();
+    return 'n:' + String(t.name || t.title || '').toUpperCase();
+  }
+  function loadFavs() { try { return new Set(JSON.parse(localStorage.getItem('ww:fav') || '[]')); } catch (_) { return new Set(); } }
+  function isFav(t) { return loadFavs().has(favKey(t)); }
+  function toggleFav(t) { const s = loadFavs(), k = favKey(t); if (s.has(k)) s.delete(k); else s.add(k); try { localStorage.setItem('ww:fav', JSON.stringify([...s])); } catch (_) {} return s.has(k); }
+  const FAV_STAR = '★';
+  const abbrevQty = (q) => { const n = Number(q); if (!isFinite(n)) return String(q); if (n >= 1e9) return +(n / 1e9).toFixed(1) + 'B'; if (n >= 1e6) return +(n / 1e6).toFixed(1) + 'M'; return n.toLocaleString('en-US'); }; // full up to 999,999, then M/B
+
   function renderDashAssets(acc) {
     DASH_ACC = acc; // cache for privacy-toggle repaint
     const chip = $('#pnameChip');
@@ -1432,6 +1468,8 @@
     if (!DASH_ASSETS) { box.innerHTML = '<div class="fine">Loading…</div>'; return; }
     if (dashTab === 'tokens') {
       if (!DASH_ASSETS.tokens.length) { box.innerHTML = `<div class="dash-empty">No tokens on this ${esc(DCH[dashChain].name)} address.</div>`; return; }
+      const favs = loadFavs();
+      DASH_ASSETS.tokens.sort((a, b) => (favs.has(favKey(b)) ? 1 : 0) - (favs.has(favKey(a)) ? 1 : 0)); // favorites pinned on top (stable sort keeps the rest)
       const nTok = DASH_ASSETS.tokens.length;
       box.innerHTML = `<div class="tok-grid-wrap" style="max-height:430px;overflow-y:auto;padding-right:2px">
         <div class="tok-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px">${DASH_ASSETS.tokens.map((t, i) => {
@@ -1441,7 +1479,7 @@
         const act = ((acc || acctKind === 'connected') && t.kind === 'src20') ? `<button class="mini" data-send="${i}">Send</button>` : (t.kind === 'cp' ? (acctKind === 'connected' ? `<button class="mini" data-cpsend="${i}">Send</button>` : `<button class="mini" data-cp="${i}">View</button>`) : '');
         const nameAttr = t.kind === 'cp' ? ` data-cprow="${i}" title="View asset" style="cursor:pointer;display:flex;align-items:center;gap:8px;flex:1;min-width:0"` : ` style="display:flex;align-items:center;gap:8px;flex:1;min-width:0"`;
         return `<div class="tok-cell" style="background:var(--surface2,#17131f);border:1px solid var(--border,#2a2436);border-radius:9px;padding:8px 10px;min-width:0">
-          <div style="display:flex;align-items:center;gap:8px"><span${nameAttr}>${ic}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.name)}</span></span>${act}</div>
+          <div style="display:flex;align-items:center;gap:6px"><button class="fav-star${favs.has(favKey(t)) ? ' on' : ''}" data-fav="${i}" title="Pin favorite">${FAV_STAR}</button><span${nameAttr}>${ic}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.name)}</span></span>${act}</div>
           <div class="at-amt" style="font-weight:600;font-size:13px;margin-top:4px;word-break:break-all;opacity:.92">${esc(mask(String(t.amount)))}</div></div>`;
       }).join('')}</div></div>
         ${nTok > 20 ? `<button class="ghost sm" id="tokExpand" style="margin-top:8px;width:100%">Show all ${nTok}</button>` : ''}`;
@@ -1457,6 +1495,7 @@
         }
         if (window.MintingModules) window.MintingModules.sendSrc20(acc.account, assetFrom, t.tick);
       }));
+      box.querySelectorAll('[data-fav]').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); const t = DASH_ASSETS.tokens[+b.dataset.fav]; if (!t) return; toggleFav(t); renderDashAssets(acc); }));
       const openCp = (i) => { const t = DASH_ASSETS.tokens[+i]; if (t) cpTokenDetailModal(t, acc); };
       box.querySelectorAll('[data-cp]').forEach((b) => (b.onclick = () => openCp(b.dataset.cp)));
       box.querySelectorAll('[data-cprow]').forEach((el) => (el.onclick = () => openCp(el.dataset.cprow)));
@@ -1473,11 +1512,14 @@
       });
     } else {
       if (!DASH_ASSETS.collectibles.length) { box.innerHTML = `<div class="dash-empty">${esc(DASH_ASSETS.note || ('No collectibles on this ' + DCH[dashChain].name + ' address.'))}</div>`; return; }
+      const cfavs = loadFavs();
+      DASH_ASSETS.collectibles.sort((a, b) => (cfavs.has(favKey(b)) ? 1 : 0) - (cfavs.has(favKey(a)) ? 1 : 0)); // favorites pinned on top
       box.innerHTML = `<div class="dash-nft-grid">${DASH_ASSETS.collectibles.map((n, i) => {
         const nameCls = n.kind === 'name' ? ' dnft-name' : '';
         const ph = n.kind === 'name' ? `<span class="dnft-ph name-ph">${esc((n.name || '').replace('.btc', ''))}<small>.btc</small></span>` : '<span class="dnft-ph"></span>';
         const star = n.kind === 'name' && n.primary ? `<span class="dnft-star" title="Primary name">${STAR}</span>` : '';
-        const qb = (n.qty != null && n.qty > 1) ? `<span class="dnft-qty" title="You hold ${esc(String(n.qty))}">×${esc(String(n.qty))}</span>` : '';
+        const favB = `<button class="dnft-fav${cfavs.has(favKey(n)) ? ' on' : ''}" data-fav="${i}" title="Pin favorite">${FAV_STAR}</button>`;
+        const qtyTag = (n.qty != null && n.qty > 1) ? `<span class="dnft-tqty" title="You hold ${esc(String(n.qty))}">×${esc(abbrevQty(n.qty))}</span>` : '';
         // Render by MIME, not by load failure: only genuine HTML / recursive stamps get the iframe + HTML
         // badge. Image stamps use <img>; a slow/errored image falls back to a neutral "couldn't load" state.
         const isHtmlStamp = n.stamp != null && n.mime && /html|javascript|text\//i.test(n.mime);
@@ -1488,8 +1530,9 @@
         } else if (n.img) {
           media = `<img loading="lazy"${n.stamp != null ? ` data-stamperr="${esc(String(n.stamp))}"` : ''} src="${esc(n.img)}"/>`;
         }
-        return `<div class="dnft${nameCls}" data-i="${i}" title="${esc(n.title)}${n.qty != null ? ' · you hold ' + esc(String(n.qty)) : ''}">${star}${qb}${media}${badge}<span class="dnft-t">${n.compressed ? 'c·' : ''}${esc(n.title)}</span></div>`;
+        return `<div class="dnft${nameCls}" data-i="${i}" title="${esc(n.title)}${n.qty != null ? ' · you hold ' + esc(String(n.qty)) : ''}">${favB}${star}${media}${badge}<div class="dnft-t"><span class="dnft-tnum">${n.compressed ? 'c·' : ''}${esc(n.title)}</span>${qtyTag}</div></div>`;
       }).join('')}</div>`;
+      box.querySelectorAll('.dnft-fav[data-fav]').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); const n = DASH_ASSETS.collectibles[+b.dataset.fav]; if (!n) return; toggleFav(n); renderDashAssets(acc); }));
       box.querySelectorAll('.dnft').forEach((cell) => (cell.onclick = () => { const n = DASH_ASSETS.collectibles[+cell.dataset.i]; if (!n) return; if (n.kind === 'name') nameDetailModal(n, acc); else if (n.stamp != null) stampDetailModal(n, acc); else nftDetailModal(n, acc); }));
       // Image stamp failed: auto-retry once (slow/transient upstream), then a neutral "couldn't load"
       // placeholder — never mislabel a broken image as an HTML stamp.
@@ -1562,7 +1605,7 @@
       const cpid = s.cpid || n.cpid || '';
       const stampNo = s.stamp != null ? s.stamp : n.stamp;
       const isHtml = /html/i.test(s.mime || n.mime || '');
-      modal(`<h3 class="m-title">Stamp #${esc(String(stampNo))}</h3>
+      modal(`<h3 class="m-title"><button class="fav-star fav-title${isFav(n) ? ' on' : ''}" id="stampFav" title="Pin favorite">${FAV_STAR}</button> Stamp #${esc(String(stampNo))}</h3>
         <div class="stampd">
           ${isHtml
             ? `<iframe class="stampd-art stampd-frame" sandbox="allow-scripts" scrolling="no" src="api/stamp/${encodeURIComponent(n.stamp)}/content"></iframe>`
@@ -1589,6 +1632,7 @@
         <div class="wbtns"><button class="ghost" id="sdmClose">Close</button></div>`);
       const card = $('#wmodalCard');
       const cp = card.querySelector('[data-copy]'); if (cp) cp.onclick = () => copy(cp.dataset.copy);
+      const sfb = $('#stampFav'); if (sfb) sfb.onclick = () => { const on = toggleFav(n); sfb.classList.toggle('on', on); renderDashAssets(DASH_ACC); };
       $('#sdmClose').onclick = closeModal;
       if (acc || isConn()) card.querySelectorAll('.m-act').forEach((b) => (b.onclick = () => {
         const act = b.dataset.act; closeModal();
@@ -1626,7 +1670,7 @@
       const supplyDisp = info.supply != null ? (divisible ? info.supply / 1e8 : info.supply) : null;
       const qd = divisible ? 8 : 0;
       const desc = info.description ? String(info.description).slice(0, 200) : '';
-      modal(`<h3 class="m-title">${esc(t.name || cpid)}</h3>
+      modal(`<h3 class="m-title"><button class="fav-star fav-title${isFav(t) ? ' on' : ''}" id="cpTokFav" title="Pin favorite">${FAV_STAR}</button> ${esc(t.name || cpid)}</h3>
         <div class="stampd">
           <img class="stampd-art" id="cpTokArt" loading="lazy" src="api/cp/assetimg/${encodeURIComponent(cpid)}?full=1" alt="${esc(t.name || cpid)}"/>
           ${desc ? `<div class="fine cp-desc" id="cpTokDesc" style="display:none;text-align:center;word-break:break-word">${esc(desc)}</div>` : ''}
@@ -1653,6 +1697,7 @@
       const art = $('#cpTokArt'), dsc = $('#cpTokDesc');
       if (art) { const fail = () => { try { art.remove(); } catch (e) {} if (dsc) dsc.style.display = ''; }; art.onerror = fail; if (art.complete && !art.naturalWidth) fail(); }
       const cp = card.querySelector('[data-copy]'); if (cp) cp.onclick = () => copy(cp.dataset.copy);
+      const fvb = $('#cpTokFav'); if (fvb) fvb.onclick = () => { const on = toggleFav(t); fvb.classList.toggle('on', on); renderDashAssets(DASH_ACC); };
       $('#ctmClose').onclick = closeModal;
       if (acc || isConn()) card.querySelectorAll('.m-act').forEach((b) => (b.onclick = () => {
         const act = b.dataset.act; closeModal();
@@ -1705,6 +1750,7 @@
       <label class="cpf"><span>Recipient ${isEth ? '(0x…)' : 'address'}</span><input id="nfsTo" class="m-in" spellcheck="false" autocomplete="off"/></label>
       <div id="nfsStatus" class="statusline" hidden></div>
       <div class="wbtns"><button class="ghost" id="nfsBack">Back</button><button class="primary" id="nfsReview">Review</button></div>`);
+    if (window.WonderBook) WonderBook.attach($('#nfsTo'), isEth ? 'eth' : 'sol');
     $('#nfsBack').onclick = () => nftDetailModal(n, acc);
     $('#nfsReview').onclick = async () => {
       const s = $('#nfsStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = isEth ? 'Preparing & signing…' : 'Building & signing…';
@@ -1792,7 +1838,7 @@
     bar.style.display = ''; wireBar();
   }
   function dashAction(a, acc) {
-    if (a === 'send') { if (dashChain === 'btc') flowSend(acc); else if (dashChain === 'eth') window.EvmActions && window.EvmActions.open(acc.account, acc.ethereum.address, 'ethereum'); else window.SolActions && window.SolActions.open(acc.account, acc.solana.address); }
+    if (a === 'send') { if (acctKind === 'connected') return renderConnectedSend(); if (dashChain === 'btc') flowSend(acc); else if (dashChain === 'eth') window.EvmActions && window.EvmActions.open(acc.account, acc.ethereum.address, 'ethereum'); else window.SolActions && window.SolActions.open(acc.account, acc.solana.address); }
     else if (a === 'receive') receiveView(acc);
     else if (a === 'cp') window.CpActions && window.CpActions.open(acc.account, acctKind === 'imported' ? impBtcAddr() : acctBtcAddr(acc));
     else if (a === 'coincontrol') window.CoinControl && window.CoinControl.open(acctKind === 'imported' ? impBtcAddr() : acctBtcAddr(acc));
@@ -1808,7 +1854,7 @@
     const addr = acctKind === 'imported' ? impBtcAddr() : activeAddr(acc, ch);
     if (!addr) return;
     const url = window.qrcode ? qrUrl(addr) : null;
-    const typeLabel = ch === 'btc' ? (BTC_LABEL[curBtcType()] || '') + ' · ' : '';
+    const typeLabel = ch === 'btc' ? (BTC_LABEL[acctKind === 'connected' ? connBtcType(addr) : curBtcType()] || '') + ' · ' : '';
     const COPY_IC = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
     // No button row — the corner ✕ closes; tap/click the address to copy (icon reveals on hover, confirms on tap).
     modal(`<h3 class="m-title">Receive ${esc(DCH[ch].sym)}</h3>
@@ -2155,6 +2201,7 @@
     let resolvedName = null;
     const RE_ADDR = /^(bc1[a-z0-9]{8,87}|[13][a-km-zA-HJ-NP-Z1-9]{25,39})$/;
     const RE_DOTBTC = /^[a-z0-9][a-z0-9._-]{0,62}\.btc$/i;
+    if (window.WonderBook) WonderBook.attach($('#sTo'), 'btc');
     $('#sTo').oninput = () => {
       clearTimeout(_dispT); dispPromise = null; // recipient changed → any prior dispenser promise is stale
       const panel = $('#dispPanel'), nr = $('#nameResolve');

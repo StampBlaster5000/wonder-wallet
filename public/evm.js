@@ -60,6 +60,7 @@
       <div id="evStatus" class="statusline" hidden></div>
       <div class="wbtns"><button class="ghost" id="evBack">Back</button><button class="primary" id="evReview">Review</button></div>`);
     $('#evBack').onclick = render;
+    if (window.WonderBook) WonderBook.attach($('#evTo'), 'eth');
     $('#evReview').onclick = async () => {
       const s = $('#evStatus'); s.hidden = false; s.className = 'statusline load'; s.textContent = 'Preparing & signing…';
       try {

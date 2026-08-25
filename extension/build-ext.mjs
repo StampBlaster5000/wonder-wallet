@@ -28,6 +28,9 @@ const MODULES = [
   // extension — the extension is a self-contained wallet with no external-site launching. The full dApp
   // dashboard lives on the web Terminal (wonder-wallet.com). (Chrome "single-purpose launcher" hygiene.)
   'hardware-ui.js', 'minting.js', 'src101.js', 'backup.js', 'wallet-ui.js', 'topbar.js',
+  // Counterparty Market (swap/liquidity/limit/dispense) + XCP-69 launchpad, ported into the popup.
+  // Self-contained IIFEs; they ride the shared compose→verify→sign pipeline (WonderCpFlow + WonderVerify).
+  'verifier.js', 'wwfee.js', 'xcp69.js', 'cp-flow.js', 'markets.js', 'xcp-launch.js',
 ];
 for (const m of MODULES) copyFileSync(join(PUB, m), join(DIST, m));
 if (existsSync(join(PUB, 'shots'))) for (const f of readdirSync(join(PUB, 'shots'))) copyFileSync(join(PUB, 'shots', f), join(DIST, 'shots', f));

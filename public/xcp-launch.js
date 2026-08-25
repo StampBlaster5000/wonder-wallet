@@ -14,6 +14,7 @@
     $('#lpCard').innerHTML = html; m.hidden = false; return $('#lpCard');
   }
   const close = () => { const m = $('#lpModal'); if (m) m.hidden = true; };
+  let ONBACK = null; // optional caller-supplied "‹ Back" handler (set by open); e.g. the extension's Fairmint hub
 
   const PHASES = [
     { key: 'open', tab: 'Minting', empty: 'No live mints right now.' },
@@ -23,6 +24,47 @@
   let CUR = 'open';
   const CACHE = {};
   const BYTX = {}; // tx_hash → fairminter row, so a card click can open the full launch
+
+  // Live-analytics state + formatters (block tip drives deadline timeframes; XCP/USD prices the raise).
+  let TIP = 0, XCPUSD = 0;
+  // Per-phase sort — each tab keeps its own choice; the options that make sense differ by phase.
+  const SORTBY = { open: 'progress', pending: 'soon', closed: 'new' };
+  const SORTS = {
+    open: [['progress', 'Minting out'], ['deadline', 'Ends soon'], ['new', 'New']],
+    pending: [['soon', 'Mints soon'], ['later', 'Mints later'], ['new', 'New']],
+    closed: [['new', 'Newest'], ['old', 'Oldest']],
+  };
+  let GRADFILTER = 'graduated'; // Graduated tab filter: graduated (bonded, pool seeded) | failed (refunded) | all
+  // Bonded ⇔ the sale hit its soft cap; a closed launch below soft cap refunded every minter.
+  const isBonded = (fm) => { const xr = X(); return xr.big(fm.earned_quantity || '0') >= xr.big(fm.soft_cap); };
+  const kfmt = (n) => { const v = Number(n); if (!isFinite(v)) return '—'; if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B'; if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M'; if (v >= 1e3) return (v / 1e3).toFixed(1) + 'k'; return v.toLocaleString('en-US', { maximumFractionDigits: 2 }); };
+  const short = (a) => (a ? a.slice(0, 6) + '…' + a.slice(-4) : '—');
+  const dstr = (t) => { try { return new Date(Number(t) * 1000).toISOString().slice(0, 10); } catch (_) { return ''; } };
+  const blocksToDur = (blocks) => { if (!isFinite(blocks) || blocks <= 0) return null; const mins = blocks * 10, d = Math.floor(mins / 1440), h = Math.floor((mins % 1440) / 60); return d > 0 ? d + 'd' + (h ? ' ' + h + 'h' : '') : h > 0 ? h + 'h' : Math.max(1, Math.round(mins)) + 'm'; };
+  const raisedNum = (fm) => Number(X().fromSats(fm.paid_quantity || '0', true)) || 0;
+  const raisedTxt = (fm) => { const v = raisedNum(fm); return kfmt(v) + ' XCP' + (XCPUSD ? ' · $' + kfmt(v * XCPUSD) : ''); };
+  function deadlineTxt(fm) {
+    if (fm.status === 'pending') { const left = TIP ? fm.start_block - TIP : null, t = blocksToDur(left); return 'starts blk ' + fm.start_block + (t ? ' · ~' + t : ''); }
+    if (fm.status !== 'open') return 'closed';
+    const dl = fm.soft_cap_deadline_block, left = TIP ? dl - TIP : null, t = blocksToDur(left);
+    return left != null && left <= 0 ? 'deadline passed · blk ' + dl : 'ends ~' + (t || '?') + ' · blk ' + dl;
+  }
+  async function loadMeta() {
+    if (!TIP) { try { const st = await fetch('api/status').then((r) => r.json()); TIP = (st.cp && st.cp.height) || (st.btc && st.btc.height) || 0; } catch (_) {} }
+    if (!XCPUSD) { try { const pr = await fetch('api/prices').then((r) => r.json()); XCPUSD = Number(pr && pr.counterparty) || 0; } catch (_) {} }
+  }
+  function sortList(list) {
+    const xr = X(), arr = list.slice(), key = SORTBY[CUR] || 'new';
+    switch (key) {
+      case 'progress': arr.sort((a, b) => xr.progress(b).pct - xr.progress(a).pct); break;
+      case 'deadline': arr.sort((a, b) => (a.soft_cap_deadline_block || 9e12) - (b.soft_cap_deadline_block || 9e12)); break;
+      case 'soon': arr.sort((a, b) => (a.start_block || 9e12) - (b.start_block || 9e12)); break; // scheduled to mint soonest first
+      case 'later': arr.sort((a, b) => (b.start_block || 0) - (a.start_block || 0)); break;
+      case 'old': arr.sort((a, b) => (a.block_index || 0) - (b.block_index || 0)); break;
+      default: arr.sort((a, b) => (b.block_index || 0) - (a.block_index || 0)); // 'new'
+    }
+    return arr;
+  }
 
   async function launches(status) {
     if (CACHE[status]) return CACHE[status];
@@ -43,29 +85,40 @@
     const name = esc(fm.asset_longname || fm.asset);
     const p = xr.progress(fm);
     const pctText = p.pct ? p.pct.toFixed(1) + '%' : '—';
-    const sub = CUR === 'pending' ? ('starts at block ' + esc(fm.start_block))
-      : CUR === 'closed' ? 'closed'
+    const sub = CUR === 'pending' ? deadlineTxt(fm)
+      : CUR === 'closed' ? (isBonded(fm) ? 'graduated · pool seeded ✓' : 'failed · XCP refunded')
       : (p.pct >= 100 ? 'sold out — graduating' : pctText + ' of the 69M sale');
+    const metaLine = CUR === 'open'
+      ? `<div class="lp-meta"><span>${esc(raisedTxt(fm))} raised</span><span>${esc(deadlineTxt(fm))}</span></div>` : '';
+    const bar = CUR === 'pending' ? '' : `<div class="lp-bar"><span style="width:${Math.max(1, Math.min(100, p.pct))}%"></span></div>`;
     return `<button class="lp-item" data-tx="${esc(fm.tx_hash)}" title="${name}">
       <div class="lp-row"><span class="lp-name">${name}</span><span class="lp-pct">${CUR === 'open' ? esc(pctText) : ''}</span></div>
-      <div class="lp-bar"><span style="width:${Math.max(1, Math.min(100, p.pct))}%"></span></div>
-      <div class="lp-sub">${esc(sub)}</div></button>`;
+      ${bar}
+      <div class="lp-sub">${esc(sub)}</div>${metaLine}</button>`;
   }
 
   async function render() {
-    modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">XCP-69 · fair launches</h3>
+    modal(`<div class="cc-head">${ONBACK ? '<button class="p-ibtn" id="lpBackTop" title="Back">←</button>' : ''}<div style="flex:1;min-width:0"><h3 class="m-title" style="margin:0">XCP-69 · fair launches</h3>
         <div class="cp-addr">100M supply · 69M public sale · 69-minter fair mint — self-custodial, on Counterparty</div></div>
-      <div class="cc-head-r"><button class="ghost sm" id="lpCreate">＋ Create</button><button class="mini" id="lpX">Close</button></div></div>
+      <div class="cc-head-r"><button class="m-close-x" id="lpX" title="Close" aria-label="Close">✕</button></div></div>
+      <div class="lp-createrow"><button class="ghost sm" id="lpCreate">＋ Create</button></div>
       <div class="lp-tabs">${PHASES.map((ph) => `<button class="lp-tab${ph.key === CUR ? ' on' : ''}" data-ph="${ph.key}">${ph.tab}</button>`).join('')}</div>
+      <div class="lp-sort" id="lpSort">${(SORTS[CUR] || []).map(([k, l]) => `<button class="mini${SORTBY[CUR] === k ? ' on' : ''}" data-sort="${k}">${l}</button>`).join('')}</div>
+      ${CUR === 'closed' ? `<div class="lp-sort" id="lpFilter">${[['graduated', 'Graduated'], ['failed', 'Failed'], ['all', 'All']].map(([k, l]) => `<button class="mini${GRADFILTER === k ? ' on' : ''}" data-filter="${k}">${l}</button>`).join('')}</div>` : ''}
       <div id="lpBody" class="lp-body"><div class="statusline load">Loading launches…</div></div>
       <div class="fine" style="margin-top:8px">Conformance verified against the XCP-69 standard in your browser — fixed terms, no premine, pre-announced.</div>`);
     $('#lpX').onclick = close;
+    { const lb = $('#lpBackTop'); if (lb) lb.onclick = () => { close(); if (ONBACK) ONBACK(); }; }
     const cr = $('#lpCreate'); if (cr) cr.onclick = openCreate;
     $('#lpCard').querySelectorAll('[data-ph]').forEach((b) => (b.onclick = () => { CUR = b.dataset.ph; render(); }));
-    const list = await launches(CUR);
+    $('#lpCard').querySelectorAll('[data-sort]').forEach((b) => (b.onclick = () => { SORTBY[CUR] = b.dataset.sort; render(); }));
+    $('#lpCard').querySelectorAll('[data-filter]').forEach((b) => (b.onclick = () => { GRADFILTER = b.dataset.filter; render(); }));
+    let [list] = await Promise.all([launches(CUR), loadMeta()]);
+    if (CUR === 'closed' && GRADFILTER !== 'all') list = list.filter((fm) => (GRADFILTER === 'graduated') === isBonded(fm));
     const body = $('#lpBody'); if (!body) return;
     const ph = PHASES.find((p) => p.key === CUR);
-    body.innerHTML = list.length ? list.map(card).join('') : `<div class="dash-empty">${esc(ph.empty)}</div>`;
+    const emptyMsg = (CUR === 'closed' && GRADFILTER !== 'all') ? `No ${GRADFILTER} launches.` : ph.empty;
+    body.innerHTML = list.length ? sortList(list).map(card).join('') : `<div class="dash-empty">${esc(emptyMsg)}</div>`;
     body.querySelectorAll('[data-tx]').forEach((b) => (b.onclick = () => openLaunch(BYTX[b.dataset.tx])));
   }
 
@@ -79,16 +132,23 @@
     modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">${name}</h3>
         <div class="cp-addr" id="lpConf">Verifying XCP-69 conformance…</div></div>
       <div class="cc-head-r"><button class="mini" id="lpBack">‹ Back</button></div></div>
-      <div class="m-grid">
-        <div><span class="k">Supply</span><span class="v">100,000,000</span></div>
-        <div><span class="k">Public sale</span><span class="v">69,000,000</span></div>
-        <div><span class="k">Price</span><span class="v">0.01 XCP / 1,000</span></div>
-        <div><span class="k">Per-address cap</span><span class="v">10 XCP</span></div>
+      <div class="lp-bar" style="margin:2px 0 7px"><span style="width:${Math.max(1, Math.min(100, p.pct))}%"></span></div>
+      <div class="lp-progline"><b>${p.pct.toFixed(1)}%</b> of the 69M sale minted${fm.status === 'pending' ? ` · scheduled for block ${esc(fm.start_block)}` : fm.status === 'closed' ? (isBonded(fm) ? ' · graduated · pool seeded ✓' : ' · failed · XCP refunded') : ''}</div>
+      <div class="lp-stats2">
+        <div class="lp-stat"><span>XCP raised</span><b>${esc(raisedTxt(fm))}</b></div>
+        <div class="lp-stat"><span>${fm.status === 'pending' ? 'Starts' : fm.status === 'open' ? 'Deadline' : 'Ended'}</span><b>${esc(deadlineTxt(fm))}</b></div>
+        <div class="lp-stat"><span>Minters</span><b id="lpMinters">…</b></div>
+        <div class="lp-stat"><span>Created</span><b>blk ${esc(String(fm.block_index))}${fm.block_time ? ' · ' + esc(dstr(fm.block_time)) : ''}</b></div>
+        <div class="lp-stat"><span>Deployer</span><b><a href="https://mempool.space/address/${esc(fm.source)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(short(fm.source))}</a></b></div>
       </div>
-      <div class="lp-bar" style="margin:12px 0 6px"><span style="width:${Math.max(1, Math.min(100, p.pct))}%"></span></div>
-      <div class="fine">${p.pct.toFixed(1)}% of the 69M sale minted${fm.status === 'pending' ? ` · scheduled for block ${esc(fm.start_block)}` : fm.status === 'closed' ? ' · closed' : ''}</div>
+      <div class="fine lp-terms">Fixed terms · 100M supply · 69M public sale · 0.01 XCP / 1,000 · 10 XCP per-address cap</div>
       <div id="lpMint" style="margin-top:14px"></div>`);
     $('#lpBack').onclick = () => render();
+    // Unique minters (participants) — meaningful mid-mint, since minted tokens sit in escrow (not yet "holders").
+    fetch('api/cp/fairminters/' + encodeURIComponent(fm.tx_hash) + '/mints').then((r) => r.json()).then((j) => {
+      const arr = j.result || [], uniq = new Set(arr.map((m) => m.source)); const el = $('#lpMinters');
+      if (el) el.textContent = uniq.size + (arr.length >= 200 ? '+' : '');
+    }).catch(() => { const el = $('#lpMinters'); if (el) el.textContent = '—'; });
     // full conformance (pre-announcement + original window) via the IMMUTABLE creation event
     fetch('api/cp/fairminter-event/' + encodeURIComponent(fm.tx_hash)).then((r) => r.json()).then((j) => {
       const ev = j.event || {}; const ok = xr.isXcp69(fm, { announceBlock: ev.block_index, originalDeadline: (ev.params && ev.params.soft_cap_deadline_block) || ev.soft_cap_deadline_block });
@@ -167,14 +227,14 @@
     try { const st = await fetch('api/status').then((r) => r.json()); CR.height = (st.btc && st.btc.height) || 0; } catch (_) {}
     try { const f = await fetch('api/btc/fees').then((r) => r.json()); CR.feeRate = f.halfHourFee || 6; } catch (_) {}
     const LEADS = [['~6h', 36], ['~1 day', 144], ['~3 days', 432]];
-    modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Create an XCP-69 launch</h3><div class="cp-addr">Fixed terms — 100M supply · 69M sale · 0.01 XCP/1,000 · 10 XCP cap · all-or-nothing</div></div><button class="mini" id="crX">Close</button></div>
+    modal(`<div class="lp-createform"><div class="cc-head"><div><h3 class="m-title" style="margin:0">Create an XCP-69 launch</h3><div class="cp-addr">Fixed terms — 100M supply · 69M sale · 0.01 XCP/1,000 · 10 XCP cap · all-or-nothing</div></div><button class="m-close-x" id="crX" title="Close" aria-label="Close">✕</button></div>
       <label class="cpf"><span>Token name</span><input id="crName" class="m-in" placeholder="MYTOKEN (4–12 letters, not starting with A)" maxlength="12" spellcheck="false" autocapitalize="characters"/></label>
       <label class="cpf"><span>Info URL <span class="fine">(optional — image + metadata JSON)</span></span><input id="crDesc" class="m-in" placeholder="https://…/MYTOKEN.json" spellcheck="false"/></label>
       <div class="cpf"><span>Pre-announce &amp; start in</span><div class="lp-presets" id="crLead">${LEADS.map(([l, n]) => `<button class="mini${n === CR.lead ? ' on' : ''}" data-lead="${n}">${l}</button>`).join('')}</div></div>
       <div class="fine" id="crSched"></div>
       <div class="fine" style="margin-top:6px">Costs 0.5 XCP name registration + a pool-deposit gas fee (prepaid) + a Bitcoin miner fee. You receive <b>none</b> of the 690 XCP raise — it all seeds the permanently-locked pool.</div>
       <div id="crStatus" class="statusline" hidden></div>
-      <div class="wbtns"><button class="ghost" id="crBack">Back</button><button class="primary" id="crGo">Review launch</button></div>`);
+      <div class="wbtns"><button class="ghost" id="crBack">Back</button><button class="primary" id="crGo">Review launch</button></div></div>`);
     $('#crX').onclick = close; $('#crBack').onclick = () => render();
     const sched = () => { const start = CR.height + CR.lead; const el = $('#crSched'); if (el) el.innerHTML = `Starts at block <b>${start}</b> (now ${CR.height}) · ~7-day mint window · deadline block ${start + 1000}`; };
     $('#lpCard').querySelectorAll('[data-lead]').forEach((b) => (b.onclick = () => { CR.lead = Number(b.dataset.lead); $('#lpCard').querySelectorAll('[data-lead]').forEach((x) => x.classList.toggle('on', x === b)); sched(); }));
@@ -225,5 +285,5 @@
     }
   }
 
-  window.WonderLaunchpad = { open: () => { CUR = 'open'; render(); }, openLaunch, openCreate };
+  window.WonderLaunchpad = { open: (opts) => { ONBACK = (opts && opts.onBack) || null; CUR = 'open'; render(); }, openLaunch, openCreate };
 })();

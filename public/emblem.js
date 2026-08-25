@@ -10,6 +10,7 @@
   const short = (a) => (a && a.length > 16 ? a.slice(0, 8) + '…' + a.slice(-6) : a);
 
   let ACCOUNT = 0, ETH = null, BTC = null, ASSET_CTX = null, LAST_VAULTS = [];
+  let ONBACK = null; // optional caller-supplied "‹ Back" handler (set by open); e.g. the extension's Advanced Tools
 
   // Persist created-but-unminted vaults locally so the BTC deposit address is NEVER lost
   // if the window closes or the user lacks ETH to mint right away. (The address is also
@@ -57,15 +58,23 @@
   function close() { const m = $('#embmodal'); if (m) m.hidden = true; if (window.DappDashboard && window.DappDashboard.returnToHub) window.DappDashboard.returnToHub(); }
   async function copy(t, b) { try { await navigator.clipboard.writeText(t); if (b) { const o = b.textContent; b.textContent = 'copied ✓'; setTimeout(() => (b.textContent = o), 1200); } } catch (_) {} }
 
-  async function open(account, ethAddress, btcAddress, startTab) {
+  async function open(account, ethAddress, btcAddress, startTab, opts) {
     ACCOUNT = account; ETH = ethAddress; BTC = btcAddress;
+    ONBACK = (opts && opts.onBack) || null;
     if (startTab !== 'wrap') ASSET_CTX = null; // generic open clears asset scope; vaultAsset keeps it
     const onWrap = startTab === 'wrap';
-    modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Emblem Vault bridge</h3>
-      <div class="cp-addr">Vaults owned by ${esc(ethAddress)}</div></div><button class="mini" id="embx">${exitLabel()}</button></div>
+    // When a caller supplies onBack (e.g. the extension's Advanced Tools) show a ‹ Back + ✕ pair;
+    // otherwise keep the single mini exit ('‹ Dashboard' from the dApp hub, else 'Close').
+    const backBtn = ONBACK ? `<button class="p-ibtn" id="embBack" title="Back">←</button>` : '';
+    const headR = ONBACK
+      ? `<button class="m-close-x" id="embx" title="Close" aria-label="Close">✕</button>`
+      : `<button class="mini" id="embx">${exitLabel()}</button>`;
+    modal(`<div class="cc-head">${backBtn}<div style="flex:1;min-width:0"><h3 class="m-title" style="margin:0">Emblem Vault bridge</h3>
+      <div class="cp-addr">Vaults owned by ${esc(ethAddress)}</div></div>${headR}</div>
       <div class="cp-filters" style="margin:6px 0 12px"><button class="ccf ${onWrap ? '' : 'on'}" id="tabVaults">My Vaults</button><button class="ccf ${onWrap ? 'on' : ''}" id="tabWrap">Vault an asset</button></div>
       <div id="embBody"><div class="statusline load">Loading…</div></div>`);
     $('#embx').onclick = close;
+    { const eb = $('#embBack'); if (eb) eb.onclick = () => { close(); if (ONBACK) ONBACK(); }; }
     $('#tabVaults').onclick = myVaults;
     $('#tabWrap').onclick = wrapStart;
     onWrap ? wrapStart() : myVaults();

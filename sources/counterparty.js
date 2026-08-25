@@ -88,19 +88,22 @@ async function getAsset(asset) {
   const key = `cp:asset:${asset}`;
   const hit = cacheGet(key);
   if (hit) return hit;
-  const data = await fetchJson(`${base()}/assets/${encodeURIComponent(asset)}`);
+  const data = await fetchJson(`${base()}/assets/${encodeURIComponent(asset)}?verbose=true`);
   const a = data.result || data;
   const out = {
     asset: a.asset,
+    assetId: a.asset_id != null ? String(a.asset_id) : null,
     name: a.asset_longname || a.asset,
     issuer: a.issuer,
     owner: a.owner,
     divisible: !!a.divisible,
     locked: !!a.locked,
     supply: Number(a.supply),
+    supplyNorm: a.supply_normalized != null ? String(a.supply_normalized) : null,
     description: a.description || '',
     mimeType: a.mime_type || null,
     firstIssuance: a.first_issuance_block_index || null,
+    firstIssuanceTime: a.first_issuance_block_time || null,
   };
   cacheSet(key, out, 120_000);
   return out;

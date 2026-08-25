@@ -29,11 +29,10 @@
   const GROUPS = [
     { chain: 'Bitcoin · Counterparty', tools: [
       { ic: ICON.swap, name: 'Counterparty actions', desc: 'Send · Sweep · MPMA · Dispenser · Dividend', act: 'cp', accent: true },
-      { ic: ICON.chart, name: 'Counterparty DEX', desc: 'Trustless on-chain order book', act: 'dex' },
       { ic: ICON.plus, name: 'Issuance suite', desc: 'Create · issue · lock · transfer · subassets', act: 'issuance' },
       { ic: ICON.link, name: 'Attach / Detach', desc: 'Bind CP assets to a UTXO or release', act: 'attachdetach' },
       { ic: ICON.gift, name: 'Fairmint', desc: 'Fair-mint pools · XCP-69 launches', act: 'fairminter' },
-      { ic: ICON.market, name: 'Market', desc: 'AMM swap · liquidity · dispensers', act: 'market' },
+      { ic: ICON.market, name: 'Market', desc: 'Swap · liquidity · limit orders (DEX) · dispensers', act: 'market' },
     ] },
     { chain: 'Stampchain', tools: [
       { ic: ICON.token, name: 'SRC-20 deploy / mint', desc: 'Deploy & mint SRC-20 tokens', act: 'src20' },
@@ -47,10 +46,10 @@
 
   // Tools that support a CONNECTED external wallet (compose here, the wallet signs via its provider).
   // The rest (SRC-20 / Stamps art minting, Bitname, Emblem bridge) need a local signing account.
-  const CONN_OK = new Set(['cp', 'dex', 'issuance', 'attachdetach', 'fairminter']);
+  const CONN_OK = new Set(['cp', 'market', 'issuance', 'attachdetach', 'fairminter']);
   // Tools a connected wallet / Ledger can sign (compose here → external signer → broadcast): the CP
   // suite plus SRC-20 and Stamps-art minting (both compose a PSBT the same audited way).
-  const EXT_OK = new Set(['cp', 'dex', 'issuance', 'attachdetach', 'fairminter', 'src20', 'stampart']);
+  const EXT_OK = new Set(['cp', 'market', 'issuance', 'attachdetach', 'fairminter', 'src20', 'stampart']);
   const NAME = {}; GROUPS.forEach((g) => g.tools.forEach((t) => { NAME[t.act] = t.name; }));
 
   let collapsed = false;
@@ -243,7 +242,7 @@
     if (isMobile()) closeDrawer();
     const CA = window.CpActions, MM = window.MintingModules;
     if ((act === 'cp' || act === 'fairminter') && CA) CA.openConnected(conn);
-    else if (act === 'dex' && CA) CA.dexConnected(conn);
+    else if (act === 'market' && window.WonderMarket) window.WonderMarket.open(); // connected → Market signs via the paired wallet (WonderCpFlow)
     else if (act === 'issuance' && CA) CA.issuanceSuiteConnected(conn);
     else if (act === 'attachdetach' && CA) CA.attachDetachConnected(conn);
     else if (act === 'src20' && MM && MM.src20Connected) MM.src20Connected(conn);

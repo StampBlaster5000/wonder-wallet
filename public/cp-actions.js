@@ -260,6 +260,8 @@
     const df = a.fields.find((f) => f.divInfo);
     if (df) wireDivHint(df);
     if (a.fields.find((f) => f.dispDetect)) wireDispense();
+    // Address book on single-destination fields (send / dividend recipient / dispenser dest / sweep etc.).
+    if (window.WonderBook) $('#cpCard').querySelectorAll('[data-k="destination"], [data-k="transfer_destination"]').forEach((el) => window.WonderBook.attach(el, 'btc'));
   }
 
   // Trigger-dispense helper — mirrors the Send tool: when the user types a dispenser address, detect

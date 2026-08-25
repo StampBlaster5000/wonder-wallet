@@ -9,13 +9,16 @@
   const acct = () => window.__activeAccount;
   const srcAddr = (a) => (a && (a.btcAddress || (a.bitcoin && a.bitcoin.nativeSegwit && a.bitcoin.nativeSegwit.address))) || null;
   const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
+  const b64hex = (b) => { const bin = atob(b); let h = ''; for (let i = 0; i < bin.length; i++) h += (bin.charCodeAt(i) & 0xff).toString(16).padStart(2, '0'); return h; };
+  const conn = () => window.__connectedWallet || null; // a connected external wallet {address,name,signPsbt,pushPsbt}
+  // The active signing source: a connected external wallet's address if one is paired, else the local account.
+  const activeSource = () => { const cw = conn(); return cw ? cw.address : srcAddr(acct()); };
 
   // Compose a Counterparty tx and run it through the fail-closed verifier. Returns { compose, report,
   // source } on success; THROWS (friendly message) on compose or verification failure. Nothing is
   // signed here — the caller shows a confirm screen (with report → verify banner), then calls sign().
   async function composeVerify(type, params, intent) {
-    const a = acct(); if (!a) throw new Error('No local Wonder Wallet is open to sign this.');
-    const source = srcAddr(a); if (!source) throw new Error('No source Bitcoin address available.');
+    const source = activeSource(); if (!source) throw new Error('No wallet is open to sign this — open a Wonder Wallet or connect one.');
     const c = await post('api/cp/compose/' + type, { source, params });
     if (!c || c.error) throw new Error((c && (c.detail || c.error)) || 'Counterparty rejected the transaction.');
     if (!window.WonderVerify) throw new Error('Signing verifier unavailable — refusing to sign.');
@@ -39,8 +42,22 @@
     return { compose: c, report, source };
   }
 
-  // Sign a verified compose with the audited core signer and broadcast. Returns { txid }.
+  // Sign a verified compose and broadcast. Returns { txid }. Routes to a connected external wallet
+  // (UniSat/OKX/Wonder) when one is paired — it signs + finalizes; else the audited local core signer.
   async function sign(compose) {
+    const cw = conn();
+    if (cw && cw.signPsbt) {
+      const hex = /^[0-9a-fA-F]+$/.test(compose.psbt) ? compose.psbt : b64hex(compose.psbt);
+      const signed = await cw.signPsbt(hex, { autoFinalized: true });
+      if (signed && typeof signed === 'object' && signed.txhex) { // Wonder connected → finalized raw tx; broadcast via our server
+        const r = await post('api/btc/broadcast', { txhex: signed.txhex });
+        if (!r || r.error) throw new Error((r && (r.detail || r.error)) || 'Broadcast failed.');
+        return { txid: r.txid || signed.txid };
+      }
+      const signedStr = typeof signed === 'string' ? signed : (signed && (signed.psbt || signed.hex)) || hex;
+      const txid = await cw.pushPsbt(signedStr);
+      return { txid: typeof txid === 'string' ? txid : (txid && (txid.txid || txid.result)) || String(txid) };
+    }
     const a = acct(); if (!a) throw new Error('Wallet closed.');
     const btcType = a.btcType || 'nativeSegwit';
     let prevTxs = {};
@@ -55,5 +72,5 @@
     return { txid: r.txid };
   }
 
-  window.WonderCpFlow = { composeVerify, sign, srcAddr };
+  window.WonderCpFlow = { composeVerify, sign, srcAddr, activeSource };
 })();

@@ -52,7 +52,7 @@
   function open() {
     const c = counts(collectSettings());
     modal(`<h3 class="m-title">Backup &amp; Restore</h3>
-      <div class="warn" style="margin:8px 0 4px;border-color:#c0392b">⚠ <b>Handle with care — guard it with your life.</b> This is your <b>entire wallet</b> in one file: your seed (encrypted with your password) plus your watch-list, labels, UTXO freeze flags, favorites &amp; vault deposit addresses. Anyone who gets this file <b>and</b> your password can take your funds. Store it offline like your seed phrase — never in shared cloud, chat, or email.</div>
+      <div class="warn" style="margin:8px 0 4px;border-color:#c0392b">⚠ <b>Handle with care — guard it with your life.</b> This is your <b>entire wallet</b> in one file: your seed (encrypted with your password) plus your watch-list, labels, UTXO freeze flags, favorites, address book &amp; vault deposit addresses. Anyone who gets this file <b>and</b> your password can take your funds. Store it offline like your seed phrase — never in shared cloud, chat, or email.</div>
       <div class="m-grid" style="margin:10px 0">
         <div><span class="k">Seed &amp; keys</span><span class="v">included · encrypted 🔒</span></div>
         <div><span class="k">Watch addresses</span><span class="v">${c.watch}</span></div>
