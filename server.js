@@ -76,6 +76,27 @@ const PORT = process.env.PORT || 3000;
 const VERSION = '0.35.0';
 const PHASE = 'Beta';
 
+// ── Resilience & diagnostics ──────────────────────────────────────────────────────────────────
+// This is a STATELESS request/response proxy: it holds no server-side user data (self-custody is
+// all-local), so every request is independent. Previously a single uncaught error from a timer,
+// stream, or library dependency killed the whole process with NO diagnostic line (logs only ever
+// showed "Beta listening"), and because the host does not auto-restart a killed artifact, that meant
+// a multi-day silent outage. Log the full reason and keep serving — surviving is strictly better than
+// dying for a stateless proxy, and the logged stack tells us what to actually fix next time.
+process.on('unhandledRejection', (reason) => {
+  console.error(`[wonder-wallet] UNHANDLED REJECTION @ ${new Date().toISOString()}:`, (reason && reason.stack) || reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error(`[wonder-wallet] UNCAUGHT EXCEPTION @ ${new Date().toISOString()}:`, (err && err.stack) || err);
+});
+process.on('SIGTERM', () => { console.error(`[wonder-wallet] received SIGTERM @ ${new Date().toISOString()} — shutting down`); process.exit(0); });
+// Memory heartbeat: log RSS every 5 min so a slow leak is VISIBLE in the artifact logs before it trips
+// the host's OOM/watchdog kill (the likely cause of the prior signal-death on the shared 2–4 GB box).
+setInterval(() => {
+  const m = process.memoryUsage();
+  console.log(`[wonder-wallet] heartbeat rss=${Math.round(m.rss / 1048576)}MB heapUsed=${Math.round(m.heapUsed / 1048576)}MB @ ${new Date().toISOString()}`);
+}, 300_000).unref(); // unref so the timer never keeps the process alive on its own
+
 // Stateless proxy — Wonder Wallet holds NO user data server-side. All user state
 // (keys, watch-list, UTXO labels, settings) lives in the browser (localStorage / IndexedDB).
 
