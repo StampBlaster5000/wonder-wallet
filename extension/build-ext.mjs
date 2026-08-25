@@ -175,9 +175,15 @@ const { makeZip } = await import('./make-zip.mjs');
 // while the fixed-name zip stayed cached at the edge). status.js points the download at build-info.zip.
 const ZIP_NAME = 'wonder-wallet-extension-' + PKG.version + '.zip';
 const ZIP_OUT = join(PUB, ZIP_NAME);
-const z = makeZip(DIST, ZIP_OUT, 'wonder-wallet-extension'); // inner folder stays version-agnostic
+const z = makeZip(DIST, ZIP_OUT, 'wonder-wallet-extension'); // inner folder → for "Load unpacked" (unzip → pick folder)
 try { copyFileSync(ZIP_OUT, join(PUB, 'wonder-wallet-extension.zip')); } catch (_) {} // keep the legacy fixed name fresh too
 console.log('✓ repackaged ' + ZIP_OUT.replace(ROOT + '/', '') + ' (' + z.files + ' files, ' + Math.round(z.bytes / 1024) + ' KB)');
+// Chrome Web Store REQUIRES manifest.json at the ZIP ROOT — a wrapping folder is rejected ("Manifest
+// file is missing or unreadable"). So emit a SECOND, flat zip (no prefix) specifically for CWS uploads.
+const STORE_ZIP_NAME = 'wonder-wallet-extension-store-' + PKG.version + '.zip';
+const STORE_ZIP_OUT = join(PUB, STORE_ZIP_NAME);
+const sz = makeZip(DIST, STORE_ZIP_OUT, ''); // flat: manifest.json at root, for the Chrome Web Store
+console.log('✓ repackaged ' + STORE_ZIP_OUT.replace(ROOT + '/', '') + ' (store/flat, ' + sz.files + ' files, ' + Math.round(sz.bytes / 1024) + ' KB)');
 
 // 7. Stamp build-info.json so the site's "latest build" download shows the live version + freshness.
 //    WW-C01: publish the artifact's SHA-256 (so a downloader can verify the zip out-of-band) and record
@@ -188,6 +194,7 @@ let commit = '', dirty = false;
 try { commit = execSync('git rev-parse --short HEAD', { cwd: ROOT }).toString().trim(); } catch (_) {}
 try { dirty = execSync('git status --porcelain', { cwd: ROOT }).toString().trim().length > 0; } catch (_) {}
 const sha256 = createHash('sha256').update(readFileSync(ZIP_OUT)).digest('hex'); // checksum of the exact published zip
-writeFileSync(join(PUB, 'build-info.json'), JSON.stringify({ version: PKG.version, builtAt: new Date().toISOString(), commit, dirty, sha256, zip: ZIP_NAME }, null, 2) + '\n');
+const storeSha256 = createHash('sha256').update(readFileSync(STORE_ZIP_OUT)).digest('hex'); // checksum of the flat CWS zip
+writeFileSync(join(PUB, 'build-info.json'), JSON.stringify({ version: PKG.version, builtAt: new Date().toISOString(), commit, dirty, sha256, zip: ZIP_NAME, storeZip: STORE_ZIP_NAME, storeSha256 }, null, 2) + '\n');
 console.log('✓ wrote public/build-info.json (v' + PKG.version + (commit ? ' · ' + commit : '') + (dirty ? ' · ⚠ DIRTY TREE' : '') + ' · sha256 ' + sha256.slice(0, 12) + '…)');
 if (dirty) console.warn('⚠ build-ext: working tree is DIRTY — this artifact was built from uncommitted changes. CI will fail this; commit before publishing a release build.');
