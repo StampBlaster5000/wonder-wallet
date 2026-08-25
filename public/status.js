@@ -44,6 +44,7 @@
       <a class="btn btn-gold" href="${STORE}" target="_blank" rel="noopener">Get it from the Chrome Web Store →</a>
       <p class="fine" style="margin-top:16px"><b>Or load the latest unpacked build:</b></p>
       <a class="btn btn-ghost" id="dlZip" href="${dlHref()}" download>${dlLabel()}</a>
+      ${BUILD && BUILD.sha256 ? `<p class="fine" style="margin-top:8px;word-break:break-all">SHA-256 <code style="font-size:11px">${esc(BUILD.sha256)}</code><br>Verify: <code>shasum -a 256 ${esc(BUILD.zip || 'wonder-wallet-extension.zip')}</code> should match.</p>` : ''}
       <div class="dl-steps">
         <div class="dl-step"><span class="dl-n">1</span><span>Unzip the download.</span></div>
         <div class="dl-step"><span class="dl-n">2</span><span>Open <code>chrome://extensions</code> and turn on <b>Developer mode</b> (top-right).</span></div>

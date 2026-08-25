@@ -6,6 +6,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { execSync } from 'child_process';
+import { createHash } from 'crypto';
 const require = createRequire(import.meta.url);
 const gRoot = execSync('npm root -g').toString().trim();
 const { Resvg } = require(join(gRoot, '@resvg', 'resvg-js'));
@@ -179,7 +180,14 @@ try { copyFileSync(ZIP_OUT, join(PUB, 'wonder-wallet-extension.zip')); } catch (
 console.log('✓ repackaged ' + ZIP_OUT.replace(ROOT + '/', '') + ' (' + z.files + ' files, ' + Math.round(z.bytes / 1024) + ' KB)');
 
 // 7. Stamp build-info.json so the site's "latest build" download shows the live version + freshness.
-let commit = '';
+//    WW-C01: publish the artifact's SHA-256 (so a downloader can verify the zip out-of-band) and record
+//    whether the source tree was DIRTY at build time (uncommitted edits) — the commit hash alone looks
+//    "clean" even when the working tree isn't, so a stale/tampered artifact could masquerade as a build
+//    of a reviewed commit. CI (ci.yml) fails the build when dirty=true.
+let commit = '', dirty = false;
 try { commit = execSync('git rev-parse --short HEAD', { cwd: ROOT }).toString().trim(); } catch (_) {}
-writeFileSync(join(PUB, 'build-info.json'), JSON.stringify({ version: PKG.version, builtAt: new Date().toISOString(), commit, zip: ZIP_NAME }, null, 2) + '\n');
-console.log('✓ wrote public/build-info.json (v' + PKG.version + (commit ? ' · ' + commit : '') + ')');
+try { dirty = execSync('git status --porcelain', { cwd: ROOT }).toString().trim().length > 0; } catch (_) {}
+const sha256 = createHash('sha256').update(readFileSync(ZIP_OUT)).digest('hex'); // checksum of the exact published zip
+writeFileSync(join(PUB, 'build-info.json'), JSON.stringify({ version: PKG.version, builtAt: new Date().toISOString(), commit, dirty, sha256, zip: ZIP_NAME }, null, 2) + '\n');
+console.log('✓ wrote public/build-info.json (v' + PKG.version + (commit ? ' · ' + commit : '') + (dirty ? ' · ⚠ DIRTY TREE' : '') + ' · sha256 ' + sha256.slice(0, 12) + '…)');
+if (dirty) console.warn('⚠ build-ext: working tree is DIRTY — this artifact was built from uncommitted changes. CI will fail this; commit before publishing a release build.');

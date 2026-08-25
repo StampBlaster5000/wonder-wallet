@@ -17,7 +17,7 @@ function solPriorityFee(b) {
     for (let k = 0; k < kc; k++) { keys.push(b.slice(o, o + 32)); o += 32; }
     o += 32;
     sv = readSV(b, o); const ic = sv[0]; o = sv[1];
-    let limit = null, price = null;
+    let limit = null, price = null, dup = false;
     for (let ix = 0; ix < ic; ix++) {
       const pid = b[o]; o += 1;
       sv = readSV(b, o); o = sv[1] + sv[0];
@@ -25,13 +25,13 @@ function solPriorityFee(b) {
       const prog = keys[pid]; let match = !!prog && prog.length === 32;
       if (match) for (let m = 0; m < 32; m++) if (prog[m] !== CB[m]) { match = false; break; }
       if (match) {
-        if (d[0] === 2 && dn >= 5) limit = d[1] | (d[2] << 8) | (d[3] << 16) | (d[4] * 0x1000000);
-        else if (d[0] === 3 && dn >= 9) { let p = 0; for (let j = 0; j < 8; j++) p += d[1 + j] * Math.pow(2, 8 * j); price = p; }
+        if (d[0] === 2 && dn >= 5) { if (limit != null) dup = true; limit = d[1] | (d[2] << 8) | (d[3] << 16) | (d[4] * 0x1000000); }
+        else if (d[0] === 3 && dn >= 9) { if (price != null) dup = true; let p = 0; for (let j = 0; j < 8; j++) p += d[1 + j] * Math.pow(2, 8 * j); price = p; }
       }
     }
-    if (price == null) return null;
-    const cu = limit != null ? limit : 200000, pri = Math.ceil(cu * price / 1e6), base = 5000 * Math.max(1, numReqSigs);
-    return { priorityLamports: pri, cuLimit: cu, price, baseLamports: base, totalLamports: base + pri };
+    if (price == null && !dup) return null;
+    const cu = limit != null ? limit : 200000, pri = price != null ? Math.ceil(cu * price / 1e6) : 0, base = 5000 * Math.max(1, numReqSigs);
+    return { priorityLamports: pri, cuLimit: cu, price: price || 0, baseLamports: base, totalLamports: base + pri, dup };
   } catch (_) { return null; }
 }
 
@@ -47,6 +47,8 @@ function tx({ limit, price, version0 } = {}) {
   const ixs = [];
   if (limit != null) ixs.push([1, 0, 5, 2, ...u32le(limit)]);
   if (price != null) ixs.push([1, 0, 9, 3, ...u64le(price)]);
+  if (arguments[0] && arguments[0].price2 != null) ixs.push([1, 0, 9, 3, ...u64le(arguments[0].price2)]); // duplicate SetComputeUnitPrice
+  if (arguments[0] && arguments[0].limit2 != null) ixs.push([1, 0, 5, 2, ...u32le(arguments[0].limit2)]); // duplicate SetComputeUnitLimit
   b.push(ixs.length); ixs.forEach((ix) => ix.forEach((x) => b.push(x)));
   return Uint8Array.from(b);
 }
@@ -76,6 +78,18 @@ t('garbage bytes → null (fail safe, never throws)', () => {
 t('hard-cap threshold: 1 SOL exceeds the 0.5 SOL cap', () => {
   const r = solPriorityFee(tx({ limit: 200000, price: 5000000000 }));
   assert.ok(r.priorityLamports > 500000000, 'PoC fee is above the hard cap');
+});
+t('WW-C03: two SetComputeUnitPrice → dup flagged (refused on sign)', () => {
+  const r = solPriorityFee(tx({ limit: 200000, price: 1000, price2: 5000000000 }));
+  assert.strictEqual(r.dup, true, 'duplicate price must set dup');
+});
+t('WW-C03: two SetComputeUnitLimit → dup flagged', () => {
+  const r = solPriorityFee(tx({ limit: 200000, price: 1000, limit2: 400000 }));
+  assert.strictEqual(r.dup, true, 'duplicate limit must set dup');
+});
+t('WW-C03: single price/limit → dup false (no false positive)', () => {
+  const r = solPriorityFee(tx({ limit: 200000, price: 1000000 }));
+  assert.strictEqual(r.dup, false);
 });
 
 console.log((fail ? '❌' : '✅') + ' sol-priority-fee: ' + pass + ' passed' + (fail ? ', ' + fail + ' FAILED' : ''));

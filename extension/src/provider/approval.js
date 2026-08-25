@@ -452,7 +452,7 @@
       for (var k = 0; k < kc; k++) { keys.push(b.slice(o, o + 32)); o += 32; }
       o += 32;                                                    // recent blockhash
       sv = solReadSV(b, o); var ic = sv[0]; o = sv[1];
-      var limit = null, price = null;
+      var limit = null, price = null, dup = false;
       for (var ix = 0; ix < ic; ix++) {
         var pid = b[o]; o += 1;
         sv = solReadSV(b, o); o = sv[1] + sv[0];                  // account index array
@@ -460,13 +460,16 @@
         var prog = keys[pid], match = !!prog && prog.length === 32;
         if (match) { for (var m = 0; m < 32; m++) { if (prog[m] !== SOL_COMPUTE_BUDGET[m]) { match = false; break; } } }
         if (match) {
-          if (d[0] === 2 && dn >= 5) limit = d[1] | (d[2] << 8) | (d[3] << 16) | (d[4] * 0x1000000);           // SetComputeUnitLimit (u32 LE)
-          else if (d[0] === 3 && dn >= 9) { var p = 0; for (var j = 0; j < 8; j++) p += d[1 + j] * Math.pow(2, 8 * j); price = p; } // SetComputeUnitPrice (u64 LE, µ-lamports/CU)
+          // WW-C03: a legit tx carries at most ONE SetComputeUnitLimit and ONE SetComputeUnitPrice. A
+          // second of either is duplicate/conflicting — on-chain the runtime honours the LAST one, so a
+          // hidden second directive could make the real fee differ from what a naive reader shows. Flag it.
+          if (d[0] === 2 && dn >= 5) { if (limit != null) dup = true; limit = d[1] | (d[2] << 8) | (d[3] << 16) | (d[4] * 0x1000000); }           // SetComputeUnitLimit (u32 LE)
+          else if (d[0] === 3 && dn >= 9) { if (price != null) dup = true; var p = 0; for (var j = 0; j < 8; j++) p += d[1 + j] * Math.pow(2, 8 * j); price = p; } // SetComputeUnitPrice (u64 LE, µ-lamports/CU)
         }
       }
-      if (price == null) return null;                            // no priority fee set → nothing to surface
-      var cu = limit != null ? limit : 200000, pri = Math.ceil(cu * price / 1e6), base = 5000 * Math.max(1, numReqSigs);
-      return { priorityLamports: pri, cuLimit: cu, price: price, baseLamports: base, totalLamports: base + pri };
+      if (price == null && !dup) return null;                    // no priority fee set + no anomaly → nothing to surface
+      var cu = limit != null ? limit : 200000, pri = price != null ? Math.ceil(cu * price / 1e6) : 0, base = 5000 * Math.max(1, numReqSigs);
+      return { priorityLamports: pri, cuLimit: cu, price: price || 0, baseLamports: base, totalLamports: base + pri, dup: dup };
     } catch (_) { return null; }
   }
   var SOL_FEE_HARD_CAP = 500000000; // 0.5 SOL — a priority fee above this is refused outright (PoC was 1 SOL)
@@ -585,6 +588,9 @@
     var pf = solPriorityFee(b64ToBytes(txB64)); // WW-C03: decode the hidden Compute Budget priority fee
     onApprove = function () {
       assertGrantIntegrity('sol');
+      // WW-C03: refuse duplicate/conflicting Compute Budget instructions outright — the displayed fee
+      // can't be trusted when two directives fight, and it's the hallmark of a fee-hiding tx.
+      if (pf && pf.dup) throw new Error('Refused — this Solana transaction carries duplicate or conflicting Compute Budget instructions (more than one priority-fee or compute-limit directive). The real fee can’t be verified; nothing was signed.');
       // Hard cap: refuse an abusive priority fee outright — no legitimate action needs > 0.5 SOL in fees.
       if (pf && pf.priorityLamports > SOL_FEE_HARD_CAP) throw new Error('Refused — this transaction sets a Solana priority fee of ' + (pf.priorityLamports / 1e9).toFixed(4) + ' SOL, above Wonder’s safety cap. A malicious site can drain your balance this way; nothing was signed.');
       var signedB64 = C.solSignTransaction(txB64, pinnedAcct().account);
@@ -601,7 +607,9 @@
       + '<div class="ap-hint">' + esc(hostOf()) + ' is asking you to ' + (isSend ? 'sign &amp; broadcast' : 'sign') + ' a Solana transaction with <span class="mono">' + esc(short(req.sol || req.accountAddress)) + '</span>. Wonder Wallet signs only your slot.</div>'
       + warns((function () {
           var w = [{ level: 'warn', text: 'Solana transactions can move tokens or invoke programs. Review the action on the site before approving.' }];
-          if (pf) {
+          if (pf && pf.dup) {
+            w.push({ level: 'danger', text: '⚠ This transaction carries duplicate/conflicting Compute Budget instructions — the displayed fee may not be the real one. Wonder will refuse to sign it.' });
+          } else if (pf) {
             var lvl = pf.priorityLamports > 10000000 ? 'danger' : (pf.priorityLamports > 1000000 ? 'warn' : 'info'); // >0.01 SOL danger, >0.001 warn
             w.push({ level: lvl, text: 'Network fee ≈ ' + (pf.totalLamports / 1e9).toFixed(6) + ' SOL — priority fee ' + (pf.priorityLamports / 1e9).toFixed(6) + ' SOL (' + pf.price.toLocaleString() + ' µ-lamports/CU × ' + pf.cuLimit.toLocaleString() + ' CU)' + (lvl === 'danger' ? '. ⚠ UNUSUALLY LARGE — a malicious site can drain your balance through the priority fee. Reject unless you expect exactly this.' : '. Confirm this is expected.') });
           }

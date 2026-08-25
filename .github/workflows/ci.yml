@@ -36,19 +36,35 @@ jobs:
           npm install -g @resvg/resvg-js   # native SVG→PNG used only to render the extension icons
           NODE_PATH="$(npm root -g)" node extension/build-ext.mjs
 
-      - name: Artifact provenance (WW-C01)
+      - name: Artifact provenance + integrity (WW-C01)
         # The audit found the published beta zips were pre-audit and CI could not prove an artifact was
-        # built from the reviewed commit. This step FAILS if the built extension is absent, and publishes
-        # the source commit + a deterministic checksum of the built dist tree so every green build has a
-        # verifiable provenance record (compare it to any published zip before distributing).
+        # built from the reviewed commit. This step FAILS on: (a) a missing artifact, (b) a DIRTY tree
+        # after build — a tracked source file differs, so the artifact is NOT reproducible from the
+        # committed source (a stale/tampered build can otherwise stamp a clean-looking commit), and
+        # (c) a published-checksum mismatch. It records the commit + the zip's SHA-256 so any published
+        # download can be verified out-of-band.
         run: |
           set -e
           test -f extension/dist/manifest.json || { echo "::error::built extension manifest missing — the extension artifact was not produced"; exit 1; }
+          # (b) Dirty-tree gate: the build only writes gitignored artifacts (dist/, zips, build-info.json),
+          # so after building from a clean checkout no TRACKED file may differ. If one does, the source that
+          # produced this artifact is not the committed source — fail closed.
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::working tree is dirty after build — the artifact is not reproducible from the committed source (WW-C01)"
+            git status --porcelain
+            exit 1
+          fi
+          # build-info.json must self-report a clean build and carry a checksum.
+          node -e "const b=require('./public/build-info.json'); if(b.dirty){console.error('::error::build-info.dirty=true — built from uncommitted changes');process.exit(1)} if(!b.sha256){console.error('::error::build-info.json missing sha256');process.exit(1)}"
+          # (c) The published checksum must equal the actual bytes of the shipped zip.
+          ZIP="public/$(node -e "console.log(require('./public/build-info.json').zip)")"
+          PUB_SHA="$(node -e "console.log(require('./public/build-info.json').sha256)")"
+          ACT_SHA="$(sha256sum "$ZIP" | cut -d' ' -f1)"
+          [ "$PUB_SHA" = "$ACT_SHA" ] || { echo "::error::published sha256 ($PUB_SHA) != actual zip sha256 ($ACT_SHA)"; exit 1; }
           COMMIT="$(git rev-parse HEAD)"
-          SHA="$(find extension/dist -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
-          echo "Extension built from commit: $COMMIT"
-          echo "Extension dist tree SHA-256: $SHA"
-          { echo "### Extension artifact provenance"; echo "- commit: \`$COMMIT\`"; echo "- dist SHA-256: \`$SHA\`"; } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          echo "Extension built from commit: $COMMIT (clean tree)"
+          echo "Published zip SHA-256: $ACT_SHA"
+          { echo "### Extension artifact provenance"; echo "- commit: \`$COMMIT\`"; echo "- clean tree: ✅"; echo "- zip SHA-256: \`$ACT_SHA\`"; } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
 
       - name: Syntax check (server + browser scripts)
         run: |

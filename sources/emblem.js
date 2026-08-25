@@ -72,12 +72,20 @@ async function getBalance(tokenId) {
   catch (_) { return []; }
 }
 
+// WW-C06: the deposit address the user later sends their asset to comes from this upstream response.
+// A malformed/empty/bogus BTC address must never reach the client as a "deposit target", so validate
+// every returned address by its coin before handing it back (fail closed on a bad Bitcoin address).
+const RE_BTC_DEP = /^((bc1|tb1)[a-z0-9]{8,87}|[123mn2][a-km-zA-HJ-NP-Z1-9]{25,39})$/;
 async function createVault(template) {
   // create-curated generates deposit addresses server-side and can be slow.
   const j = await fetchJson(`${V2}/create-curated`, { method: 'POST', headers: KEY, body: template, timeout: 45000 });
   const v = j.data || j;
   if (v.err || v.error) throw new Error(v.err || v.error);
-  return { tokenId: v.tokenId, addresses: (v.addresses || []).map((a) => ({ coin: a.coin, address: a.address, path: a.path })), name: v.name, targetContract: v.targetContract };
+  const addresses = (v.addresses || []).map((a) => ({ coin: a.coin, address: a.address, path: a.path }));
+  for (const a of addresses) {
+    if (/btc|bitcoin/i.test(a.coin || '') && !RE_BTC_DEP.test(String(a.address || '').trim())) throw new Error('bad_deposit_address');
+  }
+  return { tokenId: v.tokenId, addresses, name: v.name, targetContract: v.targetContract };
 }
 
 // ── build on-chain calldata (client signs+broadcasts the returned tx) ──

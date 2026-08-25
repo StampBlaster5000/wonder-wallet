@@ -126,15 +126,38 @@
     $('#mBack').onclick = () => open(ACCOUNT, ETH, BTC);
     $('#mGo').onclick = () => mint(tokenId);
   }
+  // WW-C06: a vault's deposit address is only as trustworthy as its origin. guardDeposit cross-checks it
+  // against the address saved locally when the vault was created ON THIS DEVICE (savePending) — strong.
+  // But a vault surfaced by the API with NO local record (created on another device, or after the pending
+  // record was cleared post-mint) has nothing to cross-check against, and silently trusting the server's
+  // address is the exact WW-C06 substitution risk. So: cross-checked → send; unverifiable → make the user
+  // explicitly confirm the address against the Emblem app before we hand it to CP Send. Fail closed on any
+  // mismatch/invalid. Shared by both send buttons (My Vaults + the deposit step) so the guard can't be
+  // reached by only one path.
+  function depositBlocked(e) {
+    modal(`<h3 class="m-title">Deposit blocked</h3><div class="warn" style="border-color:#c0392b;color:#e74c3c;margin:8px 0">⚠ ${esc(e.message)}</div><div class="wbtns"><button class="ghost" id="dbX">Close</button></div>`);
+    const b = $('#dbX'); if (b) b.onclick = close;
+  }
+  function beginVaultSend(tokenId, rawAddr, asset, onErr) {
+    let addr;
+    try { addr = guardDeposit(tokenId, rawAddr); } catch (e) { (onErr || depositBlocked)(e); return; }
+    const doSend = () => { const pf = { destination: addr }; if (asset) pf.asset = asset; if (window.CpActions) window.CpActions.quick(ACCOUNT, BTC, 'send', pf); };
+    if (pendingAddr(tokenId)) return doSend(); // matched this device's creation record — trusted
+    // No local creation record → cannot cross-check. Require explicit human verification.
+    modal(`<h3 class="m-title">Verify deposit address</h3>
+      <div class="warn" style="margin:8px 0">⚠ This vault (#${esc(tokenId)}) has no creation record on this device, so Wonder can’t cross-check its deposit address for you. If it’s wrong, your asset is sent to a stranger and is <b>unrecoverable</b>.</div>
+      <p class="fine">Confirm this <b>exactly</b> matches the deposit address shown for this vault in the <b>Emblem app</b> before continuing:</p>
+      <div class="cp-src" style="word-break:break-all">${esc(addr)}</div>
+      <div class="wbtns"><button class="ghost" id="uvCancel">Cancel</button><button class="primary" id="uvGo">I’ve verified — continue</button></div>`);
+    $('#uvCancel').onclick = () => open(ACCOUNT, ETH, BTC, undefined, ONBACK ? { onBack: ONBACK } : undefined);
+    $('#uvGo').onclick = doSend;
+  }
   // Send an asset from this wallet straight to a vault's deposit address (pre-fills CP Send).
   function sendToVault(tokenId) {
     const v = LAST_VAULTS.find((x) => String(x.tokenId) === String(tokenId)) || {};
     const dep = btcDeposit(v);
     if (!dep) return;
-    let addr; try { addr = guardDeposit(tokenId, dep.address); } catch (e) { modal(`<h3 class="m-title">Deposit blocked</h3><div class="warn" style="border-color:#c0392b;color:#e74c3c;margin:8px 0">⚠ ${esc(e.message)}</div><div class="wbtns"><button class="ghost" id="dbX">Close</button></div>`); const b = $('#dbX'); if (b) b.onclick = close; return; }
-    const prefill = { destination: addr };
-    if (v._asset) prefill.asset = v._asset;
-    if (window.CpActions) window.CpActions.quick(ACCOUNT, BTC, 'send', prefill);
+    beginVaultSend(tokenId, dep.address, v._asset);
   }
 
   // ── Vault now (wrap) ──
@@ -186,7 +209,7 @@
       <div id="mintStatus" class="statusline" hidden></div>
       <div class="wbtns"><button class="ghost" id="depBack">My Vaults</button><button class="primary" id="depMint">I've deposited · Mint</button></div>`;
     $('#depCopy').onclick = (e) => copy(dep?.address, e.target);
-    const ds = $('#depSend'); if (ds) ds.onclick = () => { let addr; try { addr = guardDeposit(vault.tokenId, dep.address); } catch (e) { const st = $('#mintStatus'); if (st) { st.hidden = false; st.className = 'statusline err'; st.textContent = e.message; } return; } const pf = { destination: addr }; if (ASSET_CTX) pf.asset = ASSET_CTX.asset; if (window.CpActions) window.CpActions.quick(ACCOUNT, BTC, 'send', pf); };
+    const ds = $('#depSend'); if (ds) ds.onclick = () => beginVaultSend(vault.tokenId, dep.address, ASSET_CTX ? ASSET_CTX.asset : null, (e) => { const st = $('#mintStatus'); if (st) { st.hidden = false; st.className = 'statusline err'; st.textContent = e.message; } });
     $('#depBack').onclick = myVaults;
     $('#depMint').onclick = () => mint(vault.tokenId);
   }
