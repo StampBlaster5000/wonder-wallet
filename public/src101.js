@@ -30,12 +30,12 @@
   const RE_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/i; // bare name (no .btc), conservative
   const bare = (n) => String(n || '').trim().toLowerCase().replace(/\.btc$/i, '');
 
+  // Register / Renew / Deploy-namespace are hidden for now — pending the core devs' direction on SRC-101
+  // service providers / registrars. The form functions (formRegister/formRenew/formDeploy) are kept below
+  // so these can be re-enabled by adding them back to this list once that's decided.
   const ACTS = [
-    { k: 'register', ic: '🌐', label: 'Register a name', hint: 'Claim a new .btc name' },
     { k: 'transfer', ic: '➤', label: 'Transfer', hint: 'Send a name you own to another address' },
     { k: 'setrecord', ic: '🔗', label: 'Set address', hint: 'Point a name at a BTC address' },
-    { k: 'renew', ic: '♻', label: 'Renew', hint: 'Extend a name’s lease' },
-    { k: 'deploy', ic: '✦', label: 'Deploy namespace', hint: 'Advanced — launch your own TLD' },
   ];
 
   async function open(account, fromAddress) {
@@ -65,20 +65,18 @@
 
   function renderHub() {
     const grid = ACTS.map((a) => `<button class="cp-act" data-k="${a.k}"><span class="cp-ic">${a.ic}</span>${esc(a.label)}<span class="cp-act-hint">${esc(a.hint)}</span></button>`).join('');
-    modal(`<h3 class="m-title">Bitname · <span style="color:var(--gold2)">.btc</span> names</h3>
+    modal(`<button class="m-close-x" id="s101x" title="Close" aria-label="Close">✕</button>
+      <h3 class="m-title" style="padding-right:34px">Bitname · <span style="color:var(--gold2)">.btc</span> names</h3>
       <div class="fine">Human-readable Bitcoin names on <b>Bitcoin Stamps (SRC-101)</b> — permanent, on-chain, yours. Resolve them in Send anywhere in the wallet.</div>
       <div class="cp-grid">${grid}</div>
-      <div class="warn" style="margin-top:12px">⚠ On-chain <b>registration/management is composed by stampchain</b>, whose SRC-101 endpoint is being finalized upstream. Cost previews work now; final signing opens shortly — until then, submits hand off to <b>bitname.pro</b> with your name pre-filled.</div>
-      <button class="modal-x" id="s101x">${fromHub() ? '‹ Dashboard' : 'Close'}</button>`);
+      <div class="warn" style="margin-top:12px">⚠ On-chain <b>name management is composed by stampchain</b>, whose SRC-101 endpoint is being finalized upstream. Cost previews work now; final signing opens shortly.</div>`);
     $('#s101x').onclick = close;
     $('#s101card').querySelectorAll('.cp-act').forEach((b) => (b.onclick = () => route(b.dataset.k)));
   }
   function route(k) {
-    if (k === 'register') return formRegister('');
     if (k === 'transfer') return formTransfer('');
     if (k === 'setrecord') return formSetRecord('');
-    if (k === 'renew') return formRenew('');
-    if (k === 'deploy') return formDeploy();
+    // register / renew / deploy intentionally not routed while hidden from ACTS (see note there)
   }
 
   // ── shared bits ──

@@ -37,7 +37,7 @@
     { chain: 'Stampchain', tools: [
       { ic: ICON.token, name: 'SRC-20 deploy / mint', desc: 'Deploy & mint SRC-20 tokens', act: 'src20' },
       { ic: ICON.image, name: 'Stamps art minting', desc: 'Mint Bitcoin Stamps art on-chain', act: 'stampart' },
-      { ic: ICON.tag, name: 'Bitname (.btc)', desc: 'SRC-101 — register · transfer · renew', act: 'src101' },
+      { ic: ICON.tag, name: 'Bitname (.btc)', desc: 'SRC-101 — transfer · set address', act: 'src101' },
     ] },
     { chain: 'Ethereum', tools: [
       { ic: ICON.gem, name: 'Emblem bridge', desc: 'Vault inventory + wrap / redeem', act: 'emblem' },
@@ -232,7 +232,14 @@
     else if (act === 'src20' && window.MintingModules) window.MintingModules.src20(a.account, btc);
     else if (act === 'stampart' && window.MintingModules) window.MintingModules.stampArt(a.account, btc);
     else if (act === 'src101' && window.Src101) window.Src101.open(a.account, btc);
-    else if (act === 'emblem' && window.EmblemBridge) window.EmblemBridge.open(a.account, a.ethereum.address, btc);
+    else if (act === 'emblem' && window.EmblemBridge) {
+      // Emblem mints vault NFTs on Ethereum, so it needs an ETH address. HD accounts have one; an
+      // imported BTC-only key has ethereum:null — guard it (a bare a.ethereum.address used to throw and
+      // the button silently did nothing) and tell the user how to proceed.
+      const eth = a.ethereum && a.ethereum.address;
+      if (!eth) return toast('Emblem vaulting needs an Ethereum account — switch to one of your HD accounts (Account 0). Imported BTC-only keys can’t mint vault NFTs.');
+      window.EmblemBridge.open(a.account, eth, btc);
+    }
     else toast('This tool isn’t available right now.');
   }
   // Connected external wallet → compose here, the wallet signs via its provider. Only the CP suite is wired.

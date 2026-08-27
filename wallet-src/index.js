@@ -435,6 +435,16 @@ function finalizeHwSend(psbtB64, entries) {
   tx.finalize();
   return { txhex: hex.encode(tx.extract()), txid: tx.id, vsize: tx.vsize };
 }
+// Finalize a fully-signed PSBT returned by an EXTERNAL wallet that signs but does NOT broadcast
+// (Horizon, XCP Wallet). Combines the partial sigs into final scriptSig/witness and extracts the raw
+// tx hex the server can push. Keyless — no secrets touched. Accepts hex or base64 PSBT.
+function finalizeSignedPsbt(psbtHexOrB64) {
+  const s = String(psbtHexOrB64).replace(/^0x/, '');
+  const bytes = /^[0-9a-fA-F]+$/.test(s) ? hex.decode(s) : base64.decode(s);
+  const tx = btc.Transaction.fromPSBT(bytes, { allowUnknownOutputs: true, allowUnknownInputs: true });
+  tx.finalize();
+  return { txhex: hex.encode(tx.extract()), txid: tx.id, vsize: tx.vsize };
+}
 // Compute the txid of an already-signed raw transaction hex (e.g. when the Ledger lib finalizes for us).
 function txidOf(txhex) {
   const tx = btc.Transaction.fromRaw(hex.decode(String(txhex).replace(/^0x/, '')), { allowUnknownOutputs: true, allowUnknownInputs: true, allowLegacyWitnessUtxo: true, disableScriptCheck: true });
@@ -1305,7 +1315,7 @@ const PUBLIC_API = {
   generateMnemonic, validateMnemonic, hasVault, createVault, unlock, lock, isUnlocked, destroyVault, exportVaultBlob, exportBackup, importVaultBlob,
   importKey, importKeys, removeImportedKey, importedAccounts, importedAddresses,
   accounts, secrets, revealSeed, deriveCustom, deriveReceiveAddrs, isCwPhrase, cwDeriveAddrs, send, signMessage, signMessageImported, signCp, signStamp, psbtInputs, decodeTxOutputs, describePsbt, signProviderPsbt, signProvider, buildUnsignedSend, addrHash, sendEvm, sendSol, sendSpl, sendCnft, solSignMessage, solSignTransaction,
-  buildHwSend, finalizeHwSend, txidOf, // hardware (Ledger) BTC send — keyless: builds an annotated PSBT, finalizes with device sigs
+  buildHwSend, finalizeHwSend, finalizeSignedPsbt, txidOf, // hardware (Ledger) BTC send + external-wallet PSBT finalize (Horizon/XCP) — all keyless
   ethPersonalSign, ethSignTypedData, erc20TransferData, erc20ApproveData, selfTest,
   resumeSession, getSessionSecret, onLockChange, armAutoLock, // cross-surface session (extension)
   version: WonderCore.version,

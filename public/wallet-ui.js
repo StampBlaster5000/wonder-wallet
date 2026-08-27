@@ -224,7 +224,7 @@
     const found = (window.WalletConnect ? WalletConnect.detect() : []);
     const rows = found.length
       ? found.map((w) => `<button class="wc-opt ghost" data-id="${esc(w.id)}" style="display:flex;justify-content:space-between;align-items:center;width:100%;margin:6px 0"><b>${esc(w.name)}</b><span class="fine">Connect →</span></button>`).join('')
-      : `<p class="fine">No supported wallet detected in this browser. Install <a href="https://unisat.io" target="_blank" rel="noopener">UniSat</a>, <a href="https://www.okx.com/web3" target="_blank" rel="noopener">OKX</a>, or the Wonder Wallet extension, then reload.</p>`;
+      : `<p class="fine">No supported wallet detected in this browser. Install <a href="https://horizonwallet.net" target="_blank" rel="noopener">Horizon</a>, <a href="https://github.com/XCP/extension" target="_blank" rel="noopener">XCP&nbsp;Wallet</a>, <a href="https://unisat.io" target="_blank" rel="noopener">UniSat</a>, <a href="https://www.okx.com/web3" target="_blank" rel="noopener">OKX</a>, or the Wonder Wallet extension, then reload.</p>`;
     const c = modal(`<h3 class="m-title">Connect a wallet</h3><p class="fine">Use an existing browser wallet to access your assets on the Terminal — read balances and sign transactions with your own keys.</p><div class="wc-list">${rows}</div><div class="wbtns"><button class="ghost" id="wcCancel">Cancel</button></div>`);
     c.querySelector('#wcCancel').onclick = closeModal;
     c.querySelectorAll('[data-id]').forEach((b) => (b.onclick = async () => {
@@ -1575,7 +1575,6 @@
           ${(acc || isConn()) ? `<div class="m-actions">
             <button class="m-act" data-act="transfer">Transfer</button>
             <button class="m-act" data-act="setrecord">Set address</button>
-            <button class="m-act" data-act="renew">Renew</button>
           </div>` : '<div class="fine" style="margin-top:6px">Watch-only — switch to your own account to manage.</div>'}
         </div>
         <div class="wbtns"><button class="ghost" id="ndmClose">Close</button></div>`);

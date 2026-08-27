@@ -31,7 +31,7 @@
 
   // Swap state: `sell`/`buy` are BOTH freely-chosen assets (Counterparty AMM + DEX support any pair, not
   // just TOKEN/XCP). Defaults to selling XCP; the middle ⇅ swaps the two sides.
-  const S = { sell: 'XCP', sellDiv: true, buy: '', buyDiv: true, amount: '', quote: null, slippage: 'auto', feeRate: 6, dispMode: 'buy', dispAsset: '', dispensers: null, dispErr: false, dispPick: 0, dispCount: 1, dispRecv: '', routeMode: 'auto', dispSel: null, sellAsset: '', sellComp: null };
+  const S = { sell: 'XCP', sellDiv: true, buy: '', buyDiv: true, amount: '', quote: null, slippage: 'auto', feeRate: 6, fees: null, dispMode: 'buy', dispAsset: '', dispensers: null, dispErr: false, dispPick: 0, dispCount: 1, dispRecv: '', routeMode: 'auto', dispSel: null, sellAsset: '', sellComp: null };
   const assetSize = (a) => Math.max(5, Math.min(13, (a || '').length || 5)); // input width to fit the ticker
   const DISP_TX_VB = 154; // ~vsize of one dispense tx (1-2 inputs, dispenser payment + change) for miner-fee estimates
   const DIVCACHE = { XCP: true, BTC: true };
@@ -621,12 +621,25 @@
 
   function gearMenu() {
     const box = document.getElementById('mktQuote'); if (!box) return;
-    // Toggle: if the slippage picker is already open, the gear hides it (don't stack rows).
+    // Toggle: if the picker is already open, the gear hides it (don't stack rows).
     const open = box.querySelector('.mkt-slip'); if (open) { open.remove(); return; }
-    const opts = ['auto', '0.5', '1', '2', '3'];
     const pick = document.createElement('div'); pick.className = 'mkt-slip';
-    pick.innerHTML = 'Max slippage: ' + opts.map((o) => `<button class="mini${String(S.slippage) === o ? ' on' : ''}" data-s="${o}">${o === 'auto' ? 'Auto' : o + '%'}</button>`).join('');
-    box.prepend(pick); pick.querySelectorAll('[data-s]').forEach((b) => (b.onclick = () => { S.slippage = b.dataset.s; render(); }));
+    const slipOpts = ['auto', '0.5', '1', '2', '3'];
+    const slipRow = 'Max slippage: ' + slipOpts.map((o) => `<button class="mini${String(S.slippage) === o ? ' on' : ''}" data-s="${o}">${o === 'auto' ? 'Auto' : o + '%'}</button>`).join('');
+    // Miner-fee picker — the same Fast/Med/Econ + custom control as the rest of the wallet (staggered so
+    // presets are strictly descending). Covers every Market tab since they all sign with S.feeRate.
+    const raw = S.fees || { fastestFee: 10, halfHourFee: 6, hourFee: 3 };
+    const f = window.WWFee ? window.WWFee.stagger(raw, ['fastestFee', 'halfHourFee', 'hourFee']) : raw;
+    const presets = [['fastestFee', 'Fast'], ['halfHourFee', 'Med'], ['hourFee', 'Econ']];
+    const onPreset = presets.some(([k]) => Number(f[k]) === Number(S.feeRate));
+    const feeRow = 'Miner fee: ' + presets.map(([k, l]) => `<button class="mini${Number(f[k]) === Number(S.feeRate) ? ' on' : ''}" data-f="${f[k]}">${l} · ${f[k]}</button>`).join('')
+      + `<input class="mkt-feecustom" id="mktFeeCustom" type="number" min="0.1" step="0.1" placeholder="custom" value="${onPreset ? '' : S.feeRate}" style="width:70px;background:var(--bg);border:1px solid var(--border2);border-radius:6px;color:var(--text);padding:4px 6px;font-size:12px;margin-left:4px"/> <span class="fine">sat/vB</span>`;
+    pick.innerHTML = `<div>${slipRow}</div><div style="margin-top:7px">${feeRow}</div>`;
+    box.prepend(pick);
+    pick.querySelectorAll('[data-s]').forEach((b) => (b.onclick = () => { S.slippage = b.dataset.s; render(); gearMenu(); }));
+    pick.querySelectorAll('[data-f]').forEach((b) => (b.onclick = () => { S.feeRate = Number(b.dataset.f); render(); gearMenu(); }));
+    const fc = pick.querySelector('#mktFeeCustom');
+    if (fc) fc.oninput = () => { const v = Number(fc.value); if (v > 0) { S.feeRate = v; pick.querySelectorAll('[data-f]').forEach((x) => x.classList.remove('on')); } };
   }
 
   // Decide what the #mktScan area shows: a resolved pair ⇒ that pool's analytics; otherwise the
@@ -858,5 +871,5 @@
     } catch (e) { s.className = 'statusline err'; s.textContent = /insufficient/i.test(e.message || '') ? 'Insufficient balance for this pool action.' : (e.message || 'Compose/verify failed.'); }
   }
 
-  window.WonderMarket = { open: async (token, opts) => { ONBACK = (opts && opts.onBack) || null; TABS = 'swap'; if (token) { S.buy = String(token).toUpperCase(); S.sell = 'XCP'; S.sellDiv = true; S.buyDiv = await divisible(S.buy); } try { const f = await fetch('api/btc/fees').then((r) => r.json()); S.feeRate = f.halfHourFee || 6; } catch (_) {} try { const pr = await fetch('api/prices').then((r) => r.json()); BTCUSD = pr.bitcoin || 0; } catch (_) {} render(); } };
+  window.WonderMarket = { open: async (token, opts) => { ONBACK = (opts && opts.onBack) || null; TABS = 'swap'; if (token) { S.buy = String(token).toUpperCase(); S.sell = 'XCP'; S.sellDiv = true; S.buyDiv = await divisible(S.buy); } try { const f = await fetch('api/btc/fees').then((r) => r.json()); S.fees = f; S.feeRate = f.halfHourFee || 6; } catch (_) {} try { const pr = await fetch('api/prices').then((r) => r.json()); BTCUSD = pr.bitcoin || 0; } catch (_) {} render(); } };
 })();

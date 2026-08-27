@@ -71,7 +71,7 @@ const tree = {
                       style: { display: 'flex', flexDirection: 'column' },
                       children: [
                         { type: 'div', props: { style: { fontFamily: 'WW-Serif', fontSize: 72, color: GOLD2, lineHeight: 1 }, children: 'Wonder Wallet' } },
-                        { type: 'div', props: { style: { fontSize: 26, color: MUTED, marginTop: 8 }, children: 'Secured by Emblem Vault' } },
+                        { type: 'div', props: { style: { fontSize: 26, color: MUTED, marginTop: 8 }, children: 'Bitcoin Stamps · SRC-20 · Counterparty' } },
                       ],
                     },
                   },
@@ -110,7 +110,7 @@ const tree = {
                 children: [chip('Bitcoin', GOLD2), chip('Ethereum', '#a78bfa'), chip('Solana', '#4ade80')],
               },
             },
-            { type: 'div', props: { style: { fontFamily: 'WW-SansB', fontSize: 24, color: MUTED }, children: 'wonder · v0.30.3 · beta' } },
+            { type: 'div', props: { style: { fontFamily: 'WW-SansB', fontSize: 24, color: MUTED }, children: 'wonder-wallet.com · self-custodial · beta' } },
           ],
         },
       },
