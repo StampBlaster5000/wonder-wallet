@@ -491,6 +491,18 @@ button.send-max:hover { border-color: var(--gold); color: var(--gold2); }
 .ac-badge.unc { color: #fbbf24; background: rgba(251,191,36,0.12); }
 .ac-boost { background: rgba(224,180,83,0.14); border: 1px solid var(--gold); color: var(--gold2); font-family: inherit; font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
 .ac-boost:hover { filter: brightness(1.15); }
+/* Rich activity: inline USD chips + click-to-expand detail card (ported from the Terminal). */
+.ac-usd { color: var(--muted); font-weight: 400; font-family: var(--mono); }
+.ac-row { cursor: pointer; transition: border-color .12s; }
+.ac-row:hover { border-color: var(--border2); }
+.ac-chev { color: var(--muted); font-size: 10px; flex: none; transition: transform .15s; }
+.ac-item.open .ac-chev { transform: rotate(180deg); }
+.ac-item.open .ac-row { border-color: var(--gold2); border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.ac-detail { border: 1px solid var(--gold2); border-top: none; border-radius: 0 0 10px 10px; background: var(--surface2); padding: 8px 10px 10px; margin-top: -1px; }
+.acd { display: flex; flex-direction: column; gap: 5px; }
+.acd-row { display: flex; justify-content: space-between; gap: 10px; font-size: 11.5px; }
+.acd-k { color: var(--muted); flex: none; }
+.acd-v { color: var(--text); text-align: right; word-break: break-word; font-family: var(--mono); }
 
 /* ── Advanced menu + Counterparty actions hub (popup-native) ── */
 .util-row { flex-wrap: wrap; }

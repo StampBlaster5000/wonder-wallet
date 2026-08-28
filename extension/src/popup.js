@@ -2753,33 +2753,96 @@
   // ── Activity / transaction history — metaprotocol-aware, Coin-Control-style. ──
   var ACT = { addr: null, items: null, filter: 'all' };
   function actAgo(ts) { if (!ts) return ''; var s = Math.max(0, Math.floor(Date.now() / 1000 - ts)); if (s < 60) return s + 's ago'; if (s < 3600) return Math.floor(s / 60) + 'm ago'; if (s < 86400) return Math.floor(s / 3600) + 'h ago'; return Math.floor(s / 86400) + 'd ago'; }
+  // Activity USD pricing: BTC + XCP from the price feed; other tokens via their XCP pool (best-effort).
+  var ACT_PX = { btc: 0, xcp: 0, pool: {} };
+  async function actLoadPx() {
+    try { var pr = await fetch('api/prices').then(function (r) { return r.json(); }); ACT_PX.btc = Number(pr.bitcoin) || 0; ACT_PX.xcp = Number(pr.counterparty) || 0; } catch (e) {}
+    try { var j = await fetch('api/cp/pools').then(function (r) { return r.json(); }); var arr = Array.isArray(j.result) ? j.result : []; var px = {};
+      arr.forEach(function (p) { var ra = Number(p.resA), rb = Number(p.resB); if (p.a === 'XCP' && rb > 0) px[p.b] = ra / rb; else if (p.b === 'XCP' && ra > 0) px[p.a] = rb / ra; });
+      ACT_PX.pool = px;
+    } catch (e) {}
+  }
+  function actUsd(asset, amt) {
+    var a = Number(amt); if (!(a > 0)) return '';
+    var u = 0;
+    if (asset === 'BTC') u = a * ACT_PX.btc;
+    else if (asset === 'XCP') u = a * ACT_PX.xcp;
+    else { var px = ACT_PX.pool[asset]; if (px) u = a * px * ACT_PX.xcp; }
+    return u ? ' <span class="ac-usd">≈ $' + u.toLocaleString('en-US', { maximumFractionDigits: u < 1 ? 4 : 2 }) + '</span>' : '';
+  }
+  function actSatsUsd(sats) { var u = (Number(sats) / 1e8) * ACT_PX.btc; return u ? ' <span class="ac-usd">≈ $' + u.toLocaleString('en-US', { maximumFractionDigits: 2 }) + '</span>' : ''; }
+  function actQty(d, field) {
+    if (d[field + '_normalized'] != null) return Number(d[field + '_normalized']);
+    var raw = Number(d[field]); if (!isFinite(raw)) return 0;
+    var info = d[field.replace(/_quantity$/, '') + '_asset_info'] || d.asset_info;
+    return (info && info.divisible === false) ? raw : raw / 1e8;
+  }
+  function amtChip(asset, qty) { return fmt(qty, 8) + ' ' + esc(asset || '') + actUsd(asset, qty); }
+
   function actDescribe(it) {
     var d = it.data || {}, t = it.type;
-    var det = function (s) { return s ? ' <span class="ac-det">' + esc(s) + '</span>' : ''; };
-    var asset = d.asset || '', q = d.quantity != null ? ' ' + fmt(d.quantity, 0) : '';
-    var to = d.address || d.destination, recv = to && to === ACT.addr;
-    if (it.source === 'btc') return d.amountSats == null ? { ic: XFER_IC, cls: 'cp', label: 'Bitcoin tx', detailHtml: '' }
-      : (t === 'receive' ? { ic: RECV_IC, cls: 'in', label: 'Received', detailHtml: det((d.amountSats / 1e8).toFixed(8) + ' BTC') } : { ic: XFER_IC, cls: 'out', label: 'Sent', detailHtml: det((d.amountSats / 1e8).toFixed(8) + ' BTC') });
-    if (it.source === 'src20') { var op = String(d.op || 'transfer').toLowerCase(); var amt = d.amt != null ? fmt(parseFloat(d.amt), 8) : (d.max != null ? 'max ' + fmt(parseFloat(d.max), 0) : ''); return { ic: op === 'deploy' ? PLUS_IC : op === 'mint' ? MINT_IC : XFER_IC, cls: 'src20', label: 'SRC-20 ' + op, detailHtml: det((d.tick || '') + (amt ? ' · ' + amt : '')) }; }
+    var det = function (s) { return s ? ' <span class="ac-det">' + s + '</span>' : ''; }; // s is pre-built HTML (assets esc'd by amtChip)
+    if (it.source === 'btc') {
+      if (d.amountSats == null) return { ic: XFER_IC, cls: 'cp', label: 'Bitcoin tx', detailHtml: '' };
+      var line = fmt(d.amountSats / 1e8, 8) + ' BTC' + actSatsUsd(d.amountSats);
+      return t === 'receive' ? { ic: RECV_IC, cls: 'in', label: 'Received', detailHtml: det(line) } : { ic: XFER_IC, cls: 'out', label: 'Sent', detailHtml: det(line) };
+    }
+    if (it.source === 'src20') { var op = String(d.op || 'transfer').toLowerCase(); var amt = d.amt != null ? fmt(parseFloat(d.amt), 8) : (d.max != null ? 'max ' + fmt(parseFloat(d.max), 0) : ''); return { ic: op === 'deploy' ? PLUS_IC : op === 'mint' ? MINT_IC : XFER_IC, cls: 'src20', label: 'SRC-20 ' + op, detailHtml: det(esc(d.tick || '') + (amt ? ' · ' + amt : '')) }; }
+    var to = d.destination || d.address, recv = !!to && to === ACT.addr;
     switch (t) {
-      case 'send': case 'enhanced_send': return recv ? { ic: RECV_IC, cls: 'in', label: 'Received asset', detailHtml: det(asset + q) } : { ic: XFER_IC, cls: 'out', label: 'Sent asset', detailHtml: det(asset + q) };
-      case 'mpma_send': return { ic: XFER_IC, cls: 'out', label: 'Multi-send (MPMA)', detailHtml: '' };
-      case 'dispenser': return { ic: DISP_IC, cls: 'cp', label: 'Opened dispenser', detailHtml: det(asset) };
-      case 'dispense': return { ic: DISP_IC, cls: 'in', label: 'Dispenser buy', detailHtml: det(asset) };
-      case 'dividend': return { ic: DIV_IC, cls: 'cp', label: 'Dividend', detailHtml: det(asset) };
-      case 'issuance': return { ic: PLUS_IC, cls: 'cp', label: 'Issuance', detailHtml: det(asset) };
-      case 'sweep': return { ic: SWEEP_IC, cls: 'cp', label: 'Sweep', detailHtml: det(to ? '→ ' + short(to) : '') };
-      case 'destroy': return { ic: FIRE_IC, cls: 'burn', label: 'Burned', detailHtml: det(asset + q) };
-      case 'order': return { ic: DEX_IC, cls: 'cp', label: 'DEX order', detailHtml: '' };
+      case 'send': case 'enhanced_send': case 'mpma_send': {
+        var who = recv ? (d.source ? ' ← ' + esc(short(d.source)) : '') : (to ? ' → ' + esc(short(to)) : '');
+        return recv ? { ic: RECV_IC, cls: 'in', label: 'Received', detailHtml: det(amtChip(d.asset, actQty(d, 'quantity')) + who) }
+          : { ic: XFER_IC, cls: 'out', label: t === 'mpma_send' ? 'Multi-send' : 'Sent', detailHtml: det(amtChip(d.asset, actQty(d, 'quantity')) + who) };
+      }
+      case 'order': return { ic: DEX_IC, cls: 'cp', label: 'Swap', detailHtml: det(amtChip(d.give_asset, actQty(d, 'give_quantity')) + ' → ' + amtChip(d.get_asset, actQty(d, 'get_quantity'))) };
+      case 'dispense': { var price = d.btc_amount != null ? fmt(d.btc_amount, 0) + ' sats' + actSatsUsd(d.btc_amount) : ''; var qa = d.asset ? esc(d.asset) + (d.dispense_quantity != null ? ' × ' + fmt(actQty(d, 'dispense_quantity'), 8) : '') : ''; return { ic: DISP_IC, cls: 'in', label: 'Dispenser buy', detailHtml: det(qa + (price ? (qa ? ' · ' : '') + 'for ' + price : '')) }; }
+      case 'dispenser': { var rate = d.satoshirate != null ? fmt(d.satoshirate, 0) + ' sats ea' : ''; return { ic: DISP_IC, cls: 'cp', label: 'Opened dispenser', detailHtml: det(esc(d.asset || '') + (rate ? ' @ ' + rate : '')) }; }
+      case 'fairmint': { var xcp = d.xcp_paid != null ? ' · ' + amtChip('XCP', d.xcp_paid / 1e8) : ''; var earned = d.earned != null ? ' · ' + fmt(actQty(d, 'earned'), 8) : ''; return { ic: MINT_IC, cls: 'cp', label: 'Minted', detailHtml: det(esc(d.asset || '') + earned + xcp) }; }
+      case 'fairminter': return { ic: PLUS_IC, cls: 'cp', label: 'Launched fairminter', detailHtml: det(esc(d.asset || '')) };
+      case 'dividend': { var per = d.quantity_per_unit != null ? ' · ' + amtChip(d.dividend_asset || 'XCP', actQty(d, 'quantity_per_unit')) + ' each' : ''; return { ic: DIV_IC, cls: 'cp', label: 'Dividend', detailHtml: det(esc(d.asset || '') + per) }; }
+      case 'issuance': { var qi = d.quantity != null ? ' · ' + fmt(actQty(d, 'quantity'), 8) : ''; return { ic: PLUS_IC, cls: 'cp', label: 'Issuance', detailHtml: det(esc(d.asset || '') + qi) }; }
+      case 'sweep': return { ic: SWEEP_IC, cls: 'cp', label: 'Sweep', detailHtml: det(to ? '→ ' + esc(short(to)) : '') };
+      case 'destroy': return { ic: FIRE_IC, cls: 'burn', label: 'Burned', detailHtml: det(amtChip(d.asset, actQty(d, 'quantity'))) };
       case 'cancel': return { ic: DEX_IC, cls: 'cp', label: 'Cancelled order', detailHtml: '' };
       case 'btcpay': return { ic: DEX_IC, cls: 'cp', label: 'BTC pay (match)', detailHtml: '' };
-      case 'fairminter': return { ic: PLUS_IC, cls: 'cp', label: 'Fairminter', detailHtml: det(asset) };
-      case 'fairmint': return { ic: MINT_IC, cls: 'cp', label: 'Fairmint', detailHtml: det(asset) };
-      case 'attach': return { ic: XFER_IC, cls: 'cp', label: 'Attach to UTXO', detailHtml: det(asset) };
-      case 'detach': return { ic: XFER_IC, cls: 'cp', label: 'Detach from UTXO', detailHtml: det(asset) };
+      case 'attach': return { ic: XFER_IC, cls: 'cp', label: 'Attach to UTXO', detailHtml: det(esc(d.asset || '')) };
+      case 'detach': return { ic: XFER_IC, cls: 'cp', label: 'Detach from UTXO', detailHtml: det(esc(d.asset || '')) };
       case 'broadcast': return { ic: XFER_IC, cls: 'cp', label: 'Broadcast', detailHtml: '' };
-      default: return { ic: XFER_IC, cls: 'cp', label: (t || 'Counterparty').replace(/_/g, ' '), detailHtml: det(asset) };
+      default: return { ic: XFER_IC, cls: 'cp', label: (t || 'Counterparty').replace(/_/g, ' '), detailHtml: det(esc(d.asset || '')) };
     }
+  }
+  // Expanded detail card — full per-tx breakdown (with USD), shown when a row is tapped.
+  function actDetailHtml(it) {
+    var d = it.data || {}, t = it.type;
+    var row = function (k, v) { return v ? '<div class="acd-row"><span class="acd-k">' + esc(k) + '</span><span class="acd-v">' + v + '</span></div>' : ''; };
+    var rows = '';
+    if (it.source === 'btc') rows += row(t === 'receive' ? 'Received' : 'Sent', d.amountSats != null ? fmt(d.amountSats / 1e8, 8) + ' BTC' + actSatsUsd(d.amountSats) : '');
+    else if (it.source === 'src20') rows += row('Op', esc(String(d.op || ''))) + row('Ticker', esc(d.tick || '')) + row('Amount', d.amt != null ? fmt(parseFloat(d.amt), 8) : (d.max != null ? 'max ' + fmt(parseFloat(d.max), 0) : '')) + row('To', d.to ? esc(short(d.to)) : '');
+    else {
+      var to = d.destination || d.address, recv = !!to && to === ACT.addr;
+      switch (t) {
+        case 'send': case 'enhanced_send': case 'mpma_send':
+          rows += row('Asset', amtChip(d.asset, actQty(d, 'quantity'))) + row(recv ? 'From' : 'To', esc(short(recv ? (d.source || '') : (to || '')))) + (d.memo ? row('Memo', esc(String(d.memo))) : ''); break;
+        case 'order':
+          rows += row('Give', amtChip(d.give_asset, actQty(d, 'give_quantity'))) + row('Get', amtChip(d.get_asset, actQty(d, 'get_quantity'))) + row('Status', esc(d.status || '')); break;
+        case 'dispense':
+          rows += row('Bought', d.asset ? fmt(actQty(d, 'dispense_quantity'), 8) + ' ' + esc(d.asset) : '') + row('Paid', d.btc_amount != null ? fmt(d.btc_amount, 0) + ' sats' + actSatsUsd(d.btc_amount) : '') + row('Dispenser', d.dispenser_source ? esc(short(d.dispenser_source)) : ''); break;
+        case 'dispenser':
+          rows += row('Asset', esc(d.asset || '')) + row('Give / dispense', d.give_quantity != null ? fmt(actQty(d, 'give_quantity'), 8) : '') + row('Price', d.satoshirate != null ? fmt(d.satoshirate, 0) + ' sats each' : ''); break;
+        case 'fairmint':
+          rows += row('Token', d.earned != null ? fmt(actQty(d, 'earned'), 8) + ' ' + esc(d.asset || '') : esc(d.asset || '')) + row('XCP paid', d.xcp_paid != null ? amtChip('XCP', d.xcp_paid / 1e8) : ''); break;
+        case 'dividend':
+          rows += row('On asset', esc(d.asset || '')) + row('Per unit', d.quantity_per_unit != null ? amtChip(d.dividend_asset || 'XCP', actQty(d, 'quantity_per_unit')) : ''); break;
+        case 'issuance':
+          rows += row('Asset', esc(d.asset || '')) + row('Quantity', d.quantity != null ? fmt(actQty(d, 'quantity'), 8) : '') + (d.description ? row('Description', esc(String(d.description).slice(0, 80))) : ''); break;
+        default: if (d.asset) rows += row('Asset', esc(d.asset));
+      }
+    }
+    rows += row('Miner fee', it.fee != null ? fmt(it.fee, 0) + ' sats' + actSatsUsd(it.fee) + (it.feeRate != null ? ' · ' + it.feeRate + ' s/vB' : '') : '');
+    rows += row('Status', it.confirmed ? 'Confirmed' + (it.blockHeight ? ' · block ' + fmt(it.blockHeight, 0) : '') : 'Unconfirmed');
+    rows += '<div class="acd-row"><span class="acd-k">Transaction</span><span class="acd-v"><a href="https://mempool.space/tx/' + encodeURIComponent(it.txid) + '" target="_blank" rel="noopener" style="color:var(--gold2)">' + esc(it.txid.slice(0, 20)) + '…</a></span></div>';
+    return '<div class="acd">' + rows + '</div>';
   }
   function actRowHtml(it) {
     var info = actDescribe(it);
@@ -2790,11 +2853,13 @@
     // output we own (→ CPFP). When so, the row's icon becomes a tap target that opens the Speed-up chooser.
     var canAccel = !it.confirmed && canSignBtc() && ((it.source === 'btc' && it.direction === 'out') || !!it.ownVout);
     var ic = '<span class="ac-ic ' + info.cls + (canAccel ? ' ac-ic-boost' : '') + '"' + (canAccel ? ' data-accel="' + esc(it.txid) + '" title="Speed up this transaction"' : '') + '>' + info.ic + (canAccel ? '<span class="ac-boltbadge">⚡</span>' : '') + '</span>';
-    return '<div class="ac-row">'
+    return '<div class="ac-item" data-tx="' + esc(it.txid) + '">'
+      + '<div class="ac-row" data-expand="' + esc(it.txid) + '">'
       + ic
       + '<div class="ac-main"><div class="ac-l1">' + esc(info.label) + info.detailHtml + '</div>'
       + '<div class="ac-l2"><span class="ac-tx" data-copy="' + esc(it.txid) + '" title="Copy txid">' + esc(it.txid.slice(0, 12)) + '…</span>' + (when ? '<span>' + esc(when) + '</span>' : '') + (fee ? '<span class="ac-fee">' + esc(fee) + '</span>' : '') + '</div></div>'
-      + '<div class="ac-r">' + status + '</div></div>';
+      + '<div class="ac-r">' + status + '<span class="ac-chev">▾</span></div></div>'
+      + '<div class="ac-detail" hidden></div></div>';
   }
   function renderActivity(addr) {
     if (!addr) return renderMain();
@@ -2809,8 +2874,10 @@
   }
   async function loadActivity() {
     var body = document.getElementById('acBody'); if (body) body.innerHTML = '<div class="empty">Loading activity…</div>';
-    try { var r = await fetch('api/activity/' + encodeURIComponent(ACT.addr)).then(function (x) { return x.json(); }); ACT.items = r.items || []; }
-    catch (e) { if (body) body.innerHTML = '<div class="p-err" style="margin:14px">Could not load activity — try again.</div>'; return; }
+    try {
+      var res = await Promise.all([fetch('api/activity/' + encodeURIComponent(ACT.addr)).then(function (x) { return x.json(); }), actLoadPx()]);
+      ACT.items = res[0].items || [];
+    } catch (e) { if (body) body.innerHTML = '<div class="p-err" style="margin:14px">Could not load activity — try again.</div>'; return; }
     renderActivityList();
   }
   function renderActivityList() {
@@ -2822,8 +2889,14 @@
     var list = rows.length ? rows.map(actRowHtml).join('') : '<div class="empty">No ' + (ACT.filter === 'all' ? '' : ACT.filter + ' ') + 'transactions.</div>';
     body.innerHTML = filterBar + '<div class="ac-list">' + list + '</div>';
     body.querySelectorAll('.acf').forEach(function (b) { b.onclick = function () { ACT.filter = b.dataset.f; renderActivityList(); }; });
-    body.querySelectorAll('[data-copy]').forEach(function (el) { el.onclick = function () { copy(el.getAttribute('data-copy'), el); }; });
-    body.querySelectorAll('[data-accel]').forEach(function (b) { b.onclick = function () { var it = ACT.items.filter(function (x) { return x.txid === b.dataset.accel; })[0]; if (it) accelerateTx(it); }; });
+    body.querySelectorAll('[data-copy]').forEach(function (el) { el.onclick = function (e) { e.stopPropagation(); copy(el.getAttribute('data-copy'), el); }; });
+    body.querySelectorAll('[data-accel]').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); var it = ACT.items.filter(function (x) { return x.txid === b.dataset.accel; })[0]; if (it) accelerateTx(it); }; });
+    // Tap a row to expand its full detail card (filled lazily on first open).
+    body.querySelectorAll('[data-expand]').forEach(function (r) { r.onclick = function () {
+      var item = r.closest('.ac-item'); if (!item) return; var panel = item.querySelector('.ac-detail'); var it = ACT.items.filter(function (x) { return x.txid === r.dataset.expand; })[0]; if (!panel || !it) return;
+      if (panel.hasAttribute('hidden')) { if (!panel.dataset.filled) { panel.innerHTML = actDetailHtml(it); panel.dataset.filled = '1'; } panel.removeAttribute('hidden'); item.classList.add('open'); }
+      else { panel.setAttribute('hidden', ''); item.classList.remove('open'); }
+    }; });
   }
   // Speed-up chooser — one entry point (tap the row icon) that offers whichever accelerators apply:
   // RBF replacement (your own BTC sends) and/or CPFP boost (any tx with a spendable output you own).
