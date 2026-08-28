@@ -26,7 +26,8 @@
   const BYTX = {}; // tx_hash → fairminter row, so a card click can open the full launch
 
   // Live-analytics state + formatters (block tip drives deadline timeframes; XCP/USD prices the raise).
-  let TIP = 0, XCPUSD = 0;
+  let TIP = 0, XCPUSD = 0, BTCUSD = 0;
+  const usdBtc = (sats) => { const u = (Number(sats) / 1e8) * BTCUSD; return u ? ' ≈ $' + u.toLocaleString('en-US', { maximumFractionDigits: 2 }) : ''; };
   // Per-phase sort — each tab keeps its own choice; the options that make sense differ by phase.
   const SORTBY = { open: 'progress', pending: 'soon', closed: 'new' };
   const SORTS = {
@@ -166,17 +167,31 @@
     let fees = { halfHourFee: 6, fastestFee: 10, hourFee: 3 }; try { fees = await fetch('api/btc/fees').then((r) => r.json()); } catch (_) {}
     fees = window.WWFee ? window.WWFee.stagger(fees, ['fastestFee', 'halfHourFee', 'hourFee']) : fees; // strictly descending presets (no ties)
     let feeRate = fees.halfHourFee || 6;
+    // The minter's XCP balance — MAX fills to what they can actually afford (each lot = 0.01 XCP), capped
+    // by the 10-XCP per-address allocation + what's left in the sale. Also grab BTC/USD for the confirm fee.
+    let xcpBal = 0;
+    try { const src = window.WonderCpFlow && window.WonderCpFlow.activeSource(); if (src) { const h = await fetch('api/cp/holdings/' + encodeURIComponent(src)).then((r) => r.json()); const x = (h.holdings || []).find((a) => a.asset === 'XCP'); xcpBal = x ? Number(x.qty) || 0 : 0; } } catch (_) {}
+    try { if (!BTCUSD) { const pr = await fetch('api/prices').then((r) => r.json()); BTCUSD = Number(pr && pr.bitcoin) || 0; } } catch (_) {}
+    const affordableLots = Math.floor(xcpBal / 0.01 + 1e-9);
+    const maxAffordable = Math.min(maxLots, affordableLots);
     box.innerHTML = `<div class="acct-grp">Mint</div>
       <div class="lp-mintrow"><input id="lpLots" class="m-in" type="number" min="1" max="${maxLots}" value="1" /><span class="lp-lotslbl">lots × 1,000 tokens</span></div>
       <div class="lp-presets">${[1, 5, 10, 'Max'].map((v) => `<button class="mini lp-pre" data-lots="${v}">${v}${v === 'Max' ? '' : '×'}</button>`).join('')}</div>
+      <div class="fine" style="margin-top:6px">You hold <b>${xcpBal.toLocaleString('en-US', { maximumFractionDigits: 8 })} XCP</b> — enough for <b>${affordableLots.toLocaleString('en-US')}</b> lot${affordableLots === 1 ? '' : 's'}${affordableLots < capLots ? ' (below the 10 XCP cap)' : ''}.</div>
       <div class="fee-row" id="lpFeeRow" style="margin-top:8px">${[['fastestFee', 'Fast'], ['halfHourFee', '30m'], ['hourFee', '1h']].map(([k, l], i) => `<button class="feeopt ${i === 1 ? 'on' : ''}" data-r="${fees[k] || 5}">${l} · ${fees[k] || '–'}</button>`).join('')}</div>
       <div class="lp-cost" id="lpCost"></div>
       <div id="lpStatus" class="statusline" hidden></div>
       <div class="wbtns"><button class="primary" id="lpMintGo">Review mint</button></div>`;
     const lotsEl = $('#lpLots');
-    const cost = () => { const n = Math.max(1, parseInt(lotsEl.value, 10) || 1); const el = $('#lpCost'); if (el) el.innerHTML = `<b>${n}</b> lot${n === 1 ? '' : 's'} = <b>${n * 1000}</b> tokens · costs <b>${(n * 0.01).toLocaleString('en-US', { maximumFractionDigits: 2 })} XCP</b> (from your Counterparty balance) + a Bitcoin miner fee`; };
+    const cost = () => { const n = Math.max(1, parseInt(lotsEl.value, 10) || 1); const over = n > maxAffordable; const el = $('#lpCost'); if (el) el.innerHTML = `<b>${n}</b> lot${n === 1 ? '' : 's'} = <b>${n * 1000}</b> tokens · costs <b>${(n * 0.01).toLocaleString('en-US', { maximumFractionDigits: 2 })} XCP</b> + a Bitcoin miner fee` + (over ? ` <span style="color:var(--red)">⚠ more than your XCP balance</span>` : ''); };
     lotsEl.oninput = cost; cost();
-    box.querySelectorAll('.lp-pre').forEach((b) => (b.onclick = () => { lotsEl.value = b.dataset.lots === 'Max' ? maxLots : b.dataset.lots; cost(); }));
+    box.querySelectorAll('.lp-pre').forEach((b) => (b.onclick = () => {
+      if (b.dataset.lots === 'Max') {
+        if (maxAffordable < 1) { const st = $('#lpStatus'); if (st) { st.hidden = false; st.className = 'statusline err'; st.textContent = `You need XCP to mint — each lot costs 0.01 XCP, and you hold ${xcpBal.toLocaleString('en-US', { maximumFractionDigits: 8 })} XCP.`; } return; }
+        lotsEl.value = maxAffordable;
+      } else lotsEl.value = b.dataset.lots;
+      cost();
+    }));
     box.querySelectorAll('.feeopt').forEach((b) => (b.onclick = () => { box.querySelectorAll('.feeopt').forEach((x) => x.classList.remove('on')); b.classList.add('on'); feeRate = Number(b.dataset.r); }));
     $('#lpMintGo').onclick = () => doMint(fm, Math.max(1, Math.min(maxLots, parseInt(lotsEl.value, 10) || 1)), feeRate);
   }
@@ -188,22 +203,26 @@
       const quantity = (BigInt(lots) * xr.big(fm.quantity_by_price)).toString();
       const { compose, report } = await window.WonderCpFlow.composeVerify('fairmint', { asset: fm.asset, quantity, sat_per_vbyte: feeRate }, { feeRatePerVb: feeRate });
       // confirm screen — the verify report becomes a green banner; user signs from here
+      if (!BTCUSD) { try { BTCUSD = Number((await fetch('api/prices').then((r) => r.json())).bitcoin) || 0; } catch (_) {} }
       const feeSats = compose.btc_fee != null ? Number(compose.btc_fee).toLocaleString('en-US') : '—';
-      modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Confirm mint</h3><div class="cp-addr">${esc(fm.asset_longname || fm.asset)}</div></div></div>
+      modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Confirm mint</h3><div class="cp-addr">${esc(fm.asset_longname || fm.asset)}</div></div><div class="cc-head-r"><button class="m-close-x" id="lpcX" title="Close" aria-label="Close">✕</button></div></div>
         <div class="m-rows">
           <div class="m-row"><span class="k">Mint</span><span class="v">${lots} lot${lots === 1 ? '' : 's'} · ${lots * 1000} tokens</span></div>
           <div class="m-row"><span class="k">XCP cost</span><span class="v">${(lots * 0.01).toLocaleString('en-US', { maximumFractionDigits: 2 })} XCP</span></div>
-          <div class="m-row"><span class="k">Miner fee</span><span class="v">${feeSats} sats</span></div>
+          <div class="m-row"><span class="k">Miner fee</span><span class="v">${feeSats} sats${usdBtc(compose.btc_fee)}</span></div>
         </div>
         ${window.WonderVerify.bannerHtml(report)}
         <div class="fine" style="margin-top:8px">Your XCP + minted tokens sit in escrow until the launch resolves — sold out ⇒ tokens released &amp; pool seeds; missed ⇒ your XCP is auto-refunded.</div>
         <div id="lpcStatus" class="statusline" hidden></div>
         <div class="wbtns"><button class="ghost" id="lpcBack">Back</button><button class="primary" id="lpcGo">Sign &amp; mint</button></div>`);
+      $('#lpcX').onclick = close;
       $('#lpcBack').onclick = () => openLaunch(fm);
       $('#lpcGo').onclick = async () => {
         const cs = $('#lpcStatus'); cs.hidden = false; cs.className = 'statusline load'; cs.textContent = 'Signing & broadcasting…';
         try { const { txid } = await window.WonderCpFlow.sign(compose);
           cs.className = 'statusline'; cs.innerHTML = `Minted ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(txid).slice(0, 18))}…</a> · Counterparty confirms separately.`;
+          // Broadcast done — no going back; swap Back + Sign for a single Confirm (the ✕ stays in the corner).
+          const btns = $('#lpCard .wbtns'); if (btns) { btns.innerHTML = '<button class="primary" id="lpcDone">Confirm</button>'; const d = $('#lpcDone'); if (d) d.onclick = close; }
         } catch (e) { cs.className = 'statusline err'; cs.textContent = 'Failed: ' + (e.message || 'sign/broadcast error'); }
       };
     } catch (e) {

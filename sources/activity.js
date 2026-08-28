@@ -36,11 +36,15 @@ async function getActivity(address) {
   const hit = cacheGet(key);
   if (hit) return hit;
 
-  const [cpConf, cpMem, btcTxs] = await Promise.all([
+  const [cpConf, cpMem, btcTxs, fairmints] = await Promise.all([
     fetchJson(`${CP}/addresses/${address}/transactions?verbose=true&limit=100`).catch(() => ({ result: [] })),
     fetchJson(`${CP}/addresses/${address}/mempool?verbose=true`).catch(() => ({ result: [] })),
     fetchJson(`${MEMPOOL}/address/${address}/txs`).catch(() => []),
+    fetchJson(`${CP}/addresses/${address}/fairmints?verbose=true&limit=100`).catch(() => ({ result: [] })),
   ]);
+  // tx_hash → { XCP paid, tokens earned } so a fairmint row can show its real cost (message_data omits it).
+  const fmMap = {};
+  for (const f of (fairmints.result || [])) if (f.tx_hash) fmMap[f.tx_hash] = { xcp_paid: f.paid_quantity, earned: f.earn_quantity };
 
   // ── BTC layer: txid → status / fee / vsize / net delta for this address ──
   const btcMap = {};
@@ -63,8 +67,19 @@ async function getActivity(address) {
   const cpItem = (t, memp) => {
     const hash = t.tx_hash; if (!hash) return;
     const ud = t.unpacked_data || {}; const b = btcMap[hash] || {};
+    const type = ud.message_type || 'counterparty';
+    let data = ud.message_data || {};
+    // Enrich the two types whose decoded message_data is thin: a DISPENSE (asset/qty/BTC-paid live in the
+    // tx's DISPENSE event, not message_data) and a FAIRMINT (message_data omits the XCP paid → fmMap).
+    if (type === 'dispense') {
+      const de = (t.events || []).find((e) => e && e.event === 'DISPENSE'); const p = de && de.params;
+      if (p) data = Object.assign({}, data, { asset: p.asset, dispense_quantity: p.dispense_quantity, btc_amount: p.btc_amount, dispenser_source: p.source });
+      else if (t.btc_amount != null) data = Object.assign({}, data, { btc_amount: t.btc_amount });
+    } else if (type === 'fairmint' && fmMap[hash]) {
+      data = Object.assign({}, data, fmMap[hash]);
+    }
     push({
-      txid: hash, source: 'cp', type: ud.message_type || 'counterparty', data: ud.message_data || {},
+      txid: hash, source: 'cp', type, data,
       confirmed: memp ? false : (b.confirmed != null ? b.confirmed : t.block_index != null),
       blockHeight: t.block_index || b.blockHeight || null, time: b.time || t.block_time || null,
       fee: b.fee, vsize: b.vsize, feeRate: b.feeRate, rbf: b.rbf, direction: b.direction, ownVout: b.ownVout || null,

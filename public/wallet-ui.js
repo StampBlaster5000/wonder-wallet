@@ -793,32 +793,97 @@
     dex: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v13M4 14l3 3 3-3M17 20V7M20 10l-3-3-3 3"/></svg>',
   };
   const termAgo = (ts) => { if (!ts) return ''; const s = Math.max(0, Math.floor(Date.now() / 1000 - ts)); if (s < 60) return s + 's ago'; if (s < 3600) return Math.floor(s / 60) + 'm ago'; if (s < 86400) return Math.floor(s / 3600) + 'h ago'; return Math.floor(s / 86400) + 'd ago'; };
+  // ── Activity USD pricing: BTC + XCP from the price feed; other tokens via their XCP pool (best-effort). ──
+  let ACT_PX = { btc: 0, xcp: 0, pool: {} };
+  async function actLoadPx() {
+    try { const pr = await fetch('api/prices').then((r) => r.json()); ACT_PX.btc = Number(pr.bitcoin) || 0; ACT_PX.xcp = Number(pr.counterparty) || 0; } catch (_) {}
+    try { const j = await fetch('api/cp/pools').then((r) => r.json()); const arr = Array.isArray(j.result) ? j.result : []; const px = {};
+      arr.forEach((p) => { const ra = Number(p.resA), rb = Number(p.resB); if (p.a === 'XCP' && rb > 0) px[p.b] = ra / rb; else if (p.b === 'XCP' && ra > 0) px[p.a] = rb / ra; });
+      ACT_PX.pool = px;
+    } catch (_) {}
+  }
+  // USD chip for an amount of an asset (normalized units): BTC/XCP direct, other tokens via pool XCP-price. '' if unknown.
+  function actUsd(asset, amt) {
+    const a = Number(amt); if (!(a > 0)) return '';
+    let u = 0;
+    if (asset === 'BTC') u = a * ACT_PX.btc;
+    else if (asset === 'XCP') u = a * ACT_PX.xcp;
+    else { const px = ACT_PX.pool[asset]; if (px) u = a * px * ACT_PX.xcp; }
+    return u ? ` <span class="ac-usd">≈ $${u.toLocaleString('en-US', { maximumFractionDigits: u < 1 ? 4 : 2 })}</span>` : '';
+  }
+  const actSatsUsd = (sats) => { const u = (Number(sats) / 1e8) * ACT_PX.btc; return u ? ` <span class="ac-usd">≈ $${u.toLocaleString('en-US', { maximumFractionDigits: 2 })}</span>` : ''; };
+  // Normalized amount for a CP data field: prefer the API's <field>_normalized, else /1e8 when the asset is divisible.
+  function actQty(d, field) {
+    if (d[field + '_normalized'] != null) return Number(d[field + '_normalized']);
+    const raw = Number(d[field]); if (!isFinite(raw)) return 0;
+    const info = d[field.replace(/_quantity$/, '') + '_asset_info'] || d.asset_info;
+    return (info && info.divisible === false) ? raw : raw / 1e8;
+  }
+  const amtChip = (asset, qty) => `${fmtN(qty, 8)} ${esc(asset || '')}${actUsd(asset, qty)}`;
+
   function actDesc(it) {
     const d = it.data || {}, t = it.type;
-    const det = (s) => (s ? ` <span class="ac-det">${esc(s)}</span>` : '');
-    const asset = d.asset || '', q = d.quantity != null ? ' ' + fmtN(d.quantity, 0) : '';
-    const to = d.address || d.destination, recv = to && to === ACT_T.addr;
-    if (it.source === 'btc') return d.amountSats == null ? { ic: AIC.send, cls: 'cp', label: 'Bitcoin tx', detail: '' }
-      : (t === 'receive' ? { ic: AIC.recv, cls: 'in', label: 'Received', detail: det((d.amountSats / 1e8).toFixed(8) + ' BTC') } : { ic: AIC.send, cls: 'out', label: 'Sent', detail: det((d.amountSats / 1e8).toFixed(8) + ' BTC') });
-    if (it.source === 'src20') { const op = String(d.op || 'transfer').toLowerCase(); const amt = d.amt != null ? fmtN(parseFloat(d.amt), 8) : (d.max != null ? 'max ' + fmtN(parseFloat(d.max), 0) : ''); return { ic: op === 'deploy' ? AIC.plus : op === 'mint' ? AIC.mint : AIC.send, cls: 'src20', label: 'SRC-20 ' + op, detail: det((d.tick || '') + (amt ? ' · ' + amt : '')) }; }
-    switch (t) {
-      case 'send': case 'enhanced_send': return recv ? { ic: AIC.recv, cls: 'in', label: 'Received asset', detail: det(asset + q) } : { ic: AIC.send, cls: 'out', label: 'Sent asset', detail: det(asset + q) };
-      case 'mpma_send': return { ic: AIC.send, cls: 'out', label: 'Multi-send (MPMA)', detail: '' };
-      case 'dispenser': return { ic: AIC.disp, cls: 'cp', label: 'Opened dispenser', detail: det(asset) };
-      case 'dispense': return { ic: AIC.disp, cls: 'in', label: 'Dispenser buy', detail: det(asset) };
-      case 'dividend': return { ic: AIC.div, cls: 'cp', label: 'Dividend', detail: det(asset) };
-      case 'issuance': return { ic: AIC.plus, cls: 'cp', label: 'Issuance', detail: det(asset) };
-      case 'sweep': return { ic: AIC.sweep, cls: 'cp', label: 'Sweep', detail: det(to ? '→ ' + shortA(to) : '') };
-      case 'destroy': return { ic: AIC.fire, cls: 'burn', label: 'Burned', detail: det(asset + q) };
-      case 'order': return { ic: AIC.dex, cls: 'cp', label: 'DEX order', detail: '' };
-      case 'cancel': return { ic: AIC.dex, cls: 'cp', label: 'Cancelled order', detail: '' };
-      case 'btcpay': return { ic: AIC.dex, cls: 'cp', label: 'BTC pay (match)', detail: '' };
-      case 'fairminter': return { ic: AIC.plus, cls: 'cp', label: 'Fairminter', detail: det(asset) };
-      case 'fairmint': return { ic: AIC.mint, cls: 'cp', label: 'Fairmint', detail: det(asset) };
-      case 'attach': return { ic: AIC.send, cls: 'cp', label: 'Attach to UTXO', detail: det(asset) };
-      case 'detach': return { ic: AIC.send, cls: 'cp', label: 'Detach from UTXO', detail: det(asset) };
-      default: return { ic: AIC.send, cls: 'cp', label: (t || 'Counterparty').replace(/_/g, ' '), detail: det(asset) };
+    const det = (s) => (s ? ` <span class="ac-det">${s}</span>` : ''); // s is pre-built HTML (asset names esc'd by amtChip)
+    if (it.source === 'btc') {
+      if (d.amountSats == null) return { ic: AIC.send, cls: 'cp', label: 'Bitcoin tx', detail: '' };
+      const line = `${fmtN(d.amountSats / 1e8, 8)} BTC${actSatsUsd(d.amountSats)}`;
+      return t === 'receive' ? { ic: AIC.recv, cls: 'in', label: 'Received', detail: det(line) } : { ic: AIC.send, cls: 'out', label: 'Sent', detail: det(line) };
     }
+    if (it.source === 'src20') { const op = String(d.op || 'transfer').toLowerCase(); const amt = d.amt != null ? fmtN(parseFloat(d.amt), 8) : (d.max != null ? 'max ' + fmtN(parseFloat(d.max), 0) : ''); return { ic: op === 'deploy' ? AIC.plus : op === 'mint' ? AIC.mint : AIC.send, cls: 'src20', label: 'SRC-20 ' + op, detail: det(esc(d.tick || '') + (amt ? ' · ' + amt : '')) }; }
+    const to = d.destination || d.address, recv = !!to && to === ACT_T.addr;
+    switch (t) {
+      case 'send': case 'enhanced_send': case 'mpma_send': {
+        const who = recv ? (d.source ? ' ← ' + esc(shortA(d.source)) : '') : (to ? ' → ' + esc(shortA(to)) : '');
+        return recv ? { ic: AIC.recv, cls: 'in', label: 'Received', detail: det(amtChip(d.asset, actQty(d, 'quantity')) + who) }
+          : { ic: AIC.send, cls: 'out', label: t === 'mpma_send' ? 'Multi-send' : 'Sent', detail: det(amtChip(d.asset, actQty(d, 'quantity')) + who) };
+      }
+      case 'order': return { ic: AIC.dex, cls: 'cp', label: 'Swap', detail: det(`${amtChip(d.give_asset, actQty(d, 'give_quantity'))} → ${amtChip(d.get_asset, actQty(d, 'get_quantity'))}`) };
+      case 'dispense': { const price = d.btc_amount != null ? `${fmtN(d.btc_amount, 0)} sats${actSatsUsd(d.btc_amount)}` : ''; const qa = d.asset ? esc(d.asset) + (d.dispense_quantity != null ? ' × ' + fmtN(actQty(d, 'dispense_quantity'), 8) : '') : ''; return { ic: AIC.disp, cls: 'in', label: 'Dispenser buy', detail: det(qa + (price ? (qa ? ' · ' : '') + 'for ' + price : '')) }; }
+      case 'dispenser': { const rate = d.satoshirate != null ? fmtN(d.satoshirate, 0) + ' sats ea' : ''; return { ic: AIC.disp, cls: 'cp', label: 'Opened dispenser', detail: det(esc(d.asset || '') + (rate ? ' @ ' + rate : '')) }; }
+      case 'fairmint': { const xcp = d.xcp_paid != null ? ' · ' + amtChip('XCP', d.xcp_paid / 1e8) : ''; const earned = d.earned != null ? ' · ' + fmtN(actQty(d, 'earned'), 8) : ''; return { ic: AIC.mint, cls: 'cp', label: 'Minted', detail: det(esc(d.asset || '') + earned + xcp) }; }
+      case 'fairminter': return { ic: AIC.plus, cls: 'cp', label: 'Launched fairminter', detail: det(esc(d.asset || '')) };
+      case 'dividend': { const per = d.quantity_per_unit != null ? ' · ' + amtChip(d.dividend_asset || 'XCP', actQty(d, 'quantity_per_unit')) + ' each' : ''; return { ic: AIC.div, cls: 'cp', label: 'Dividend', detail: det(esc(d.asset || '') + per) }; }
+      case 'issuance': { const q = d.quantity != null ? ' · ' + fmtN(actQty(d, 'quantity'), 8) : ''; return { ic: AIC.plus, cls: 'cp', label: 'Issuance', detail: det(esc(d.asset || '') + q) }; }
+      case 'sweep': return { ic: AIC.sweep, cls: 'cp', label: 'Sweep', detail: det(to ? '→ ' + esc(shortA(to)) : '') };
+      case 'destroy': return { ic: AIC.fire, cls: 'burn', label: 'Burned', detail: det(amtChip(d.asset, actQty(d, 'quantity'))) };
+      case 'order_cancel': case 'cancel': return { ic: AIC.dex, cls: 'cp', label: 'Cancelled order', detail: '' };
+      case 'btcpay': return { ic: AIC.dex, cls: 'cp', label: 'BTC pay (match)', detail: '' };
+      case 'attach': return { ic: AIC.send, cls: 'cp', label: 'Attach to UTXO', detail: det(esc(d.asset || '')) };
+      case 'detach': return { ic: AIC.send, cls: 'cp', label: 'Detach from UTXO', detail: det(esc(d.asset || '')) };
+      default: return { ic: AIC.send, cls: 'cp', label: (t || 'Counterparty').replace(/_/g, ' '), detail: det(esc(d.asset || '')) };
+    }
+  }
+  // Expanded detail card — the full per-tx breakdown (with USD), shown when a row is tapped.
+  function actDetailHtml(it) {
+    const d = it.data || {}, t = it.type;
+    const row = (k, v) => (v ? `<div class="acd-row"><span class="acd-k">${esc(k)}</span><span class="acd-v">${v}</span></div>` : '');
+    let rows = '';
+    if (it.source === 'btc') rows += row(t === 'receive' ? 'Received' : 'Sent', d.amountSats != null ? `${fmtN(d.amountSats / 1e8, 8)} BTC${actSatsUsd(d.amountSats)}` : '');
+    else if (it.source === 'src20') rows += row('Op', esc(String(d.op || ''))) + row('Ticker', esc(d.tick || '')) + row('Amount', d.amt != null ? fmtN(parseFloat(d.amt), 8) : (d.max != null ? 'max ' + fmtN(parseFloat(d.max), 0) : '')) + row('To', d.to ? esc(shortA(d.to)) : '');
+    else {
+      const to = d.destination || d.address, recv = !!to && to === ACT_T.addr;
+      switch (t) {
+        case 'send': case 'enhanced_send': case 'mpma_send':
+          rows += row('Asset', amtChip(d.asset, actQty(d, 'quantity'))) + row(recv ? 'From' : 'To', esc(shortA(recv ? (d.source || '') : (to || '')))) + (d.memo ? row('Memo', esc(String(d.memo))) : ''); break;
+        case 'order':
+          rows += row('Give', amtChip(d.give_asset, actQty(d, 'give_quantity'))) + row('Get', amtChip(d.get_asset, actQty(d, 'get_quantity'))) + row('Status', esc(d.status || '')); break;
+        case 'dispense':
+          rows += row('Bought', d.asset ? `${fmtN(actQty(d, 'dispense_quantity'), 8)} ${esc(d.asset)}` : '') + row('Paid', d.btc_amount != null ? `${fmtN(d.btc_amount, 0)} sats${actSatsUsd(d.btc_amount)}` : '') + row('Dispenser', d.dispenser_source ? esc(shortA(d.dispenser_source)) : ''); break;
+        case 'dispenser':
+          rows += row('Asset', esc(d.asset || '')) + row('Give / dispense', d.give_quantity != null ? fmtN(actQty(d, 'give_quantity'), 8) : '') + row('Price', d.satoshirate != null ? fmtN(d.satoshirate, 0) + ' sats each' : ''); break;
+        case 'fairmint':
+          rows += row('Token', d.earned != null ? `${fmtN(actQty(d, 'earned'), 8)} ${esc(d.asset || '')}` : esc(d.asset || '')) + row('XCP paid', d.xcp_paid != null ? amtChip('XCP', d.xcp_paid / 1e8) : ''); break;
+        case 'dividend':
+          rows += row('On asset', esc(d.asset || '')) + row('Per unit', d.quantity_per_unit != null ? amtChip(d.dividend_asset || 'XCP', actQty(d, 'quantity_per_unit')) : ''); break;
+        case 'issuance':
+          rows += row('Asset', esc(d.asset || '')) + row('Quantity', d.quantity != null ? fmtN(actQty(d, 'quantity'), 8) : '') + (d.description ? row('Description', esc(String(d.description).slice(0, 80))) : ''); break;
+        default: if (d.asset) rows += row('Asset', esc(d.asset));
+      }
+    }
+    rows += row('Miner fee', it.fee != null ? `${fmtN(it.fee, 0)} sats${actSatsUsd(it.fee)}${it.feeRate != null ? ' · ' + it.feeRate + ' s/vB' : ''}` : '');
+    rows += row('Status', it.confirmed ? 'Confirmed' + (it.blockHeight ? ' · block ' + fmtN(it.blockHeight, 0) : '') : 'Unconfirmed');
+    rows += `<div class="acd-row"><span class="acd-k">Transaction</span><span class="acd-v"><a href="https://mempool.space/tx/${encodeURIComponent(it.txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(it.txid.slice(0, 20))}…</a></span></div>`;
+    return `<div class="acd">${rows}</div>`;
   }
   function actRowT(it) {
     const info = actDesc(it);
@@ -826,10 +891,12 @@
     const when = it.time ? termAgo(it.time) : (it.blockHeight ? 'block ' + fmtN(it.blockHeight, 0) : '');
     const fee = it.fee != null ? fmtN(it.fee, 0) + ' sats' + (it.feeRate != null ? ' · ' + it.feeRate + ' s/vB' : '') : '';
     const boost = (!it.confirmed && it.ownVout && canSignBtc()) ? `<button class="ac-boost" data-boost="${esc(it.txid)}">⚡ Boost</button>` : '';
-    return `<div class="ac-row"><span class="ac-ic ${info.cls}">${info.ic}</span>
+    return `<div class="ac-item" data-tx="${esc(it.txid)}">
+      <div class="ac-row" data-expand="${esc(it.txid)}"><span class="ac-ic ${info.cls}">${info.ic}</span>
       <div class="ac-main"><div class="ac-l1">${esc(info.label)}${info.detail}</div>
-      <div class="ac-l2"><a class="ac-tx" href="https://mempool.space/tx/${encodeURIComponent(it.txid)}" target="_blank" rel="noopener">${esc(it.txid.slice(0, 14))}…</a>${when ? `<span>${esc(when)}</span>` : ''}${fee ? `<span class="ac-fee">${esc(fee)}</span>` : ''}</div></div>
-      <div class="ac-r">${status}${boost}</div></div>`;
+      <div class="ac-l2"><span class="ac-tx">${esc(it.txid.slice(0, 14))}…</span>${when ? `<span>${esc(when)}</span>` : ''}${fee ? `<span class="ac-fee">${esc(fee)}</span>` : ''}</div></div>
+      <div class="ac-r">${status}${boost}<span class="ac-chev">▾</span></div></div>
+      <div class="ac-detail" hidden></div></div>`;
   }
   function openActivity(addr) {
     if (!addr) return;
@@ -842,8 +909,10 @@
   }
   async function loadActT() {
     const body = $('#acBody'); if (body) body.innerHTML = '<div class="statusline load">Loading activity…</div>';
-    try { const r = await fetch('api/activity/' + encodeURIComponent(ACT_T.addr)).then((x) => x.json()); ACT_T.items = r.items || []; }
-    catch (_) { if (body) body.innerHTML = '<div class="statusline err">Could not load activity — try again.</div>'; return; }
+    try {
+      const [r] = await Promise.all([fetch('api/activity/' + encodeURIComponent(ACT_T.addr)).then((x) => x.json()), actLoadPx()]);
+      ACT_T.items = r.items || [];
+    } catch (_) { if (body) body.innerHTML = '<div class="statusline err">Could not load activity — try again.</div>'; return; }
     renderActT();
   }
   function renderActT() {
@@ -854,7 +923,13 @@
     body.innerHTML = `<div class="ac-filters">${filters.map((f) => `<button class="acf ${ACT_T.filter === f[0] ? 'on' : ''}" data-f="${f[0]}">${f[1]} <span class="acf-n">${f[2]}</span></button>`).join('')}</div>
       <div class="ac-list">${rows.length ? rows.map(actRowT).join('') : `<div class="fine" style="padding:14px">No ${ACT_T.filter === 'all' ? '' : ACT_T.filter + ' '}transactions.</div>`}</div>`;
     body.querySelectorAll('.acf').forEach((b) => (b.onclick = () => { ACT_T.filter = b.dataset.f; renderActT(); }));
-    body.querySelectorAll('[data-boost]').forEach((b) => (b.onclick = () => { const it = ACT_T.items.find((x) => x.txid === b.dataset.boost); if (it) termBoost(it); }));
+    body.querySelectorAll('[data-boost]').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); const it = ACT_T.items.find((x) => x.txid === b.dataset.boost); if (it) termBoost(it); }));
+    // Click a row to expand its full detail card (filled lazily on first open).
+    body.querySelectorAll('[data-expand]').forEach((r) => (r.onclick = () => {
+      const item = r.closest('.ac-item'); if (!item) return; const panel = item.querySelector('.ac-detail'); const it = ACT_T.items.find((x) => x.txid === r.dataset.expand); if (!panel || !it) return;
+      if (panel.hasAttribute('hidden')) { if (!panel.dataset.filled) { panel.innerHTML = actDetailHtml(it); panel.dataset.filled = '1'; } panel.removeAttribute('hidden'); item.classList.add('open'); }
+      else { panel.setAttribute('hidden', ''); item.classList.remove('open'); }
+    }));
   }
   // WW-B04: a CPFP "boost" spends a specific owned output as the child input. That output can carry an
   // on-chain asset (rune / inscription / Stamp / UTXO-bound Counterparty asset) and would be BURNED if

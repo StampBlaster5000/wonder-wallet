@@ -1052,6 +1052,18 @@ input[type="password"]::-ms-clear { display: none; }
 .ac-badge.unc { color: #fbbf24; background: rgba(251,191,36,0.12); }
 .ac-boost { background: rgba(224,180,83,0.14); border: 1px solid var(--gold); color: var(--gold2); font-family: inherit; font-size: 10.5px; font-weight: 700; padding: 3px 9px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
 .ac-boost:hover { filter: brightness(1.15); }
+/* Rich activity: inline USD chips + click-to-expand detail card. */
+.ac-usd { color: var(--muted); font-weight: 400; font-family: var(--mono); }
+.ac-row { cursor: pointer; transition: border-color .12s; }
+.ac-row:hover { border-color: var(--border2); }
+.ac-chev { color: var(--muted); font-size: 10px; flex: none; transition: transform .15s; }
+.ac-item.open .ac-chev { transform: rotate(180deg); }
+.ac-item.open .ac-row { border-color: var(--gold2); border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.ac-detail { border: 1px solid var(--gold2); border-top: none; border-radius: 0 0 10px 10px; background: var(--surface2); padding: 9px 12px 11px; margin-top: -1px; }
+.acd { display: flex; flex-direction: column; gap: 6px; }
+.acd-row { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }
+.acd-k { color: var(--muted); flex: none; }
+.acd-v { color: var(--text); text-align: right; word-break: break-word; font-family: var(--mono); }
 
 /* ══ Light skin — "Parchment": warm light-toned theme for the Wonder Terminal (mirrors the extension). ══ */
 html.theme-light {
