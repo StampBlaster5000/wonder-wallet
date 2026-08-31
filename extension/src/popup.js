@@ -2311,6 +2311,9 @@
       if (typeof params.destinations === 'string' && /\.btc/i.test(params.destinations)) { var out = [], parts = params.destinations.split(',').map(function (x) { return x.trim(); }); for (var j = 0; j < parts.length; j++) out.push(RE_DOTBTC.test(parts[j]) ? await resolveNm(parts[j]) : parts[j]); params.destinations = out.join(','); }
       var nf = a.fields.find(function (f) { return f.nameCheck; });
       if (nf && params[nf.k]) { params[nf.k] = params[nf.k].toUpperCase(); if (!/^[B-Z][A-Z]{3,11}$/.test(params[nf.k])) throw new Error('Named assets are 4–12 letters A–Z, not starting with A.'); st.textContent = 'Checking name availability…'; var chk = await fetch('api/cp/assetname/' + encodeURIComponent(params[nf.k])).then(function (r) { return r.json(); }).catch(function () { return {}; }); if (chk.exists && chk.owner !== CPH.src) throw new Error('“' + params[nf.k] + '” is registered to another address — choose another name.'); st.textContent = 'Composing via Counterparty…'; }
+      // Capture the asset debit (human amount, BEFORE scaling) so cpConfirm can record it as pending on
+      // broadcast — a send/destroy removes that asset from your balance (over-commit safety, WWPending).
+      CPH.lastDebit = ((key === 'send' || key === 'destroy') && params.asset && balF && params[balF.k] != null && params[balF.k] !== '') ? { asset: params.asset, amount: parseFloat(params[balF.k]) } : null;
       if (a.fields.some(function (f) { return f.scaleBy === 'asset'; }) && params.asset) {
         var info = {}; try { info = await fetch('api/cp/asset/' + encodeURIComponent(params.asset)).then(function (r) { return r.json(); }); } catch (e) {}
         var div = (params.asset === 'XCP') ? true : !!info.divisible;
@@ -2366,6 +2369,7 @@
         var signed = C.signCp(c.psbt, c.inputs_values, c.lock_scripts, curAccount, CPH.type, prevTxs, curImportedId());
         var r = await bcast(signed.txhex);
         if (r.error) throw new Error(r.detail || r.error);
+        try { if (CPH.lastDebit && window.WWPending && r.txid) window.WWPending.add(CPH.src, CPH.lastDebit.asset, CPH.lastDebit.amount, r.txid); } catch (_) {}
         st.className = 'p-hint'; st.innerHTML = txLinkHtml(r.txid);
         var go = document.getElementById('cpcGo'), bk = document.getElementById('cpcBack2'); if (bk) bk.remove(); if (go) { go.textContent = 'Done'; go.onclick = function () { closeOv(); renderMain(); }; }
       } catch (err) { st.className = 'p-err'; st.textContent = 'Failed: ' + (err.message || 'sign/broadcast error'); }
@@ -3466,6 +3470,7 @@
         s.textContent = 'Broadcasting…';
         var b = await bcast(signed.txhex);
         if (b.error) throw new Error(b.detail || b.error);
+        try { if (window.WWPending && b.txid) window.WWPending.add(curBtcAddress(), tick, Number(amt), b.txid); } catch (_) {} // over-commit safety: this SRC-20 transfer debits `amt` of `tick`
         s.className = 'p-hint'; s.innerHTML = txLinkHtml(b.txid);
         setTimeout(backToMain, 1800);
       } catch (err) { s.className = 'p-err'; s.textContent = 'Failed: ' + (err.message || 'sign/broadcast error'); }
