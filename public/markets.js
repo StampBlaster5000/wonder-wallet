@@ -272,7 +272,7 @@
       const params = L.dir === 'buy'
         ? { give_asset: quote, give_quantity: quoteRaw, get_asset: base, get_quantity: baseRaw, expiration: 8064, fee_required: 0, sat_per_vbyte: S.feeRate }
         : { give_asset: base, give_quantity: baseRaw, get_asset: quote, get_quantity: quoteRaw, expiration: 8064, fee_required: 0, sat_per_vbyte: S.feeRate };
-      const { compose, report } = await window.WonderCpFlow.composeVerify('order', params, { feeRatePerVb: S.feeRate });
+      const { compose, report } = await window.WonderCpFlow.composeVerify('order', params, { feeRatePerVb: S.feeRate, debit: L.dir === 'buy' ? { asset: quote, amount: p * a } : { asset: base, amount: a } });
       await ensureBtcUsd();
       const feeSats = compose.btc_fee != null ? nfmt(compose.btc_fee) : '—';
       modal(`<div class="cc-head"><div><h3 class="m-title" style="margin:0">Confirm ${L.dir} order</h3><div class="cp-addr">${esc(base)} / ${esc(quote)} · limit</div></div></div>
@@ -727,7 +727,7 @@
       const giveRaw = toRaw(S.amount, p.giveDiv);
       const minGetRaw = String(Math.floor(Number(S.quote.estimated_output) * (1 - slipPct() / 100)));
       const params = { give_asset: p.give, give_quantity: giveRaw, get_asset: p.get, get_quantity: minGetRaw, expiration: 5000, fee_required: 0, sat_per_vbyte: S.feeRate };
-      const { compose, report } = await window.WonderCpFlow.composeVerify('order', params, { feeRatePerVb: S.feeRate });
+      const { compose, report } = await window.WonderCpFlow.composeVerify('order', params, { feeRatePerVb: S.feeRate, debit: { asset: p.give, amount: Number(S.amount) } });
       if (!BTCUSD) { try { BTCUSD = Number((await fetch('api/prices').then((r) => r.json())).bitcoin) || 0; } catch (_) {} }
       const feeSats = compose.btc_fee != null ? Number(compose.btc_fee).toLocaleString('en-US') : '—';
       const feeUsd = compose.btc_fee != null ? usd(compose.btc_fee) : '';

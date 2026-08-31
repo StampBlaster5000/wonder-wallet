@@ -39,12 +39,18 @@
       iv.feeMaxSats = Math.ceil(iv.feeRatePerVb * (vsize || 600) * 2.5);
     }
     const report = await window.WonderVerify.verify(c, iv); // throws on any failure — nothing proceeds
+    // WWPending: stash what this tx debits (normalized) so sign() records it the instant it broadcasts —
+    // the wallet's balances then reflect the commitment before confirmation (over-commit safety). Caller
+    // declares intent.debit = { asset, amount } (an XCP-69 mint debits XCP; a swap debits the give side).
+    if (iv.debit && iv.debit.asset && Number(iv.debit.amount) > 0) c._debit = { source: source, asset: iv.debit.asset, amount: Number(iv.debit.amount) };
     return { compose: c, report, source };
   }
 
   // Sign a verified compose and broadcast. Returns { txid }. Routes to a connected external wallet
   // (UniSat/OKX/Wonder) when one is paired — it signs + finalizes; else the audited local core signer.
   async function sign(compose) {
+    // Record the committed debit (stashed by composeVerify) the instant we have a txid — over-commit safety.
+    const rec = (txid) => { try { if (compose && compose._debit && window.WWPending && txid) window.WWPending.add(compose._debit.source, compose._debit.asset, compose._debit.amount, txid); } catch (_) {} return { txid: txid }; };
     const cw = conn();
     if (cw && cw.signPsbt) {
       const hex = /^[0-9a-fA-F]+$/.test(compose.psbt) ? compose.psbt : b64hex(compose.psbt);
@@ -52,11 +58,11 @@
       if (signed && typeof signed === 'object' && signed.txhex) { // Wonder connected → finalized raw tx; broadcast via our server
         const r = await post('api/btc/broadcast', { txhex: signed.txhex });
         if (!r || r.error) throw new Error((r && (r.detail || r.error)) || 'Broadcast failed.');
-        return { txid: r.txid || signed.txid };
+        return rec(r.txid || signed.txid);
       }
       const signedStr = typeof signed === 'string' ? signed : (signed && (signed.psbt || signed.hex)) || hex;
       const txid = await cw.pushPsbt(signedStr);
-      return { txid: typeof txid === 'string' ? txid : (txid && (txid.txid || txid.result)) || String(txid) };
+      return rec(typeof txid === 'string' ? txid : (txid && (txid.txid || txid.result)) || String(txid));
     }
     const a = acct(); if (!a) throw new Error('Wallet closed.');
     const btcType = a.btcType || 'nativeSegwit';
@@ -69,7 +75,7 @@
     const signed = await C().signCp(compose.psbt, compose.inputs_values, compose.lock_scripts, a.account, btcType, prevTxs, a.importedId || null);
     const r = await post('api/btc/broadcast', { txhex: signed.txhex });
     if (!r || r.error) throw new Error((r && (r.detail || r.error)) || 'Broadcast failed.');
-    return { txid: r.txid };
+    return rec(r.txid);
   }
 
   window.WonderCpFlow = { composeVerify, sign, srcAddr, activeSource };

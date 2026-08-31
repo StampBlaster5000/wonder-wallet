@@ -169,8 +169,11 @@
     let feeRate = fees.halfHourFee || 6;
     // The minter's XCP balance — MAX fills to what they can actually afford (each lot = 0.01 XCP), capped
     // by the 10-XCP per-address allocation + what's left in the sale. Also grab BTC/USD for the confirm fee.
-    let xcpBal = 0;
-    try { const src = window.WonderCpFlow && window.WonderCpFlow.activeSource(); if (src) { const h = await fetch('api/cp/holdings/' + encodeURIComponent(src)).then((r) => r.json()); const x = (h.holdings || []).find((a) => a.asset === 'XCP'); xcpBal = x ? Number(x.qty) || 0 : 0; } } catch (_) {}
+    var src = window.WonderCpFlow && window.WonderCpFlow.activeSource(), xcpBal = 0;
+    try { if (src) { const h = await fetch('api/cp/holdings/' + encodeURIComponent(src)).then((r) => r.json()); const x = (h.holdings || []).find((a) => a.asset === 'XCP'); xcpBal = x ? Number(x.qty) || 0 : 0; } } catch (_) {}
+    // Subtract XCP already committed by in-flight mints (WWPending) so MAX + validation reflect what's
+    // actually spendable across rapid-fire mints, not just the confirmed balance.
+    if (src && window.WWPending) { window.WWPending.reconcile(src); xcpBal = window.WWPending.avail(src, 'XCP', xcpBal); }
     try { if (!BTCUSD) { const pr = await fetch('api/prices').then((r) => r.json()); BTCUSD = Number(pr && pr.bitcoin) || 0; } } catch (_) {}
     const affordableLots = Math.floor(xcpBal / 0.01 + 1e-9);
     const maxAffordable = Math.min(maxLots, affordableLots);
@@ -201,7 +204,7 @@
     s.hidden = false; s.className = 'statusline load'; s.textContent = 'Composing & verifying…';
     try {
       const quantity = (BigInt(lots) * xr.big(fm.quantity_by_price)).toString();
-      const { compose, report } = await window.WonderCpFlow.composeVerify('fairmint', { asset: fm.asset, quantity, sat_per_vbyte: feeRate }, { feeRatePerVb: feeRate });
+      const { compose, report } = await window.WonderCpFlow.composeVerify('fairmint', { asset: fm.asset, quantity, sat_per_vbyte: feeRate }, { feeRatePerVb: feeRate, debit: { asset: 'XCP', amount: lots * 0.01 } });
       // confirm screen — the verify report becomes a green banner; user signs from here
       if (!BTCUSD) { try { BTCUSD = Number((await fetch('api/prices').then((r) => r.json())).bitcoin) || 0; } catch (_) {} }
       const feeSats = compose.btc_fee != null ? Number(compose.btc_fee).toLocaleString('en-US') : '—';

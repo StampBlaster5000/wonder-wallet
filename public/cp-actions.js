@@ -53,7 +53,7 @@
       { k: 'quantity', l: 'Quantity to mint (raw)', t: 'number' } ] },
   };
 
-  let ACCOUNT = 0, FROM = null, FROM_TYPE = 'nativeSegwit', WALLET_ASSETS = null, LAST_PARAMS = {};
+  let ACCOUNT = 0, FROM = null, FROM_TYPE = 'nativeSegwit', WALLET_ASSETS = null, LAST_PARAMS = {}, LAST_DEBIT = null;
   // When a tool is launched from a specific place (e.g. the asset-detail window), BACK_FN is where its
   // "Back" returns — otherwise Back falls to the Counterparty actions hub. Cleared whenever the hub opens.
   let BACK_FN = null;
@@ -462,6 +462,9 @@
         const h = WALLET_ASSETS.find((x) => x.asset === params.asset || x.name === params.asset);
         if (h && parseFloat(params[bf.k]) > parseFloat(h.qty)) throw new Error(`You only hold ${h.qty} ${params.asset} on this address.`);
       }
+      // Capture the asset debit (human amount, BEFORE scaling to raw) so the sign path can record it as
+      // pending on broadcast — a send/destroy removes that asset from your balance (over-commit safety).
+      LAST_DEBIT = ((key === 'send' || key === 'destroy') && params.asset && bf && params[bf.k]) ? { asset: params.asset, amount: parseFloat(params[bf.k]) } : null;
       // Scale a divisible asset's quantity to raw units.
       for (const f of a.fields) {
         if (f.scaleBy === 'asset' && params[f.k] != null && params.asset) {
@@ -519,6 +522,7 @@
         const signed = await cpSign(c);
         const r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then((x) => x.json());
         if (r.error) throw new Error(r.detail || r.error);
+        try { if (LAST_DEBIT && window.WWPending && r.txid) window.WWPending.add(FROM, LAST_DEBIT.asset, LAST_DEBIT.amount, r.txid); } catch (_) {}
         s.className = 'statusline load'; s.innerHTML = `Broadcast ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(r.txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(r.txid).slice(0, 18))}…</a> · Counterparty will confirm separately.`;
         collapse();
       } catch (err) { s.className = 'statusline err'; s.textContent = 'Failed: ' + (err.message || 'sign/broadcast error'); }
@@ -573,6 +577,7 @@
           const txid = await EXT.pushPsbt(signedStr);
           id = typeof txid === 'string' ? txid : (txid && (txid.txid || txid.result)) || String(txid);
         }
+        try { if (LAST_DEBIT && window.WWPending && id) window.WWPending.add(FROM, LAST_DEBIT.asset, LAST_DEBIT.amount, id); } catch (_) {}
         statusEl.className = 'statusline load';
         statusEl.innerHTML = `${label || 'Broadcast'} ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(id)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(id).slice(0, 18))}…</a> · Counterparty confirms separately.`;
         if (onDone) onDone(); return;
@@ -581,6 +586,7 @@
       const signed = await cpSign(c);
       const r = await fetch('api/btc/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ txhex: signed.txhex }) }).then((x) => x.json());
       if (r.error) throw new Error(r.detail || r.error);
+      try { if (LAST_DEBIT && window.WWPending && r.txid) window.WWPending.add(FROM, LAST_DEBIT.asset, LAST_DEBIT.amount, r.txid); } catch (_) {}
       statusEl.className = 'statusline load';
       statusEl.innerHTML = `${label || 'Broadcast'} ✓ — <a href="https://mempool.space/tx/${encodeURIComponent(r.txid)}" target="_blank" rel="noopener" style="color:var(--gold2)">${esc(String(r.txid).slice(0, 18))}…</a> · Counterparty confirms separately.`;
       if (onDone) onDone();

@@ -1513,6 +1513,19 @@
       }
     } catch (_) {}
     if (seq !== dashSeq) return; // stale
+    // Over-commit safety: subtract in-flight committed spends (WWPending) so every readout of DASH_ASSETS
+    // (the token list AND the send forms that read t.amount) shows what's actually available. Reconcile in
+    // the background to auto-restore amounts whose tx confirmed (already reflected) or dropped/failed.
+    try {
+      if (ch === 'btc' && window.WWPending) {
+        window.WWPending.reconcile(addr);
+        res.tokens.forEach((tk) => {
+          const sym = tk.asset || tk.tick; if (!sym) return;
+          const pend = window.WWPending.pending(addr, sym); if (!(pend > 0)) return;
+          tk.amount = Math.max(0, aggNum(tk.amount) - pend).toLocaleString('en-US', { maximumFractionDigits: 8 });
+        });
+      }
+    } catch (_) {}
     DASH_ASSETS = res; renderDashAssets(acc);
   }
 
