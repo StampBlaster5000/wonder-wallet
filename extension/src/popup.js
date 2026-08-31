@@ -1494,6 +1494,9 @@
         // that back stamps are excluded — those live in Collectibles (click a stamp for its cpid).
         (a.src20 || []).forEach(function (x) { res.tokens.push({ name: x.tick, amount: x.amount, img: x.img, src20: true, tick: x.tick }); });
         (a.counterparty || []).forEach(function (x) { if (stampCpids[x.asset]) return; res.tokens.push({ name: x.name || x.asset, amount: (x.qtyNormalized != null ? x.qtyNormalized : x.quantity), asset: x.asset, cp: true, divisible: !!x.divisible, owned: !!x.owned, locked: !!x.locked }); });
+        // Over-commit safety: subtract in-flight committed spends (WWPending) so token balances + send forms
+        // show what's actually available; reconcile prunes settled/dropped (auto-restore). No labels — just the number.
+        try { if (window.WWPending) { window.WWPending.reconcile(addr); res.tokens.forEach(function (tk) { var sym = tk.asset || tk.tick; if (!sym) return; var pend = window.WWPending.pending(addr, sym); if (!(pend > 0)) return; tk.amount = Math.max(0, aggNum(tk.amount) - pend).toLocaleString('en-US', { maximumFractionDigits: 8 }); }); } } catch (e5) {}
         res.collectibles = (a.stamps || []).map(function (s) { return { title: '#' + s.stamp, img: 'api/stamp/' + s.stamp + '/content', stamp: s.stamp, cpid: s.cpid, mime: s.mime || null, qty: (s.quantity != null ? Number(s.quantity) : 1) }; });
         // SRC-101 (.btc names) — surface as collectibles + capture the primary name.
         try {
